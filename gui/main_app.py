@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from .spacegroup_selector import select_spacegroup
 from .element_selector import select_element
+from .element_assignment import select_site_elements
+from .common import chain_dialogs
 import matplotlib
 
 import sys
@@ -16,32 +18,36 @@ class MainApp(tk.Tk):
         self.geometry("400x200")
         ttk.Label(self, text="PyXtal GUI System Builder", font=("Arial", 14)).pack(pady=20)
         ttk.Button(self, text="Create System by Spacegroup", command=self.create_system).pack(pady=10)
+        profile = False
 
         def run():
             self.withdraw()
-            select_element(master=self)
-            profiler = cProfile.Profile()
-            profiler.enable()
+            profile = True
+            if profile:
+                profiler = cProfile.Profile()
+                profiler.enable()
 
-            self.create_system()
+            chain_dialogs(
+                select_spacegroup,
+                select_site_elements,
+                all = { 'master' : self },
+                back = True
+            )
 
-            profiler.disable()
-            stats = pstats.Stats(profiler)
-            stats.sort_stats('cumtime')  # sort by total time
-            stats.print_stats(200)     # show top 20 functions
+            if profile:
+                profiler.disable()
+                stats = pstats.Stats(profiler)
+                stats.sort_stats('cumtime')  # sort by total time
+                stats.print_stats(200)     # show top 20 functions
+                profiler.dump_stats("profile_results.prof")
 
             sys.exit(0)
 
         self.after(0, run)
 
     def create_system(self):
-        sg = select_spacegroup(master = self)
-        if sg:
-            pass
-            #messagebox.showinfo("Selected Space Group", f"You chose {sg.number}: {sg.symbol}")
-        else:
-            pass
-            #messagebox.showwarning("No Selection", "No space group was selected.")
+        return select_spacegroup(master = self)
+        
 
 
 if __name__ == "__main__":
