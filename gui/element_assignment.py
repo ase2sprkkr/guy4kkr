@@ -1,622 +1,579 @@
-import tkinter as tk
-from tkinter import ttk
-from typing import Dict, List, Optional
+from __future__ import annotations
+
+from typing import Dict, Any, List, Optional
+
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
+    QScrollArea, QDoubleSpinBox, 
+    QSizePolicy, QSplitter, QStyle
+)
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from ase import Atoms
+from ase2sprkkr.sprkkr.atomic_types import AtomicType
 import numpy as np
-import threading
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
+from weakref import WeakKeyDictionary
+from ase.data import chemical_symbols
 
-from pyxtal.symmetry import Group
-from ase.cell import Cell
-
-from .lattice import plot_lattice
+from .lattice import plot_lattice, plot_sites_in_lattice
 from ..physics.wyckoff_data import wyckoff_data
-from .element_selector import select_element, ELEMENT_DATA
 
+class _GlobalSentinel:
+    pass
 
-_VALID_SYMBOLS = set(d.get('symbol') for d in ELEMENT_DATA.values() if isinstance(d, dict) and d.get('symbol'))
+_DEFAULT_KEY = _GlobalSentinel()
+_DIALOGS = WeakKeyDictionary()
+_VALID_SYMBOLS = set(s for s in chemical_symbols if isinstance(s, str))
+_VALID_SYMBOLS.add("Vc")
 
+class _LetterRow(QWidget):
+    """Container for one Wyckoff letter's element rows."""
+    def __init__(self, letter: str, parent: Optional[QWidget] = None,
+                 on_activity: Optional[callable] = None,
+                 on_break: Optional[callable] = None,
+                 can_break: bool = False):
+        super().__init__(parent)
+        self.letter = letter
+        self._on_activity = on_activity
+        self._on_break = on_break
+        self.rows: List[Dict[str, Any]] = []
+        self.vbox = QVBoxLayout(self)
 
-try:
-    from weakref import WeakKeyDictionary
-    _EA_SELECTOR_INSTANCES = WeakKeyDictionary()
-except Exception:
-    _EA_SELECTOR_INSTANCES = {}
-_EA_DEFAULT_KEY = object()
+        # Header with title and normalize button
+        header = QHBoxLayout()
+        self.title_label = QLabel(f"Site {letter}")
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        self.normalize_btn = QPushButton("Normalize")
+        self.normalize_btn.clicked.connect(self._normalize)
+        header.addWidget(self.normalize_btn)
+        # Break symmetry button (visible only when multiplicity > 1)
+        self.break_btn = QPushButton("Break symmetry")
+        self.break_btn.setVisible(bool(can_break))
+        if can_break and callable(self._on_break):
+            self.break_btn.clicked.connect(lambda: self._on_break(self.letter))
+        header.addWidget(self.break_btn)
+        self.vbox.addLayout(header)
 
+        # Rows area
+        self.rows_box = QVBoxLayout()
+        self.vbox.addLayout(self.rows_box)
 
-class ElementAssignmentDialog(tk.Toplevel):
-    """
-    Dialog to assign elements and occupancies to already-selected Wyckoff sites.
+        # Add-row button
+        add_row = QHBoxLayout()
+        add_row.addStretch(1)
+        self.add_btn = QPushButton("＋ Add element")
+        self.add_btn.clicked.connect(self.add_row)
+        add_row.addWidget(self.add_btn)
+        self.vbox.addLayout(add_row)
 
-    Inputs may be provided either as separate arguments or as the dict returned by
-    select_spacegroup: {'spacegroup': int, 'cell': Cell, 'wyckoff_positions': dict(letter -> [[x,y,z], ...])}.
+        # ensure one initial row
+        self.add_row()
+        glyph_font = QFont()
+        glyph_font.setBold(True)
+        glyph_font.setPointSize(12)
+        self.glyph_font = glyph_font
 
-    Result mirrors the select_spacegroup dict with an additional 'site_elements' mapping:
-        { letter: [{ 'symbol': 'Fe', 'occupancy': 0.8 }, ...], ... }
-    """
+    def set_title_suffix(self, text: str) -> None:
+        self.title_label.setText(f"Site {self.letter}  {text}")
 
-    def __init__(self, master=None, back: bool = False):
-        super().__init__(master)
-        self.title("Assign elements to sites")
-        self.geometry("1000x650")
-        self._suspend = False
-        # when True, show Back button next to Cancel and return 'back' on Back
-        self._allow_back = bool(back)
-        # completion signal (we hide instead of destroy)
-        self._done = tk.BooleanVar(value=False)
+    def add_row(self, element: Optional[str] = "", occ: float = 1.0) -> None:
+        from .element_selector import select_element  # local import to avoid cyclic import
 
-        # initial empty inputs; will be set via setup()
-        self.sg_number: Optional[int] = None
-        self.group: Optional[Group] = None
-        self.cell: Optional[np.ndarray] = None
-        self.positions: Dict[str, List[List[float]]] = {}
+        row_w = QWidget(self)
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
 
-        # internal state: mapping letter -> list of {symbol, var_symbol, var_occ, frame}
-        self.site_elements: Dict[str, List[dict]] = {}
-        # start with empty state; setup() will populate
+        elem_edit = QLineEdit()
+        elem_edit.setPlaceholderText("Element")
+        if not isinstance(element, str):
+            element = ""
+        elem_edit.setText(element)
+        elem_edit.setMaxLength(3)
+        elem_edit.setFixedWidth(55)
+        h.addWidget(QLabel("Element"))
+        h.addWidget(elem_edit)
 
-        self._draw_counter = 0
-        self._worker_event = threading.Event()
-        self._worker_stop = threading.Event()
-        self._worker_lock = threading.Lock()
-        self._latest: Optional[dict] = None
-        self._highlight_letter: Optional[str] = None
+        pick_btn = QPushButton("⚛️")
+        pick_btn.setFont(self.glyph_font)
+        pick_btn.setToolTip("Pick element")
+        pick_btn.setFixedWidth(34)
+        h.addWidget(pick_btn)
 
-        self._build_layout()
-        self._start_worker()
-        self._update_plot()
+        occ_spin = QDoubleSpinBox()
+        occ_spin.setRange(0.0, 1.0)
+        occ_spin.setDecimals(3)
+        occ_spin.setSingleStep(0.05)
+        occ_spin.setValue(occ)
+        label_occ = QLabel("occupation")
+        h.addWidget(label_occ)
+        occ_spin.setFixedWidth(70)
+        h.addWidget(occ_spin)
 
-    # ---- UI construction ----
-    def _build_layout(self):
-        main = ttk.Frame(self)
-        main.pack(fill="both", expand=True, padx=6, pady=6)
-        main.columnconfigure(0, weight=6)  # left gets 70%
-        main.columnconfigure(1, weight=4)  # right gets 30%
+        del_btn = QPushButton()
+        del_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        del_btn.setToolTip("Remove this element row")
+        del_btn.setFixedWidth(34)
+        h.addWidget(del_btn)
 
-        # Define a larger, bold font style for glyph buttons
-        try:
-            style = ttk.Style(self)
-            style.configure('Glyph.TButton', font=('TkDefaultFont', 14, 'bold'))
-        except Exception:
-            pass
-
-        left = ttk.Frame(main)
-        left.grid(row=0, column=0, sticky="nsew")
-
-        ttk.Label(left, text="Wyckoff sites").pack(anchor="w")
-
-        box = ttk.LabelFrame(left, text="Elements and occupancies")
-        box.pack(fill="both", expand=True, pady=(4, 0))
-
-        canvas = tk.Canvas(box)
-        scroll = ttk.Scrollbar(box, orient="vertical", command=canvas.yview)
-        self.list_container = ttk.Frame(canvas)
-        self.list_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.list_container, anchor="nw")
-        canvas.configure(yscrollcommand=scroll.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-
-        # configure grid for alignment
-        try:
-            self.list_container.grid_columnconfigure(0, weight=0, minsize=0)  # letter + label
-            self.list_container.grid_columnconfigure(1, weight=1)
-        except Exception:
-            pass
-
-        # Right side: plot + buttons
-        right = ttk.Frame(main)
-        right.grid(row=0, column=1, sticky="nsew")
-        
-
-        self.fig = plt.Figure(figsize=(5, 5))
-        self.ax = self.fig.add_subplot(111, projection="3d")
-        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.pack(fill="both", expand=True)
-
-        btns = ttk.Frame(right)
-        btns.pack(fill="x")
-        self.warning_label = tk.Label(btns, text="", fg="red")
-        self.warning_label.pack(fill="x", pady=(4, 2))
-        ttk.Button(btns, text="OK", command=self._on_ok).pack(fill="x")
-        # Prepare both variants; we'll toggle visibility in setup()
-        self._btns_back_row = ttk.Frame(btns)
-        self._btns_back_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(self._btns_back_row, text="Back", command=self._on_back).pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ttk.Button(self._btns_back_row, text="Cancel", command=self._on_cancel).pack(side="left", expand=True, fill="x")
-        self._btn_cancel_only = ttk.Button(btns, text="Cancel", command=self._on_cancel)
-        self._btn_cancel_only.pack(fill="x", pady=(4, 0))
-        # initial toggle
-        self._toggle_back_cancel()
-
-        self._populate_letters()
-
-    def _populate_letters(self):
-        # clear
-        
-        for child in list(self.list_container.children.values()):
-            try:
-                child.destroy()
-            except Exception:
-                pass
-
-        pos_label = wyckoff_data.get(self.sg_number, {})
-
-        def _fmt_coord(v: float) -> str:
-            try:
-                from fractions import Fraction
-                frac = Fraction(float(v)).limit_denominator(12)
-                if abs(float(frac) - float(v)) < 1e-8:
-                    # exact simple fraction
-                    if frac.denominator == 1:
-                        return f"{frac.numerator}"
-                    return f"{frac.numerator}/{frac.denominator}"
-            except Exception:
-                pass
-            try:
-                return f"{float(v):.3f}"
-            except Exception:
-                return str(v)
-        row = 0
-        for letter in sorted(self.positions.keys()):
-            # label row
-            # show actual representative coordinates instead of generic x,y,z
-            try:
-                rep = np.array(self.positions[letter][0], dtype=float)
-                coords = ", ".join(_fmt_coord(x) for x in rep)
-            except Exception:
-                coords = (pos_label.get(letter).label if pos_label and letter in pos_label else '') or ''
-
-            title = f"{letter} ({len(self.positions[letter])}): {coords}"
-            lbl = ttk.Label(self.list_container, text=title)
-            
-            lbl.grid(row=row, column=0, sticky="nw", padx=(6, 4), pady=(4, 0))
-            
-
-            site_frame = ttk.Frame(self.list_container)
-            # reduce left padding to move inputs left
-            site_frame.grid(row=row, column=1, sticky="nw", padx=(0, 2), pady=(2, 2)); 
-
-            # header inside site_frame
-            header = ttk.Frame(site_frame)
-            header.grid(row=0, column=0, sticky="w")
-            # Normalize occupancy button in header
-            ttk.Button(header, text="Normalize occupancy", command=lambda L=letter: self._normalize_letter(L)).grid(row=0, column=0, padx=(0, 6))
-            
-            # container for rows
-            rows_cont = ttk.Frame(site_frame)
-            rows_cont.grid(row=1, column=0, columnspan=3, sticky="w")
-            rows_cont.grid_columnconfigure(0, weight=0)
-            rows_cont.grid_columnconfigure(1, weight=0)
-            rows_cont.grid_columnconfigure(2, weight=0)
-            rows_cont.grid_columnconfigure(3, weight=0)
-            rows_cont.grid_columnconfigure(4, weight=0)
-            rows_cont.grid_columnconfigure(5, weight=0)
-
-            site_frame.rows_container = rows_cont
-            site_frame.letter = letter
-
-            # initial: single row with default occupancy 1.0
-            self._ensure_state_for_letter(letter)
-            if not self.site_elements[letter]:
-                self._add_element_row(letter, focus=True)
-            else:
-                for _ in list(self.site_elements[letter]):
-                    # rebuild from state
-                    self._add_element_row(letter, from_state=True)
-
-            # footer with + Add below rows
-            footer = ttk.Frame(site_frame)
-            footer.grid(row=2, column=0, sticky="w", pady=(2, 0))
-            ttk.Button(footer, text="+ Add", command=lambda L=letter: self._add_element_row(L, focus=True)).grid(row=0, column=0)
-
-            row += 1
-
-    def _ensure_state_for_letter(self, letter):
-        self.site_elements.setdefault(letter, [])
-
-    def _add_element_row(self, letter, focus=False, from_state=False):
-        self._ensure_state_for_letter(letter)
-        # find container widgets
-        container = None
-        for child in self.list_container.grid_slaves():
-            try:
-                if getattr(child, 'letter', None) == letter:
-                    container = child
-                    break
-            except Exception:
-                pass
-        if container is None:
-            return
-        rows_cont = container.rows_container
-
-        state_list = self.site_elements[letter]
-        if not from_state:
-            # default occupancy = max(0, 1 - sum(existing))
-            occ_default = max(0.0, 1.0 - sum((item.get('var_occ').get() if isinstance(item.get('var_occ'), tk.DoubleVar) else float(item.get('occupancy', 0.0))) for item in state_list))
-            occ_default = round(occ_default, 2)
-            row_state = {
-                'symbol': '',
-                'occupancy': occ_default,
-            }
-            state_list.append(row_state)
-        else:
-            row_state = state_list[len([c for c in rows_cont.grid_slaves() if int(c.grid_info().get('row', 0)) >= 1])]
-
-        r = len([c for c in rows_cont.grid_slaves() if int(c.grid_info().get('row', 0)) >= 1]) + 1
-        # row frame to group all widgets for easy removal
-        row_frame = ttk.Frame(rows_cont)
-        row_frame.grid(row=r, column=0, columnspan=6, sticky='w')
-
-        # element label + entry + chooser
-        ttk.Label(row_frame, text='Element').grid(row=0, column=0, padx=(0, 2), pady=(2, 2), sticky='w')
-        var_sym = tk.StringVar(value=row_state.get('symbol', ''))
-        ent_sym = ttk.Entry(row_frame, textvariable=var_sym, width=8)
-        ent_sym.grid(row=0, column=1, padx=(0, 2), pady=(2, 2), sticky='w')
-        ent_sym.bind('<FocusIn>', lambda e, L=letter: self._highlight(L))
-        # use an alchemy flask glyph if available
-        ttk.Button(row_frame, text='⚛️', style='Glyph.TButton', width=2, command=lambda v=var_sym: self._choose_element(v)).grid(row=0, column=2, padx=(0, 6), pady=(2, 2), sticky='w')
-
-        # occupancy label + entry
-        ttk.Label(row_frame, text='Occupancy').grid(row=0, column=3, padx=(0, 4), pady=(2, 2), sticky='w')
-        var_occ = tk.DoubleVar(value=row_state.get('occupancy', 0.0))
-        ent_occ = ttk.Entry(row_frame, textvariable=var_occ, width=6)
-        ent_occ.grid(row=0, column=4, padx=(0, 6), pady=(2, 2), sticky='w')
-        ent_occ.bind('<FocusIn>', lambda e, L=letter: self._highlight(L))
-
-        # remove row button (trash icon)
-        del_btn = ttk.Button(row_frame, text='🗑', style='Glyph.TButton', width=2, command=lambda L=letter, rf=row_frame, vs=var_sym, vo=var_occ: self._remove_row(L, rf, vs, vo))
-        del_btn.grid(row=0, column=5, padx=(0, 0), pady=(2, 2))
-
-        # attach to state
-        row_state.update({'var_sym': var_sym, 'var_occ': var_occ, 'ent_sym': ent_sym, 'ent_occ': ent_occ, 'frame': row_frame, 'del_btn': del_btn})
-
-        # traces
-        var_sym.trace_add('write', lambda *a, L=letter, v=var_sym: self._on_symbol_change(L, v))
-        var_occ.trace_add('write', lambda *a, L=letter: self._validate_letter(L))
-
-        if focus:
-            try:
-                ent_sym.focus_set()
-            except Exception:
-                pass
-        # validate after creation
-        self._validate_letter(letter)
-        self._update_delete_state(letter)
-
-    def _remove_row(self, letter, row_frame, vs, vo):
-        # detach entire row frame
-        try:
-            row_frame.destroy()
-        except Exception:
-            pass
-        # remove from state (match by variables)
-        arr = self.site_elements.get(letter, [])
-        for idx, item in enumerate(list(arr)):
-            if item.get('var_sym') is vs and item.get('var_occ') is vo:
-                arr.pop(idx)
-                break
-        self._validate_letter(letter)
-        self._update_delete_state(letter)
-
-    def _update_delete_state(self, letter):
-        arr = self.site_elements.get(letter, [])
-        only_one = len(arr) <= 1
-        for item in arr:
-            btn = item.get('del_btn')
-            if btn:
-                try:
-                    if only_one:
-                        btn.state(['disabled'])
-                    else:
-                        btn.state(['!disabled'])
-                except Exception:
-                    try:
-                        btn.configure(state='disabled' if only_one else 'normal')
-                    except Exception:
-                        pass
-
-    def _normalize_letter(self, letter):
-        arr = self.site_elements.get(letter, [])
-        if not arr:
-            return
-        total = 0.0
-        for item in arr:
-            try:
-                total += float(item.get('var_occ').get())
-            except Exception:
-                pass
-        if total <= 0:
-            # set first to 1.0
-            try:
-                arr[0].get('var_occ').set(1.0)
-            except Exception:
-                pass
-            return
-        for item in arr:
-            try:
-                val = float(item.get('var_occ').get())
-                item.get('var_occ').set(round(val / total, 2))
-            except Exception:
-                pass
-
-    def _choose_element(self, var_sym: tk.StringVar):
-        sym = select_element(self)
-        if sym:
-            var_sym.set(sym)
-
-    def _toggle_back_cancel(self):
-        # show back/cancel row or single cancel based on _allow_back
-        try:
-            if self._allow_back:
-                self._btn_cancel_only.pack_forget()
-                self._btns_back_row.pack(fill="x", pady=(4, 0))
-            else:
-                self._btns_back_row.pack_forget()
-                self._btn_cancel_only.pack(fill="x", pady=(4, 0))
-        except Exception:
-            pass
-
-    # ---- validation ----
-    def _is_symbol_valid(self, sym: str) -> bool:
-        if not isinstance(sym, str) or not sym:
-            return False
-        return sym in _VALID_SYMBOLS
-
-    def _on_symbol_change(self, letter, var_sym):
-        sym = var_sym.get().strip()
-        # update entry style
-        entry = None
-        for item in self.site_elements.get(letter, []):
-            if item.get('var_sym') is var_sym:
-                entry = item.get('ent_sym')
-                item['symbol'] = sym
-                break
-        if entry is not None:
-            ok = self._is_symbol_valid(sym)
-            self._set_entry_error(entry, not ok)
-        # revalidate whole letter for occupancy also
-        self._validate_letter(letter)
-
-    def _set_entry_error(self, entry: ttk.Entry, is_error: bool):
-        try:
-            style = ttk.Style()
-            style.configure('Error.TEntry', fieldbackground='#ffd9d9')
-            entry.configure(style='Error.TEntry' if is_error else 'TEntry')
-        except Exception:
-            # Fallback if style change fails
-            try:
-                entry.configure(background='#ffd9d9' if is_error else 'white')
-            except Exception:
-                pass
-
-    def _validate_letter(self, letter):
-        # sum occupancies and validate symbols
-        total = 0.0
-        is_error = False
-        for item in self.site_elements.get(letter, []):
-            sym = item.get('var_sym').get().strip()
-            occ = 0.0
-            try:
-                occ = float(item.get('var_occ').get())
-            except Exception:
-                is_error = True
-            total += max(0.0, occ)
-            # symbol valid?
-            if sym and not self._is_symbol_valid(sym):
-                is_error = True
-            # apply style to occupancy when invalid state
-            self._set_entry_error(item.get('ent_occ'), total > 1.0000001)
-        # show a warning label if invalid
-        if total > 1.0000001:
-            self.warning_label.config(text=f"Occupancy for {letter} exceeds 1.0 ({total:.3f})")
-        else:
-            # clear only if no other errors
-            self.warning_label.config(text="")
-        # update plot highlighting (in case focus changed)
-        self._update_plot()
-
-    # ---- plotting ----
-    def _start_worker(self):
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
-        self._worker.start()
-
-    def _next_token(self):
-        self._draw_counter += 1
-        return self._draw_counter
-
-    def _snapshot(self, token):
-        lattice = np.asarray(self.cell) if self.cell is not None else None
-        pos = {k: np.array(v, dtype=float) for k, v in (self.positions or {}).items()}
-        return {
-            'token': token,
-            'lattice': lattice,
-            'positions': pos,
-            'highlight': self._highlight_letter,
+        row = {
+            'w': row_w,
+            'elem': elem_edit,
+            'occ': occ_spin,
+            'del': del_btn,
+            'pick': pick_btn,
         }
+        self.rows.append(row)
+        self.rows_box.addWidget(row_w)
 
-    def _update_plot(self):
-        tok = self._next_token()
-        with self._worker_lock:
-            self._latest = self._snapshot(tok)
-        self._worker_event.set()
+        def do_pick():
+            sym = select_element(self)
+            if sym:
+                elem_edit.setText(sym)
+        pick_btn.clicked.connect(do_pick)
+        del_btn.clicked.connect(lambda: self._remove_row(row))
+        # Validation only; no redraw on value changes
+        elem_edit.textChanged.connect(lambda _t: self._validate_row(row))
+        occ_spin.valueChanged.connect(lambda _v: self._validate_totals())
 
-    def _worker_loop(self):
-        while not self._worker_stop.is_set():
-            self._worker_event.wait()
-            if self._worker_stop.is_set():
-                break
-            with self._worker_lock:
-                snap = self._latest
-                self._latest = None
-                self._worker_event.clear()
-            if not snap:
+        # Focus-driven highlighting
+        for w in (elem_edit, occ_spin, pick_btn, del_btn):
+            w.installEventFilter(self)
+
+        self._validate_controls_state()
+        self._validate_row(row)
+        self._validate_totals()
+
+    def load_payload(self, payload: List[Dict[str, Any]]) -> None:
+        """Replace current element rows with provided payload [{'element':sym,'occupancy':val},...]."""
+        # remove existing row widgets
+        for r in list(self.rows):
+            try:
+                r['w'].setParent(None)
+            except Exception:
+                pass
+        self.rows.clear()
+        # add rows from payload
+        if not payload:
+            self.add_row()
+        else:
+            for item in payload:
+                self.add_row(element=item.get('element',''), occ=float(item.get('occupancy',0.0)))
+
+    def _remove_row(self, row: Dict[str, Any]) -> None:
+        if len(self.rows) <= 1:
+            return
+        row['w'].setParent(None)
+        try:
+            self.rows.remove(row)
+        except ValueError:
+            pass
+        self._validate_controls_state()
+        self._validate_totals()
+
+    def _validate_controls_state(self) -> None:
+        # disable delete when only one row
+        for r in self.rows:
+            r['del'].setEnabled(len(self.rows) > 1)
+
+    def _validate_row(self, row: Dict[str, Any]) -> None:
+        elem = row['elem'].text().strip()
+        ok = elem in _VALID_SYMBOLS
+        # Styling: red border when invalid. Keep readable background.
+        if ok or elem == "":
+            row['elem'].setStyleSheet("")
+        else:
+            # Use a darker background only if palette seems light; simple heuristic
+            row['elem'].setStyleSheet("QLineEdit { border: 1px solid #cc3333; background-color: #330000; color: #ffecec; }")
+        self._validate_totals()
+
+    def _normalize(self) -> None:
+        total = sum(r['occ'].value() for r in self.rows) or 1.0
+        for r in self.rows:
+            r['occ'].setValue(r['occ'].value() / total)
+        self._validate_totals()
+
+    def _validate_totals(self) -> None:
+        total = sum(r['occ'].value() for r in self.rows)
+        over = total > 1.0000001
+        # red border on all occupancy widgets when overfull
+        style_bad = "QDoubleSpinBox { border: 1px solid #cc3333; }"
+        for r in self.rows:
+            r['occ'].setStyleSheet(style_bad if over else "")
+        # bubble up to parent dialog for OK state and error text
+        dlg = self.window()
+        try:
+            if hasattr(dlg, '_update_ok_state'):
+                dlg._update_ok_state()
+            if hasattr(dlg, '_set_site_error'):
+                msg = f"Occupation too large for site {self.letter}" if over else None
+                dlg._set_site_error(self.letter, msg)
+        except Exception:
+            pass
+
+    # Focus event filter to trigger highlighting only when user focuses a widget.
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        try:
+            if event.type() == QEvent.Type.FocusIn:
+                if callable(self._on_activity):
+                    self._on_activity(self.letter)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
+    def payload(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for r in self.rows:
+            elem = r['elem'].text().strip()
+            occ = float(r['occ'].value())
+            if not elem:
                 continue
-            token = snap['token']
-            lattice = snap['lattice']
-            positions = snap['positions']
-            highlight = snap['highlight']
+            out.append({'element': elem, 'occupancy': occ})
+        return out
 
-            # render on UI thread
-            def _apply():
-                if token != self._draw_counter:
-                    return
-                self.ax.clear()
-                if lattice is not None and lattice is not False:
-                    plot_lattice(self.ax, lattice)
-                # plot points by letter; highlight selected
-                import matplotlib.pyplot as _plt
-                cmap = _plt.get_cmap('Set1')
-                idx = 0
-                for letter in sorted(positions.keys()):
-                    pts = positions[letter]
-                    if lattice is not False and lattice is not None:
-                        pts = np.dot(pts, lattice)
-                    color = cmap(idx % 12)
-                    size = 25
-                    zorder = 2
-                    if letter == highlight:
-                        size = 60
-                        zorder = 3
-                    self.ax.scatter(*pts.T, color=color, s=size, depthshade=False, zorder=zorder, edgecolors='k' if letter == highlight else None)
-                    idx += 1
-                self.after_idle(lambda: self.canvas.draw())
+    def is_valid(self) -> bool:
+        # Require at least one valid element symbol and total between 0 and 1.0
+        has_valid_element = False
+        for r in self.rows:
+            elem = r['elem'].text().strip()
+            if elem:
+                if elem not in _VALID_SYMBOLS:
+                    return False
+                has_valid_element = True
+        
+        if not has_valid_element:
+            return False
+        
+        total = sum(r['occ'].value() for r in self.rows)
+        # Allow partial occupation: total must be > 0 and <= 1.0
+        return 0.0 < total <= 1.0 + 1e-6
 
-            try:
-                self.after(0, _apply)
-            except Exception:
-                pass
 
-    def _highlight(self, letter):
-        self._highlight_letter = letter
-        self._update_plot()
-
-    # ---- lifecycle ----
-    def destroy(self):
-        try:
-            self._worker_stop.set()
-            self._worker_event.set()
-        except Exception:
-            pass
-        return super().destroy()
-
-    # ---- result ----
-    def _on_ok(self):
-        # Validate all
-        for letter, arr in self.site_elements.items():
-            total = 0.0
-            for item in arr:
-                sym = item.get('var_sym').get().strip()
-                occ = 0.0
-                try:
-                    occ = float(item.get('var_occ').get())
-                except Exception:
-                    occ = -1
-                if sym and not self._is_symbol_valid(sym):
-                    self.warning_label.config(text=f"Invalid element '{sym}' in {letter}")
-                    return
-                if occ < 0 or occ > 1:
-                    self.warning_label.config(text=f"Invalid occupancy in {letter}")
-                    return
-                total += occ
-            if total > 1.0000001:
-                self.warning_label.config(text=f"Occupancy for {letter} exceeds 1.0 ({total:.3f})")
-                return
-
-        self.result = {
-            'spacegroup': self.sg_number,
-            'cell': Cell(self.cell) if self.cell is not None else None,
-            'wyckoff_positions': self.positions,
-            'site_elements': {
-                L: [
-                    {'symbol': item.get('var_sym').get().strip(), 'occupancy': float(item.get('var_occ').get() or 0.0)}
-                    for item in arr if item.get('var_sym').get().strip()
-                ]
-                for L, arr in self.site_elements.items()
-            }
-        }
-        # hide instead of destroy; signal completion
-        self.withdraw()
-        self._done.set(True)
-
-    def _on_cancel(self):
-        self.result = None
-        self.withdraw()
-        self._done.set(True)
-
-    def _on_back(self):
-        # Return a sentinel value so the caller can go back to spacegroup selector
-        self.result = 'back'
-        self.withdraw()
-        self._done.set(True)
-
-    # --- setup API to (re)initialize the dialog without recreating it ---
-    def setup(self, spacegroup=None, cell=None, wyckoff_positions=None, back: bool = False):
-        """Configure dialog state and UI for a new or repeated use.
-
-        - If any of spacegroup/cell/wyckoff_positions is None, clear related UI/data.
-        - If provided, initialize from values (accepts int or pyxtal Group for spacegroup,
-          ASE Cell-like for cell, and a dict mapping letter -> list of fractional positions).
-        - back toggles whether Back button should be presented for this session.
-        """
+class ElementAssignmentDialog(QDialog):
+    def __init__(self, parent: Optional[QWidget] = None, back: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("Assign Elements to Wyckoff Sites")
+        # Wider default window to accommodate expanded left panel
+        self.resize(1200, 650)
         self._allow_back = bool(back)
-        self._toggle_back_cancel()
-        self._done.set(False)
-        self.result = None
+        self._letter_widgets: Dict[str, _LetterRow] = {}
+        self._cell: Optional[np.ndarray] = None
+        self._wyckoff: Dict[str, Any] = {}
+        self._active_letter: Optional[str] = None
+        self._build_ui()
 
-        # Clear if any core input missing
-        if spacegroup is None or cell is None or wyckoff_positions is None:
-            self.sg_number = None
-            self.group = None
-            self.cell = None
-            self.positions = {}
-            self.site_elements = {}
-            # refresh UI
-            self._populate_letters()
-            self._update_plot()
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        root.addWidget(splitter, 1)
+
+        # Left: Scroll area for letters
+        left = QWidget()
+        left_v = QVBoxLayout(left)
+        self.scroll = QScrollArea(left)
+        self.scroll.setWidgetResizable(True)
+        self.container = QWidget()
+        self.scroll.setWidget(self.container)
+        self.container_layout = QVBoxLayout(self.container)
+        left_v.addWidget(self.scroll, 1)
+        # Keep left column wide enough and stable so headers and inputs fit
+        # Widen left panel for better readability of element rows
+        left.setFixedWidth(450)
+        # Initial splitter sizing (favor left slightly)
+        splitter.setSizes([470, 730])
+        splitter.addWidget(left)
+
+        # Right: 3D preview
+        right = QWidget()
+        right_v = QVBoxLayout(right)
+        self.fig = Figure(figsize=(4, 4))
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        self.canvas = FigureCanvas(self.fig)
+        right_v.addWidget(self.canvas, 1)
+        # Error label at the bottom of right panel (larger, centered)
+        self.error_label = QLabel("")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.error_label.setStyleSheet(
+            "QLabel { color: #cc3333; font-size: 14px; font-weight: 600; padding: 4px 0; }"
+        )
+        right_v.addWidget(self.error_label)
+        splitter.addWidget(right)
+
+        # Buttons
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        if self._allow_back:
+            self.back_btn = QPushButton("Back")
+            self.back_btn.clicked.connect(self._on_back)
+            btns.addWidget(self.back_btn)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(self.cancel_btn)
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.clicked.connect(self._on_ok)
+        self.ok_btn.setEnabled(False)
+        btns.addWidget(self.ok_btn)
+        root.addLayout(btns)
+
+    def setup(self, spacegroup: Optional[int] = None, cell: Any = None,
+              wyckoff_positions: Optional[Dict[str, Any]] = None, back: bool = False) -> None:
+        # reset state
+        self._allow_back = bool(back)
+        for child in list(self._letter_widgets.values()):
+            child.setParent(None)
+        self._wyckoff = wyckoff_positions or {}
+        self._cell = np.array(cell, dtype=float) if cell is not None else None
+        
+        if not wyckoff_positions:
+            self.ok_btn.setEnabled(False)
+            # still draw empty lattice if cell present
+            self._draw_preview()
             return
 
-        # Initialize from provided data
-        self.sg_number = int(spacegroup) if not isinstance(spacegroup, Group) else int(spacegroup.number)
-        self.group = spacegroup if isinstance(spacegroup, Group) else Group(int(spacegroup))
-        self.cell = np.asarray(cell) if cell is not None else None
-        self.positions = wyckoff_positions or {}
-        # reset site elements per letter
-        self.site_elements = {letter: [] for letter in sorted(self.positions.keys())}
-        # rebuild UI
-        self._populate_letters()
-        self._update_plot()
+        self._build_letter_rows(self._wyckoff)
+
+        # Spacer to consume remaining space
+        spacer = QWidget(self.container)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.container_layout.addWidget(spacer)
+
+        self._update_ok_state()
+        self._draw_preview()
+
+    def _build_letter_rows(self, wyckoff: Dict[str, Any], preserved_payloads: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> None:
+        for child in list(self._letter_widgets.values()):
+            child.setParent(None)
+            child.deleteLater()
+        self._letter_widgets.clear()
+
+        for letter, pos_list in wyckoff.items():
+            can_break = len(pos_list) > 1
+            row = _LetterRow(letter, self.container, on_activity=self._mark_active, on_break=self._break_letter, can_break=can_break)
+            # fractional coordinate hint from first position
+            p0 = pos_list[0]
+            coord = f"({p0[0]:.3f}, {p0[1]:.3f}, {p0[2]:.3f})"
+            mult = len(pos_list)
+            suffix = f"(multiplicity: {mult})  {coor}"
+            row.set_title_suffix(suffix)
+            if preserved_payloads and letter in preserved_payloads:
+                row.load_payload(preserved_payloads[letter])
+            self.container_layout.insertWidget(self.container_layout.count(), row)
+            self._letter_widgets[letter] = row
+
+        # Ensure a spacer at end
+        spacer = QWidget(self.container)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.container_layout.addWidget(spacer)
+
+    def _capture_payloads(self) -> Dict[str, List[Dict[str, Any]]]:
+        return {letter: w.payload() for letter, w in self._letter_widgets.items()}
+
+    def _break_letter(self, letter: str) -> None:
+        # Split a multi-position letter into independent subsites letter.1, letter.2, ...
+        arr = self._wyckoff[letter]
+        n = int(len(arr))
+        if n <= 1:
+            raise Exception("Cannot break a letter with only one position.")
+
+        preserved = self._capture_payloads()
+        base_payload = preserved.pop(letter)
+                
+        def new_wyckoff():
+            for k,v in self._wyckoff.items():
+                if k != letter:
+                    yield k,v
+                else:
+                    for i in range(n):
+                        sub_letter = f"{letter}.{i+1}"
+                        preserved[sub_letter] = base_payload[i:i+1]
+                        yield sub_letter, arr[i:i+1]
+                    self._active_letter = f"{letter}.1"
+
+        self._wyckoff = dict(new_wyckoff())        
+        self._build_letter_rows(self._wyckoff, preserved_payloads=preserved)                
+        self._update_ok_state()
+        self._draw_preview()
+
+    def _update_ok_state(self) -> None:
+        ok = bool(self._letter_widgets) and all(w.is_valid() for w in self._letter_widgets.values())
+        self.ok_btn.setEnabled(ok)
+
+    def _on_ok(self) -> None:
+        # Validate rows first
+        if not all(w.is_valid() for w in self._letter_widgets.values()):
+            return
+
+        # Build cartesian positions and per-atom kind indices
+        lattice = np.array(self._cell, dtype=float) if self._cell is not None else None
+
+        pos_blocks: List[np.ndarray] = []
+        kinds: List[int] = []
+
+        for letter, arr in self._wyckoff:
+            arr = self._wyckoff.get(L)
+            if arr is None or getattr(arr, 'size', 0) == 0:
+                continue
+            if lattice is not None:
+                cart = np.dot(arr, lattice)
+            else:
+                cart = np.array(arr, dtype=float)
+            pos_blocks.append(cart)
+            kinds.extend([letter] * len(cart))
+        if pos_blocks:
+            positions = np.vstack(pos_blocks)
+        else:
+            positions = np.empty((0, 3), dtype=float)
+
+        nat = len(positions)
+        # Construct an Atoms object with 'X' species (Z=0) for all sites
+        atoms = Atoms(numbers=[0] * nat, positions=positions, cell=self._cell, pbc=True)
+
+        # Build occupancy dictionaries per kind from UI rows
+        kind_dicts: List[dict] = [dict() for _ in letters]
+        for L, widget in self._letter_widgets.items():
+            k = letter_to_kind[L]
+            occs = widget.payload()  # list of {'element': sym, 'occupancy': val}
+            d: Dict[AtomicType, float] = {}
+            for it in occs:
+                sym = str(it.get('element', '')).strip()
+                try:
+                    val = float(it.get('occupancy', 0.0))
+                except Exception:
+                    val = 0.0
+                if not sym:
+                    continue
+                key = AtomicType(sym)
+                d[key] = d.get(key, 0.0) + val
+            kind_dicts[k] = d
+
+        # Attach arrays
+        atoms.set_array('spacegroup_kinds', np.asarray(kinds, dtype=int))
+        # Per-atom occupancy dictionary copied from its kind (dtype=object)
+        per_atom_occ = np.asarray([kind_dicts[k] for k in kinds], dtype=object) if kinds else np.empty((0,), dtype=object)
+        atoms.set_array('occupancy', per_atom_occ)
+        site_letters = np.asarray([letters[k] for k in kinds], dtype=object) if kinds else np.empty((0,), dtype=object)
+        atoms.set_array('site_letters', site_letters)
+
+        # Extra metadata helpful to downstream tools
+        atoms.info['occupancy_by_kind'] = np.asarray(kind_dicts, dtype=object)
+        atoms.info['kind_letters'] = letters
+        atoms.info['letter_to_kind'] = letter_to_kind
+
+        self._result = atoms
+        self.accept()
+
+    def _on_back(self) -> None:
+        self._result = 'back'
+        self.done(42)
+
+    def result_payload(self) -> Optional[Dict[str, Any]] | str:
+        return getattr(self, '_result', None)
+
+    def _mark_active(self, letter: str) -> None:
+        # Avoid redraw if the letter stays the same
+        if letter == self._active_letter:
+            return
+        self._active_letter = letter
+        self._draw_preview()
+
+    def _draw_preview(self) -> None:
+        try:
+            self.ax.clear()
+        except Exception:
+            return
+        lattice = self._cell
+        if lattice is None:
+            self.canvas.draw()
+            return
+        try:
+            plot_lattice(self.ax, lattice)
+        except Exception:
+            pass
+        # collect other vs active positions
+        others = []
+        active = []
+        try:
+            for letter, pos_list in (self._wyckoff or {}).items():
+                arr = pos_list
+                if self._active_letter and letter == self._active_letter:
+                    if arr.size:
+                        active.append(arr)
+                else:
+                    if arr.size:
+                        others.append(arr)
+        except Exception:
+            others = []
+            active = []
+        if others:
+            try:
+                plot_sites_in_lattice(self.ax, lattice, np.vstack(others), role='inactive')
+            except Exception:
+                pass
+        if active:
+            try:
+                plot_sites_in_lattice(self.ax, lattice, np.vstack(active), role='active')
+            except Exception:
+                pass
+        try:
+            self.canvas.draw()
+        except Exception:
+            pass
+
+    # ---- error aggregation helpers ----
+    def _set_site_error(self, letter: str, message: Optional[str]) -> None:
+        if not hasattr(self, '_site_errors'):
+            self._site_errors: Dict[str, Optional[str]] = {}
+        if message:
+            self._site_errors[letter] = message
+        else:
+            self._site_errors.pop(letter, None)
+        self._update_error_label()
+
+    def _update_error_label(self) -> None:
+        msgs = []
+        try:
+            for L, msg in (getattr(self, '_site_errors', {}) or {}).items():
+                if msg:
+                    msgs.append(msg)
+        except Exception:
+            msgs = []
+        self.error_label.setText("\n".join(msgs))
 
 
-# --- public API ---
-
-def select_site_elements(spacegroup, cell, wyckoff_positions, master=None, back: bool = False):
-    """Open the element-assignment dialog.
-
-    Accepts either separate (spacegroup, cell, positions) arguments or a 'selection'
-    dict returned by select_spacegroup.
-
-    Returns a dict mirroring select_spacegroup's with an extra 'site_elements' mapping.
-    Returns None if canceled.
+def select_site_elements(parent: Optional[QWidget] = None, *, spacegroup: Optional[int] = None,
+                         cell: Any = None, wyckoff_positions: Optional[Dict[str, Any]] = None,
+                         back: bool = False) -> Optional[Atoms] | str:
     """
-    # reuse or create one instance per master
-    key = master if master is not None else _EA_DEFAULT_KEY
-    dlg = _EA_SELECTOR_INSTANCES.get(key)
-    if dlg is None or not int(dlg.winfo_exists()):
-        dlg = ElementAssignmentDialog(master=master, back=back)
-        _EA_SELECTOR_INSTANCES[key] = dlg
-    # (Re)setup state and show dialog
-    dlg.setup(spacegroup=spacegroup, cell=cell, wyckoff_positions=wyckoff_positions, back=back)
+    PyQt6 element assignment dialog.
+    Expects wyckoff_positions as mapping letter->list of positions (to show multiplicity).
+
+        Returns an ase.Atoms instance with:
+            - positions in Cartesian coordinates (from wyckoff_positions and cell)
+            - array 'spacegroup_kinds' (int per atom; a->0, b->1, ...)
+            - array 'occupancy' (object array per atom: dict[AtomicType, float])
+            - info['occupancy_by_kind'] (list/dtype=object of dicts per kind)
+            - info['kind_letters'] and info['letter_to_kind'] mappings
+        Or 'back' or None.
+    """
+    key = parent if parent is not None else _DEFAULT_KEY
     try:
-        dlg.deiconify()
-        dlg.lift()
-        dlg.focus_set()
+        dlg = _DIALOGS.get(key)
     except Exception:
-        pass
-    if master is None:
-        dlg.wait_variable(dlg._done)
+        dlg = None
+    if dlg is None or not isinstance(dlg, ElementAssignmentDialog):
+        dlg = ElementAssignmentDialog(parent, back=back)
+        _DIALOGS[key] = dlg
     else:
-        master.wait_variable(dlg._done)
-    return getattr(dlg, 'result', None)
+        dlg._allow_back = bool(back)
+
+    dlg.setup(spacegroup=spacegroup, cell=cell, wyckoff_positions=wyckoff_positions, back=back)
+    code = dlg.exec()
+    if code == 42:
+        return 'back'
+    if code == QDialog.DialogCode.Accepted:
+        return dlg.result_payload()
+    return None

@@ -1,6 +1,29 @@
+from __future__ import annotations
+
 import numpy as np
 from itertools import product
 import matplotlib.pyplot as plt
+
+_SITE_ROLE_STYLES = {
+    'inactive': {
+        'color': '#7cc6ff',
+        'edgecolor': '#1c4b73',
+        'linewidths': 0.6,
+        's': 42,
+    },
+    'focused': {
+        'color': '#8a8a8a',
+        'edgecolor': 'none',
+        'linewidths': 0.0,
+        's': 56,
+    },
+    'active': {
+        'color': '#ff3232',
+        'edgecolor': 'black',
+        'linewidths': 1.0,
+        's': 68,
+    },
+}
 
 def bounding_box_corners(corners, preserve_ratio=True, padding=0.05):
     """
@@ -62,20 +85,53 @@ def plot_lattice(ax, lattice):
     ax.set_ylim(mn[1], mx[1])
     ax.set_zlim(mn[2], mx[2])
 
-def plot_sites_in_lattice(ax, lattice, points):
-    """
-    Plot atomic sites within a lattice on a given 3D axis.
-    Parameters:
-        ax: matplotlib 3D axis
-        lattice: np.array of shape [3,3] - lattice vectors as rows
-        points: iterable of np.array of shape [N,3] - fractional coordinates of atomic sites by kinds
-    """
-    cmap = plt.get_cmap("Set1")
-    i = 0
+def plot_sites_in_lattice(ax, lattice, points, *, role: str | None = None, **kwargs):
+    """Plot atomic sites inside a lattice using role-based styling.
 
-    for pos in points:
-        color = cmap(i % 20)
-        i += 1
-        if lattice is not False:
-            pos = np.dot(pos, lattice)
-        ax.scatter(*pos.T, color=color, s=25, depthshade=False)
+    Parameters
+    ----------
+    ax
+        Matplotlib 3D axis to draw on.
+    lattice
+        ``(3, 3)`` array (rows are lattice vectors) or ``False``/``None`` to skip conversion.
+    points
+        Fractional coordinates ``(N, 3)`` or an iterable of such arrays.
+    role
+        Optional semantic role: ``'inactive'``, ``'focused'``, or ``'active'`` to apply
+        consistent coloring with the Qt space-group selector.
+    kwargs
+        Forwarded to ``ax.scatter`` and override role defaults when provided.
+    """
+    if isinstance(points, (list, tuple)):
+        if not points:
+            return
+        points = np.vstack(points)
+
+    points = np.asarray(points, dtype=float)
+    if points.size == 0:
+        return
+    if points.ndim == 1:
+        if points.shape[0] != 3:
+            return
+        points = points.reshape(1, 3)
+
+    config = {
+        's': 25,
+        'depthshade': False,
+    }
+
+    if role:
+        style = _SITE_ROLE_STYLES.get(role)
+        if style:
+            for key, value in style.items():
+                config.setdefault(key, value)
+
+    config.update(kwargs)
+
+    if 'color' not in config:
+        config['color'] = 'red'
+
+    if lattice is not False and lattice is not None:
+        points = np.dot(points, lattice)
+
+    ax.scatter(*points.T, **config)
