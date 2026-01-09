@@ -16,7 +16,7 @@ This file avoids importing any Tkinter symbols and only uses PyQt6.
 """
 from __future__ import annotations
 
-from typing import Callable, Dict, Any, Iterable
+from typing import Callable, Dict, Any, Iterable, Optional
 
 from PyQt6.QtWidgets import QComboBox, QWidget, QLineEdit
 from PyQt6.QtGui import QDoubleValidator
@@ -64,19 +64,21 @@ def create_units_combo(parent: QWidget | None, callback: Callable[[float], None]
     return combo
 
 class QDoubleEdit(QLineEdit):
-      
+
       def __init__(self, min_val: float, max_val: float, decimals: int, parent: Optional[QWidget] = None):
            super().__init__(parent)
            validator = QDoubleValidator(min_val, max_val, decimals, self)
            validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-            
+
       def value(self)->Optional[float]:
            try:
                return float(self.text())
            except ValueError:
                return None
 
-def chain_dialogs(*funcs: Callable[..., Any], initial: Dict[str, Any] | None = None,
+def chain_dialogs(*funcs: Callable[..., Any],
+                  initial: list[Any] = [],
+                  kwargs:   Dict[str, Any] = {},
                   all: bool = False, back: bool | str = False):
     """Run a sequence of dialog-like callables that accept kwargs and return a dict/'back'/None.
 
@@ -101,23 +103,20 @@ def chain_dialogs(*funcs: Callable[..., Any], initial: Dict[str, Any] | None = N
     while i < len(funcs):
         func = funcs[i]
         # Determine args for current callable
-        if i == 0 and len(results) == 0:
-            args = dict(initial)
+        if i == 0:
+            args = initial
         else:
-            # For subsequent dialogs, pass the previous result as kwargs
-            prev_result = results[i - 1] if i - 1 < len(results) else {}
-            # If prev_result is a dict, use it; otherwise wrap it
-            if isinstance(prev_result, dict):
-                args = dict(prev_result)
-            else:
-                # Non-dict result (like Atoms), don't pass it forward
-                args = {}
+            # For subsequent dialogs, pass the previous result as args
+            args = results[i - 1]
+            if not isinstance(args, tuple):
+                args = (args,)
 
+        kw = kwargs.copy()
         if back and i > 0:
             key = 'back' if back is True else (back if isinstance(back, str) else 'back')
-            args[key] = True
+            kw[key] = True
 
-        result = func(**args)
+        result = func(*args, **kw)
 
         if result is None:
             return None
@@ -127,7 +126,6 @@ def chain_dialogs(*funcs: Callable[..., Any], initial: Dict[str, Any] | None = N
             i -= 1
             continue
 
-        # Store the result as-is (don't force to dict)
         if len(results) <= i:
             results.append(result)
         else:

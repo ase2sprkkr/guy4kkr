@@ -6,7 +6,7 @@
     "configurations": [
         {
             "name": "Python: guy4ase as package",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "module": "guy4ase.main",
             "cwd": "${workspaceFolder}/..",

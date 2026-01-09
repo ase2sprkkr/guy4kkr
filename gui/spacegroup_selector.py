@@ -16,12 +16,14 @@ from pyxtal.symmetry import Group
 from weakref import WeakKeyDictionary
 from itertools import zip_longest, chain
 from ase.cell import Cell
+from ase import Atoms
 
 from .lattice import plot_lattice, plot_sites_in_lattice
 from ..physics.pyxtal_utils import complete_lattice_params, lattice_from_params,\
                                    lattice_default_params, lattice_fixed_params,\
                                    WyckoffPosition
 from .common import create_units_combo, QDoubleEdit
+import numpy as np
 
 _DIALOGS = WeakKeyDictionary()
 
@@ -68,6 +70,11 @@ class SpaceGroupSelectorDialog(QDialog):
             Persistent Wyckoff DOF values remembered across dialog openings.
         """
         super().__init__(parent)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+        )
         self.setWindowTitle("Select Space Group")
         self.resize(1100, 700)
         self._allow_back = bool(back)
@@ -657,19 +664,39 @@ def select_spacegroup(parent: Optional[QWidget] = None, back: bool = False,
     if result == 42:
         return 'back'
     if result == QDialog.DialogCode.Accepted:
-        sg = dlg.selected_group
         lat = getattr(dlg, 'lattice', None)
-        positions = {}
-        if sg is not None:
-            for letter, wp in dlg.wyckoff_positions.items():
-                vals = dlg._selected_sites.get(letter, [])
-                for i, val in enumerate(vals):
-                    label = letter
-                    if len(vals) > 1:
-                        label = f"{letter}.{i + 1}"
-                    positions[label] = wp.all_positions_for_free_dofs(val)
         cell_obj = Cell(lat) if lat is not None and lat is not False else None
-        return {'spacegroup': int(sg.number) if sg else None, 'cell': cell_obj, 'wyckoff_positions': positions}
+
+        pos_blocks: List[np.ndarray] = []
+        kinds: List[int] = []
+        kind = 0
+        labels = []
+
+        sg = dlg.selected_group
+        for letter, wp in dlg.wyckoff_positions.items():
+            vals = dlg._selected_sites.get(letter, [])
+            for i, val in enumerate(vals):
+                label = letter
+                if len(vals) > 1:
+                    label = f"{letter}.{i + 1}"
+                pos = wp.all_positions_for_free_dofs(val)
+                cart = np.dot(pos, lat)
+                pos_blocks.append(cart)
+                kinds.extend([kind] * len(cart))
+                if len(cart) == 1:
+                    labels.append(label)
+                else:
+                    labels.extend(
+                        [f"{label}.{i}" for i in range (1, len(cart)+1)]
+                    )
+                kind +=1
+
+        positions = np.vstack(pos_blocks)
+        # Construct an Atoms object with 'X' species (Z=0) for all sites
+        atoms = Atoms(positions=positions, cell=lat, pbc=True)
+        atoms.set_array('labels', np.asarray(labels, dtype=object))
+        atoms.set_array('spacegroup_kinds', np.asarray(kinds, dtype=int))
+        return atoms
     return None
 
 
