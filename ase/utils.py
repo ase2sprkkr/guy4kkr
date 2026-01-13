@@ -3,9 +3,10 @@ import re
 
 def labels_for_partitions(atoms, partitions=None, sep='_'):
     """Generate unique labels for atom kinds, appending suffixes as needed."""
-    arr = atoms.get_array('labels')
-    if arr is None:
-        arr = atoms.sybmols
+    try:
+        arr = atoms.get_array('labels')
+    except KeyError:
+        arr = atoms.symbols
     partitions = partition_by_kinds(atoms) if partitions is None else partitions
     firsts = [ i[0] for i in partitions ]
     arr = arr[firsts]
