@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING, Any, Dict, Sequence
+from typing import Optional, Any, Dict, Sequence
 from pathlib import Path
+import json
+import os
 
 from PyQt6.QtCore import Qt, QEvent
-
-if TYPE_CHECKING:
-    from ase import Atoms
-
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView
+    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView, QToolButton
 )
 from PyQt6.QtGui import QAction, QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -19,14 +17,11 @@ from matplotlib.figure import Figure
 from matplotlib import cm
 from matplotlib.colors import to_hex
 import numpy as np
+import re
+import platformdirs
 
-try:
-    from ase import Atoms
-    from ase.io import read as ase_read, write as ase_write
-except ImportError:
-    Atoms = None
-    ase_read = None
-    ase_write = None
+from ase import Atoms
+from ase.io import read as ase_read, write as ase_write
 
 from .lattice import plot_lattice, plot_sites_in_lattice
 from .common import chain_dialogs
@@ -45,9 +40,144 @@ class MainWindow(QMainWindow):
         self.atoms: Optional[Any] = None  # ASE Atoms object
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
+        self._input_parameters = None
+
+        self._recent_files: list[str] = []
+        self._recent_menu: Optional[QMenu] = None
+        self._recent_start_button: Optional[QToolButton] = None
+        self._recent_start_menu: Optional[QMenu] = None
 
         self._build_ui()
+        self._load_recent_files()
+        self._refresh_recent_menu()
         self._update_structure_view()
+
+    def _config_dir(self) -> Path:
+        config_home = platformdirs.user_config_dir('guy4ase', appauthor='ase2sprkkr')
+        if config_home:
+            return Path(config_home)
+        return Path.home() / ".config"
+
+    def _recent_files_path(self) -> Path:
+        return self._config_dir() / "recent_files.json"
+
+    def _load_recent_files(self) -> None:
+        path = self._recent_files_path()
+        try:
+            if not path.exists():
+                self._recent_files = []
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                self._recent_files = [str(p) for p in data if isinstance(p, str)]
+            else:
+                self._recent_files = []
+        except Exception:
+            self._recent_files = []
+
+    def _save_recent_files(self) -> None:
+        path = self._recent_files_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._recent_files, indent=2), encoding="utf-8")
+        except Exception:
+            # Non-fatal (e.g. read-only home); keep UI working.
+            pass
+
+    def _add_recent_file(self, file_path: str) -> None:
+        file_path = str(Path(file_path))
+        try:
+            self._recent_files.remove(file_path)
+            self._recent_files.insert(0, file_path)
+        except ValueError:
+            self._recent_files = self._recent_files[:9]
+            self._recent_files.insert(0, file_path)
+        self._save_recent_files()
+        self._refresh_recent_menu()
+
+    def _clear_recent_files(self) -> None:
+        self._recent_files = []
+        self._save_recent_files()
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        if self._recent_menu is not None:
+            self._recent_menu.clear()
+
+            if not self._recent_files:
+                empty_action = QAction("(No recent files)", self)
+                empty_action.setEnabled(False)
+                self._recent_menu.addAction(empty_action)
+            else:
+                for file_path in self._recent_files:
+                    action = QAction(file_path, self)
+                    action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file(p))
+                    self._recent_menu.addAction(action)
+
+                self._recent_menu.addSeparator()
+                clear_action = QAction("Clear Recent", self)
+                clear_action.triggered.connect(self._clear_recent_files)
+                self._recent_menu.addAction(clear_action)
+
+        self._refresh_recent_start_button()
+
+    def _refresh_recent_start_button(self) -> None:
+        btn = self._recent_start_button
+        if btn is None:
+            return
+
+        has_recent = bool(self._recent_files)
+        btn.setVisible(has_recent)
+        if not has_recent:
+            return
+
+        most_recent = self._recent_files[0]
+        btn.setText(f"Continue: {Path(most_recent).name}")
+        btn.setToolTip(most_recent)
+
+        menu = self._recent_start_menu
+        if menu is None:
+            menu = QMenu(btn)
+            self._recent_start_menu = menu
+            btn.setMenu(menu)
+
+        menu.clear()
+        for file_path in self._recent_files[1:]:
+            action = QAction(file_path, self)
+            action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file(p))
+            menu.addAction(action)
+
+        if self._recent_files[1:]:
+            menu.addSeparator()
+
+        clear_action = QAction("Clear Recent", self)
+        clear_action.triggered.connect(self._clear_recent_files)
+        menu.addAction(clear_action)
+
+        # Primary click action loads most recent
+        try:
+            btn.clicked.disconnect()
+        except TypeError:
+            pass
+        btn.clicked.connect(lambda _checked=False, p=most_recent: self._open_recent_file(p))
+
+    def _open_recent_file(self, file_path: str) -> None:
+        path = Path(file_path)
+        if not path.exists():
+            QMessageBox.warning(self, "Missing File", f"File not found:\n{file_path}")
+            self._recent_files = [p for p in self._recent_files if p != file_path]
+            self._save_recent_files()
+            self._refresh_recent_menu()
+            return
+        self._load_structure_from_path(file_path)
+
+    def _load_structure_from_path(self, file_path: str) -> None:
+        try:
+            atoms = ase_read(file_path)
+            self.set_structure(atoms)
+            self._add_recent_file(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load structure:\n{str(e)}")
 
     def _build_ui(self) -> None:
         """Build the main UI layout."""
@@ -66,6 +196,13 @@ class MainWindow(QMainWindow):
         load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self._on_load_structure)
         structure_menu.addAction(load_action)
+
+        self._recent_menu = structure_menu.addMenu("Open &Recent")
+
+        assign_elements_action = QAction("&Edit the structure...", self)
+        assign_elements_action.setShortcut("Ctrl+E")
+        assign_elements_action.triggered.connect(self._on_assign_elements)
+        structure_menu.addAction(assign_elements_action)
 
         download_action = QAction("&Download from Materials Project...", self)
         download_action.triggered.connect(self._on_download_structure)
@@ -138,6 +275,15 @@ class MainWindow(QMainWindow):
         load_btn.clicked.connect(self._on_load_structure)
         welcome_layout.addWidget(load_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
+        # Recent start button (shown only when there are recent files)
+        self._recent_start_button = QToolButton(self.welcome_widget)
+        self._recent_start_button.setMinimumWidth(btn_width)
+        self._recent_start_button.setMinimumHeight(45)
+        self._recent_start_button.setStyleSheet("font-size: 11pt; padding: 8px;")
+        self._recent_start_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._recent_start_button.hide()
+        welcome_layout.addWidget(self._recent_start_button, 0, Qt.AlignmentFlag.AlignCenter)
+
         welcome_layout.addSpacing(15)
 
         download_btn = QPushButton("Download from Materials Project...")
@@ -200,7 +346,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.positions_table.setColumnWidth(0, 80)
         self.positions_table.setColumnWidth(1, 160)
-        self.positions_table.setColumnWidth(2, 90)
+        self.positions_table.setColumnWidth(2, 30)
         self.positions_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.positions_table.setMouseTracking(True)
         self.positions_table.viewport().setMouseTracking(True)
@@ -224,6 +370,11 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save_structure)
         actions_group_layout.addWidget(self.save_btn)
+
+        self.assign_elements_btn = QPushButton("Edit the structure")
+        self.assign_elements_btn.setEnabled(False)
+        self.assign_elements_btn.clicked.connect(self._on_assign_elements)
+        actions_group_layout.addWidget(self.assign_elements_btn)
 
         actions_group_layout.addSpacing(20)
 
@@ -279,14 +430,10 @@ class MainWindow(QMainWindow):
 
     def _on_load_structure(self) -> None:
         """Load structure from file."""
-        if ase_read is None:
-            QMessageBox.warning(self, "Import Error", "ASE library not available. Cannot load structure files.")
-            return
-
         from ase.io.formats import ioformats
 
         exts = {
-            ext
+            f"*.{ext}"
             for fmt in ioformats.values()
             for ext in (fmt.extensions or [])
         }
@@ -300,12 +447,7 @@ class MainWindow(QMainWindow):
         )
 
         if file_path:
-            try:
-                atoms = ase_read(file_path)
-                self.set_structure(atoms)
-                QMessageBox.information(self, "Success", f"Structure loaded from:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load structure:\n{str(e)}")
+            self._load_structure_from_path(file_path)
 
     def _on_download_structure(self) -> None:
         """Download structure from Materials Project."""
@@ -322,21 +464,30 @@ class MainWindow(QMainWindow):
         if self.atoms is None:
             return
 
-        if ase_write is None:
-            QMessageBox.warning(self, "Import Error", "ASE library not available. Cannot save structure files.")
-            return
+        from ase.io.formats import ioformats
+        exts = {
+            " ".join((f"*.{ext}" for ext in (fmt.extensions))) : fmt.name
+            for fmt in ioformats.values() if fmt.extensions
+        }
+        exts["*"] = "All Files"
 
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Save Structure File",
             "",
-            "CIF Files (*.cif);;XYZ Files (*.xyz);;VASP POSCAR (*.vasp *.POSCAR);;PDB Files (*.pdb);;All Files (*)"
+            ";;".join(f"{v} ({k})" for k, v in exts.items())
         )
 
         if file_path:
+            # Extract the extension from the selected filter
+            import re
+            match = re.search(r"\*\.(\w+)", selected_filter)
+            if match:
+                ext = match.group(1)
+                if not file_path.lower().endswith("." + ext):
+                    file_path += "." + ext
             try:
                 ase_write(file_path, self.atoms)
-                QMessageBox.information(self, "Success", f"Structure saved to:\n{file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
 
@@ -386,6 +537,7 @@ class MainWindow(QMainWindow):
     def _enable_actions(self, enabled: bool) -> None:
         """Enable or disable action buttons based on structure availability."""
         self.save_btn.setEnabled(enabled)
+        self.assign_elements_btn.setEnabled(enabled)
         self.create_input_btn.setEnabled(enabled)
         self.run_calc_btn.setEnabled(enabled)
 
@@ -427,6 +579,17 @@ class MainWindow(QMainWindow):
             return
         self._hovered_atom_index = row
         self._update_visualization()
+
+    def _on_assign_elements(self) -> None:
+        if self.atoms is None:
+            return
+
+        result = select_site_elements(self.atoms, parent=self, back=False)
+        if isinstance(result, str):
+            return
+        if result is None:
+            return
+        self.set_structure(result)
 
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is getattr(self, 'positions_table', None).viewport():
@@ -534,23 +697,22 @@ class MainWindow(QMainWindow):
                     counter[sym] += 1
                 else:
                     counter[sym] = 1
-                letter = f"{sym}.{counter[sym]}"
+                label = f"{sym}.{counter[sym]}"
 
-            occ = occs.get(kinds[i], None) if kind is not None else None
+            occ = occs.get(str(kinds[i]), None) if kind is not None else None
             comp_text = self._format_site_composition(occ) or sym
 
             item_site = QTableWidgetItem(label)
             item_comp = QTableWidgetItem(comp_text)
 
             color_hex = color_lookup.get(kind, '#1f77b4')
-            item_color = QTableWidgetItem(color_hex)
+            item_color = QTableWidgetItem("")
             qcolor = QColor(color_hex)
             item_color.setBackground(qcolor)
-            item_color.setToolTip(color_hex)
-            r, g, b, _ = qcolor.getRgb()
-            luminance = 0.299 * r + 0.587 * g + 0.114 * b
-            if luminance < 140:
-                item_color.setForeground(QColor("white"))
+            #r, g, b, _ = qcolor.getRgb()
+            #luminance = 0.299 * r + 0.587 * g + 0.114 * b
+            #if luminance < 140:
+            #    item_color.setForeground(QColor("white"))
 
             self.positions_table.setItem(i, 0, item_site)
             self.positions_table.setItem(i, 1, item_comp)
@@ -622,9 +784,9 @@ class MainWindow(QMainWindow):
                 continue
             if val <= 0.0:
                 continue
-            sym = getattr(species, 'symbol', str(species))
+            sym = re.sub(r'_\d+$', '', species)
             parts.append(f"{sym}:{val:.2f}")
-        return " ".join(parts) if parts else None
+        return ", ".join(parts) if parts else None
 
     def _collect_assigned_counts(self) -> Dict[str, float]:
         arrays = getattr(self.atoms, 'arrays', {}) if self.atoms is not None else {}
