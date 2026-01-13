@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
     QScrollArea, QDoubleSpinBox,
-    QSizePolicy, QSplitter, QStyle, QTableWidget, QHeaderView, QGroupBox
+    QSizePolicy, QSplitter, QStyle, QTableWidget, QHeaderView, QGroupBox, QFrame
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from ase import Atoms
+import re
 import numpy as np
 from weakref import WeakKeyDictionary
 from ase.data import chemical_symbols
@@ -45,25 +46,51 @@ class QLetterRow(QWidget):
         self.cell = cell
         self._on_activity = on_activity
         self._on_break = on_break
-        self.rows: List[Dict[str, Any]] = []
-        self.vbox = QVBoxLayout(self)
+        self.rows: list[Dict[str, Any]] = []
 
-        # Header with title and normalize button
-        header = QHBoxLayout()
-        self.title_label = QLabel()
-        header.addWidget(self.title_label)
-        header.addStretch(1)
+        # Two-column layout: left = element assignment, right = positions table
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(0)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 0)
+
+        # Site header (separate line, spans both columns)
+        header_w = QWidget(self)
+        header_v = QVBoxLayout(header_w)
+        header_v.setContentsMargins(0, 0, 0, 0)
+        header_v.setSpacing(2)
+        line = QFrame(header_w)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        header_v.addWidget(line)
+        self.site_label = QLabel()
+        f = self.site_label.font()
+        f.setBold(True)
+        self.site_label.setFont(f)
+        header_v.addWidget(self.site_label)
+        grid.addWidget(header_w, 0, 0, 1, 2)
+
+        left = QWidget(self)
+        left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.vbox = QVBoxLayout(left)
+        self.vbox.setContentsMargins(0, 0, 0, 0)
+
+        # Controls row
+        controls = QHBoxLayout()
+        controls.addStretch(1)
         self.normalize_btn = QPushButton("Normalize")
         self.normalize_btn.clicked.connect(self._normalize)
-        header.addWidget(self.normalize_btn)
+        controls.addWidget(self.normalize_btn)
         # Break symmetry button (visible only when multiplicity > 1)
         self.break_btn = QPushButton("Break symmetry")
         can_break = len(payload['positions']) > 1
         self.break_btn.setVisible(bool(can_break))
         if can_break and callable(self._on_break):
             self.break_btn.clicked.connect(lambda: self._on_break(self.payload))
-        header.addWidget(self.break_btn)
-        self.vbox.addLayout(header)
+        controls.addWidget(self.break_btn)
+        self.vbox.addLayout(controls)
 
         # Rows area
         self.rows_box = QVBoxLayout()
@@ -76,6 +103,55 @@ class QLetterRow(QWidget):
         add_row.addWidget(self.add_btn)
         self.vbox.addLayout(add_row)
 
+        # Positions table (fractional X/Y/Z per equivalent site)
+        # Positions on the right; title omitted (there is a global header above all sites)
+        self.positions_group = QGroupBox(self)
+        self.positions_group.setTitle("")
+        self.positions_group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        pos_v = QVBoxLayout(self.positions_group)
+        pos_v.setContentsMargins(6, 6, 6, 6)
+        self.positions_table = QTableWidget(0, 3, self.positions_group)
+        self.positions_table.setHorizontalHeaderLabels(["X", "Y", "Z"])
+        self.positions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.positions_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.positions_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.positions_table.horizontalHeader().setStretchLastSection(False)
+        self.positions_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        for j in range(3):
+            self.positions_table.setColumnWidth(j, 90)
+        pos_v.addWidget(self.positions_table)
+
+        pos_btns = QHBoxLayout()
+        pos_btns.addStretch(1)
+        self.add_pos_btn = QPushButton("＋")
+        self.add_pos_btn.setToolTip("Add position")
+        self.add_pos_btn.setFixedWidth(34)
+        self.add_pos_btn.clicked.connect(self._add_position)
+        pos_btns.addWidget(self.add_pos_btn)
+
+        self.del_pos_btn = QPushButton()
+        self.del_pos_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.del_pos_btn.setToolTip("Delete selected position")
+        self.del_pos_btn.setFixedWidth(34)
+        self.del_pos_btn.clicked.connect(self._delete_position)
+        pos_btns.addWidget(self.del_pos_btn)
+
+        pos_v.addLayout(pos_btns)
+
+        # Fixed width: just enough to fit the table
+        vh_w = self.positions_table.verticalHeader().sizeHint().width()
+        fw = self.positions_table.frameWidth()
+        table_w = sum(self.positions_table.columnWidth(j) for j in range(3)) + vh_w + fw * 2 + 2
+        m = pos_v.contentsMargins()
+        self.positions_table.setFixedWidth(table_w)
+        self.positions_group.setFixedWidth(table_w + m.left() + m.right())
+
+        grid.addWidget(left, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(self.positions_group, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
+
+        self._pos_spins: list[list[QDoubleSpinBox]] = []
+
         self.load_payload(payload)
 
     @property
@@ -84,16 +160,137 @@ class QLetterRow(QWidget):
 
     def load_payload(self, payload: Dict[str, Any]) -> None:
         self.payload = payload
-        positions = payload['positions']
-        p0 = positions[0]
-        coord = f"({p0[0]:.3f}, {p0[1]:.3f}, {p0[2]:.3f})"
-        mult = len(positions)
-        suffix = f"(multiplicity: {mult})  {coord}"
-        self.title_label.setText(f"Site {payload.get('label', '')}  {suffix}")
+        self.site_label.setText(f"Site kind {payload.get('label', '')}")
 
+        self._refresh_break_button()
+
+        self._rebuild_positions_table()
         self.load_occupancy(payload.get('occupancy', {}))
         self._validate_controls_state()
         self._validate_totals()
+
+    def _refresh_break_button(self) -> None:
+        try:
+            can_break = len(self.payload.get('positions', [])) > 1
+        except Exception:
+            can_break = False
+        self.break_btn.setVisible(bool(can_break))
+
+    def _rebuild_positions_table(self) -> None:
+        positions = self.payload.get('positions', [])
+        n_rows = len(positions)
+        old_rows = self.positions_table.rowCount()
+        self.positions_table.setRowCount(n_rows)
+        self._pos_spins = []
+
+        def setup(i, j, spin):
+            spin.setProperty("pos_row", i)
+            spin.setProperty("pos_col", j)
+            spin.valueChanged.connect(lambda v, r=i, c=j: self._on_position_changed(r, c, v))
+            spin.installEventFilter(self)
+            try:
+                spin.blockSignals(True)
+                spin.setValue(float(positions[i][j]))
+            except Exception:
+                spin.setValue(0.0)
+            finally:
+                spin.blockSignals(False)
+
+        for i in range(min(old_rows, n_rows)):
+            for j in range(3):
+                spin = self.positions_table.cellWidget(i, j)
+                if isinstance(spin, QDoubleSpinBox):
+                    try:
+                        spin.valueChanged.disconnect()
+                    except TypeError:
+                        pass
+                    setup(i, j, spin)
+
+        for i in range(old_rows, n_rows):
+            spin_row: list[QDoubleSpinBox] = []
+            for j in range(3):
+                spin = QDoubleSpinBox(self.positions_table)
+                spin.setRange(0.0, 1.0)
+                spin.setDecimals(4)
+                spin.setSingleStep(0.05)
+                spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+                self.positions_table.setCellWidget(i, j, spin)
+                spin_row.append(spin)
+                setup(i, j, spin)
+            self._pos_spins.append(spin_row)
+
+        header_h = self.positions_table.horizontalHeader().height()
+        row_h = self.positions_table.verticalHeader().defaultSectionSize()
+        self.positions_table.setMinimumHeight(header_h + n_rows * row_h + 2)
+        self.positions_table.setMaximumHeight(header_h + n_rows * row_h + 2)
+
+        # Enable delete only when there is more than one row
+        try:
+            self.del_pos_btn.setEnabled(n_rows > 1)
+        except Exception:
+            pass
+
+    def _current_position_row(self) -> int:
+        r = self.positions_table.currentRow()
+        return int(r) if r is not None and r >= 0 else 0
+
+    def _add_position(self) -> None:
+        pos = np.asarray(self.payload.get('positions', []), dtype=float)
+        if pos.ndim != 2 or pos.shape[1] != 3:
+            pos = np.zeros((0, 3), dtype=float)
+
+        if pos.shape[0] == 0:
+            new_row = np.zeros((1, 3), dtype=float)
+            pos = new_row
+            new_index = 0
+        else:
+            pos = np.vstack([pos, pos[-1].copy()])
+            new_index = pos.shape[0] - 1
+
+        self.payload['positions'] = pos
+        self._refresh_break_button()
+        self._rebuild_positions_table()
+        try:
+            self.positions_table.setCurrentCell(new_index, 0)
+        except Exception:
+            pass
+        try:
+            if callable(self._on_activity):
+                self._on_activity(self.label, new_index, True)
+        except Exception:
+            pass
+
+    def _delete_position(self) -> None:
+        pos = np.asarray(self.payload.get('positions', []), dtype=float)
+        if pos.ndim != 2 or pos.shape[1] != 3 or pos.shape[0] <= 1:
+            return
+
+        row = self._current_position_row()
+        row = max(0, min(row, pos.shape[0] - 1))
+        pos = np.delete(pos, row, axis=0)
+        self.payload['positions'] = pos
+        self._refresh_break_button()
+        self._rebuild_positions_table()
+
+        new_row = min(row, pos.shape[0] - 1)
+        try:
+            self.positions_table.setCurrentCell(new_row, 0)
+        except Exception:
+            pass
+        try:
+            if callable(self._on_activity):
+                self._on_activity(self.label, new_row, True)
+        except Exception:
+            pass
+
+    def _on_position_changed(self, row: int, col: int, value: float) -> None:
+        self.payload['positions'][row][col] = value
+        # Ensure preview updates immediately when positions change
+        try:
+            if callable(self._on_activity):
+                self._on_activity(self.label, row, True)
+        except Exception:
+            pass
 
     def load_occupancy(self, occupancy: Dict[Any, float]) -> None:
         """Replace current element rows with provided payload [{'element':sym,'occupancy':val},...]."""
@@ -107,6 +304,7 @@ class QLetterRow(QWidget):
             self._add_row()
         else:
             for symbol, occ in occupancy.items():
+                symbol = symbol.sub(r'_\d+$', '', s)
                 self._add_row(element=getattr(symbol, "symbol", str(symbol)), occ=occ)
 
     def add_row(self) -> None:
@@ -149,7 +347,6 @@ class QLetterRow(QWidget):
         occ_spin.setValue(occ)
         label_occ = QLabel("occupation")
         label_occ.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        h.addWidget(label_occ)
         occ_spin.setFixedWidth(70)
         h.addWidget(occ_spin)
 
@@ -238,8 +435,19 @@ class QLetterRow(QWidget):
     def eventFilter(self, obj, event):  # type: ignore[override]
         try:
             if event.type() == QEvent.Type.FocusIn:
+                if isinstance(obj, QDoubleSpinBox):
+                    r = obj.property("pos_row")
+                    c = obj.property("pos_col")
+                    if r is not None and c is not None:
+                        try:
+                            self.positions_table.setCurrentCell(int(r), int(c))
+                        except Exception:
+                            pass
                 if callable(self._on_activity):
-                    self._on_activity(self.label)
+                    if isinstance(obj, QDoubleSpinBox) and obj.property("pos_row") is not None:
+                        self._on_activity(self.label, int(obj.property("pos_row")), False)
+                    else:
+                        self._on_activity(self.label)
         except Exception:
             pass
         return super().eventFilter(obj, event)
@@ -261,7 +469,7 @@ class QLetterRow(QWidget):
         # Allow partial occupation: total must be > 0 and <= 1.0
         return 0.0 < total <= 1.0 + 1e-6
 
-    def resulting_payload(self) -> List[Dict[str, Any]]:
+    def resulting_payload(self) -> list[Dict[str, Any]]:
         payload = self.payload
         occs = {}
         for r in self.rows:
@@ -276,9 +484,9 @@ class QLetterRow(QWidget):
         return payload
 
     @classmethod
-    def payload_from_atoms(cls, atoms: Atoms) -> List[Dict[str, Any]]:
+    def payload_from_atoms(cls, atoms: Atoms) -> list[Dict[str, Any]]:
         """Extract payload from atoms."""
-        payloads: List[Dict[str, Any]] = []
+        payloads: list[Dict[str, Any]] = []
         parts = partition_by_kinds(atoms)
         kinds = atoms.get_array('spacegroup_kinds') if 'spacegroup_kinds' in atoms.arrays else None
         occs = atoms.info.get('occupancy', {})
@@ -292,11 +500,14 @@ class QLetterRow(QWidget):
             sym = atoms[first].symbol
             if occs and kinds is not None:
                 kind = kinds[first]
-                occ = occs.get(kind, {})
-            elif sym!='X':
-                occ = {sym: 1.0}
+                occ = occs.get(str(kind), None)
             else:
-                occ = {'': 1.0}
+                occ = None
+            if occ is None:
+                if sym == 'X':
+                    occ = {}
+                else:
+                    occ = { sym: 1.0 }
             payloads.append({
                 'label': label,
                 'occupancy': occ,
@@ -315,11 +526,11 @@ class ElementAssignmentDialog(QDialog):
             | Qt.WindowType.WindowMinimizeButtonHint
         )
         # Wider default window to accommodate expanded left panel
-        self.resize(1200, 650)
+        self.resize(1400, 650)
         self._allow_back = bool(back)
-        self._letter_widgets: [LetterRow] = []
+        self._letter_widgets: list[QLetterRow] = []
         self._cell: Optional[np.ndarray] = None
-        self._active_letter: Optional[str] = None
+        self._active_letter: tuple(Optional[str],Optional[int]) = (None, None)
         self._site_errors: Dict[str, Optional[str]] = {}
         self._build_ui()
 
@@ -342,9 +553,9 @@ class ElementAssignmentDialog(QDialog):
         left_v.addWidget(self.scroll, 1)
         # Keep left column wide enough and stable so headers and inputs fit
         # Widen left panel for better readability of element rows
-        left.setMinimumWidth(550)
-        # Initial splitter sizing (favor left slightly)
-        splitter.setSizes([470, 730])
+        left.setMinimumWidth(750)
+        # Initial splitter sizing (favor left)
+        splitter.setSizes([850, 550])
         splitter.addWidget(left)
 
         # Right: 3D preview
@@ -429,27 +640,61 @@ class ElementAssignmentDialog(QDialog):
         payload = QLetterRow.payload_from_atoms(atoms)
         self._build_site_rows(payload)
 
+        self._update_ok_state()
+        self._draw_preview()
+
+    def _build_site_rows(self, payloads) -> None:
+        # Clear entire container layout (prevents duplicated spacers/headers across setups)
+        while self.container_layout.count():
+            item = self.container_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        self._letter_widgets.clear()
+
+        # Build site rows
+        for payload in payloads:
+            row = QLetterRow(payload, self._atoms.cell, self.container, on_activity=self._mark_active, on_break=self._break_site)
+            self.container_layout.addWidget(row)
+            self._letter_widgets.append(row)
+
+        # Global headers above all sites: left = Occupation, right = Positions
+        if self._letter_widgets:
+            first = self._letter_widgets[0]
+            header = QWidget(self.container)
+            header_grid = QGridLayout(header)
+            header_grid.setContentsMargins(0, 0, 0, 6)
+            header_grid.setHorizontalSpacing(10)
+            header_grid.setColumnStretch(0, 1)
+            header_grid.setColumnStretch(1, 0)
+
+            occ_lbl = QLabel("Occupation")
+            f = occ_lbl.font()
+            f.setBold(True)
+            occ_lbl.setFont(f)
+
+            pos_lbl = QLabel("Positions")
+            pos_lbl.setFont(f)
+            pos_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            try:
+                pm = first.positions_group.layout().contentsMargins()
+                pos_lbl.setContentsMargins(pm.left(), 0, 0, 0)
+            except Exception:
+                pass
+            pos_lbl.setFixedWidth(first.positions_group.sizeHint().width())
+
+            header_grid.addWidget(occ_lbl, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            header_grid.addWidget(pos_lbl, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            self.container_layout.insertWidget(0, header)
+
         # Spacer to consume remaining space
         spacer = QWidget(self.container)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.container_layout.addWidget(spacer)
 
-        self._update_ok_state()
-        self._draw_preview()
-
-    def _build_site_rows(self, payloads) -> None:
-        for child in list(self._letter_widgets):
-            child.setParent(None)
-            child.deleteLater()
-        self._letter_widgets.clear()
-
-        for i, payload in enumerate(payloads):
-            row = QLetterRow(payload, self._atoms.cell, self.container, on_activity=self._mark_active, on_break=self._break_site)
-            # fractional coordinate hint from first position
-            self.container_layout.insertWidget(self.container_layout.count(), row)
-            self._letter_widgets.append(row)
-
-    def _capture_payloads(self) -> Dict[str, List[Dict[str, Any]]]:
+    def _capture_payloads(self) -> Dict[str, list[Dict[str, Any]]]:
         return [ w.resulting_payload() for w in self._letter_widgets ]
 
     def _break_site(self, payload) -> None:
@@ -494,8 +739,8 @@ class ElementAssignmentDialog(QDialog):
         if not all(w.is_valid() for w in self._letter_widgets):
             return
 
-        pos_blocks: List[np.ndarray] = []
-        kinds: List[int] = []
+        pos_blocks: list[np.ndarray] = []
+        kinds: list[int] = []
         symbols = []
         labels = []
         occupancy: Dict[int, Dict[Any, float]] = {}
@@ -510,7 +755,7 @@ class ElementAssignmentDialog(QDialog):
         regions = []
         if sprkkr:
             for r in atoms.regions:
-                regions.append(r, set(r.ids(), []))
+                regions.append((r, set(r.ids()), []))
 
         for kind, payload in enumerate(payloads):
             cart = np.dot(payload['positions'], self._cell)
@@ -518,7 +763,7 @@ class ElementAssignmentDialog(QDialog):
             pos_blocks.append(cart)
             kinds.extend([kind] * ln)
             occs = payload['occupancy']
-            occupancy[kind] = occs
+            occupancy[str(kind)] = occs
             symbol = next(iter(occs.keys()), 'X')
 
             o = payload.get('index')
@@ -558,7 +803,7 @@ class ElementAssignmentDialog(QDialog):
                 del atoms.sites
             if regions:
                 for r, ids, new in regions:
-                    region.copy_for_atoms(atoms, new)
+                    r.copy_for_atoms(atoms, new)
 
         atoms.cell = self._cell
         atoms.symbols = symbols
@@ -573,11 +818,11 @@ class ElementAssignmentDialog(QDialog):
         self._result = 'back'
         self.done(42)
 
-    def _mark_active(self, letter: str) -> None:
+    def _mark_active(self, label: str, index:int=None, force=False) -> None:
         # Avoid redraw if the letter stays the same
-        if letter == self._active_letter:
+        if not force and (label, index) == self._active_letter:
             return
-        self._active_letter = letter
+        self._active_letter = (label, index)
         self._draw_preview()
 
     def _on_lattice_vector_changed(self, value: float) -> None:
@@ -598,9 +843,15 @@ class ElementAssignmentDialog(QDialog):
         # collect other vs active positions
         others = []
         active = []
+        label, index = self._active_letter
 
         for w in self._letter_widgets:
-            if self._active_letter == w.label:
+            if label == w.label:
+                if index is not None:
+                    active.append( w.payload['positions'][index:index+1] )
+                    others.append( w.payload['positions'][:index] )
+                    others.append( w.payload['positions'][index+1:] )
+                    continue
                 to = active
             else:
                 to = others
