@@ -27,6 +27,7 @@ from .lattice import plot_lattice, plot_sites_in_lattice
 from .common import chain_dialogs
 from .spacegroup_selector import select_spacegroup
 from .element_assignment import select_site_elements
+from .input_parameters_dialog import select_input_parameters
 
 
 class MainWindow(QMainWindow):
@@ -496,13 +497,10 @@ class MainWindow(QMainWindow):
         if self.atoms is None:
             return
 
-        QMessageBox.information(
-            self,
-            "SPRKKR Input",
-            "SPRKKR input file generation not yet implemented.\n\n"
-            "This will create input files for SPRKKR calculations."
-        )
-        # TODO: Implement SPRKKR input generation
+        params = select_input_parameters(self.atoms, parent=self)
+        if params is None:
+            return
+        self._input_parameters = params
 
     def _on_run_sprkkr_calculation(self) -> None:
         """Run SPRKKR calculation."""
