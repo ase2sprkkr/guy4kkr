@@ -107,7 +107,7 @@ class QLetterRow(QWidget):
         # Positions on the right; title omitted (there is a global header above all sites)
         self.positions_group = QGroupBox(self)
         self.positions_group.setTitle("")
-        self.positions_group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.positions_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         pos_v = QVBoxLayout(self.positions_group)
         pos_v.setContentsMargins(6, 6, 6, 6)
         self.positions_table = QTableWidget(0, 3, self.positions_group)
@@ -115,11 +115,8 @@ class QLetterRow(QWidget):
         self.positions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.positions_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.positions_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.positions_table.horizontalHeader().setStretchLastSection(False)
+        self.positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.positions_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        for j in range(3):
-            self.positions_table.setColumnWidth(j, 90)
         pos_v.addWidget(self.positions_table)
 
         pos_btns = QHBoxLayout()
@@ -138,14 +135,6 @@ class QLetterRow(QWidget):
         pos_btns.addWidget(self.del_pos_btn)
 
         pos_v.addLayout(pos_btns)
-
-        # Fixed width: just enough to fit the table
-        vh_w = self.positions_table.verticalHeader().sizeHint().width()
-        fw = self.positions_table.frameWidth()
-        table_w = sum(self.positions_table.columnWidth(j) for j in range(3)) + vh_w + fw * 2 + 2
-        m = pos_v.contentsMargins()
-        self.positions_table.setFixedWidth(table_w)
-        self.positions_group.setFixedWidth(table_w + m.left() + m.right())
 
         grid.addWidget(left, 1, 0, alignment=Qt.AlignmentFlag.AlignTop)
         grid.addWidget(self.positions_group, 1, 1, alignment=Qt.AlignmentFlag.AlignTop)
@@ -304,7 +293,7 @@ class QLetterRow(QWidget):
             self._add_row()
         else:
             for symbol, occ in occupancy.items():
-                symbol = symbol.sub(r'_\d+$', '', s)
+                symbol = re.sub(r'_\d+$', '', symbol)
                 self._add_row(element=getattr(symbol, "symbol", str(symbol)), occ=occ)
 
     def add_row(self) -> None:
@@ -768,7 +757,7 @@ class ElementAssignmentDialog(QDialog):
 
             o = payload.get('index')
             if not changed:
-                if o is not None and np.all( np.arange(start, start+ln) == o ):
+                if o is None or not np.all( np.arange(start, start+ln) == o ):
                     changed = True
 
             if regions is not None:
@@ -788,15 +777,21 @@ class ElementAssignmentDialog(QDialog):
         if changed:
             piter = iter(payloads)
             p = next(piter)
-            if p['index'] is not None:
+            o = p['index']
+            pos = p['positions']
+            if o is not None and len(o) == len(pos):
                 new = atoms[p['index']]
             else:
-                new = atoms(positions=payloads[0], cell=self._cell, pbc=True)
+                new = Atoms(positions=pos, cell=self._cell, pbc=True)
             for p in piter:
-                if p['index'] is not None:
+                o = p['index']
+                pos = p['positions']
+                if o is not None and len(o) == len(pos):
                     new += atoms[p['index']]
                 else:
-                    new += atoms(positions=p['positions'],)
+                    new += atoms(positions=pos)
+            atoms = new
+            sprkkr = False
 
         if sprkkr:
             if atoms.are_sites_inited():
