@@ -15,9 +15,11 @@ from typing import Any, Optional, Dict
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget, QTreeWidgetItem,
-    QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QLabel
+    QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QLabel,
+    QComboBox
 )
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
+import numpy as np
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from ase2sprkkr.common.configuration_containers import Section  # type: ignore
@@ -25,95 +27,55 @@ from ase2sprkkr.common.grammar_types import (
     Integer, Real, Boolean, String, Keyword, Energy, Array
 )  # type: ignore
 
-# --- editor factory helpers ---
-
 
 class _ValueChangedEvent(QObject):
     changed = pyqtSignal(object)
 
+def coalesce(*args):
+    for a in args:
+        if a is not None:
+            return a
+    return None
 
 def _editor_integer(opt: Any, item: QTreeWidgetItem) -> QWidget:
     grammar_type = opt._definition.grammar_type
     current = opt._value
     ev = _ValueChangedEvent()
+    lo = coalesce(grammar_type.min, np.iinfo(np.int32).min)
+    hi = coalesce(grammar_type.max, np.iinfo(np.int32).max)
+    box = QSpinBox()
+    box.setRange(lo,hi)
     try:
-        min_v = getattr(grammar_type, 'min', None)
-        max_v = getattr(grammar_type, 'max', None)
+        box.setValue(int(opt._value))
     except Exception:
-        min_v = None
-        max_v = None
-    use_spin = (
-        min_v is not None and max_v is not None
-        and isinstance(min_v, int) and isinstance(max_v, int)
-        and -2_000_000_000 <= min_v <= 2_000_000_000
-        and -2_000_000_000 <= max_v <= 2_000_000_000
-    )
-    if use_spin:
-        box = QSpinBox()
-        box.setRange(min_v, max_v)
-        try:
-            box.setValue(int(current))
-        except Exception:
-            pass
-        box.setToolTip(f"Integer range [{min_v}, {max_v}]")
-        box.valueChanged.connect(lambda v: ev.changed.emit(int(v)))
-        return box, ev
-
-    edit = QLineEdit()
-    if current is not None:
-        edit.setText(str(current))
-    rng_txt = (
-        "(unbounded integer; expected magnitude up to ~1e16)"
-        if min_v is None or max_v is None
-        else f"[{min_v}, {max_v}]"
-    )
-    edit.setToolTip(f"Integer {rng_txt}")
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
-    return edit, ev
-
+        pass
+    box.valueChanged.connect(lambda v: ev.changed.emit(v))
+    return box, ev
 
 def _editor_real(opt: Any, item: QTreeWidgetItem):
     grammar_type = opt._definition.grammar_type
-    current = opt._value
     ev = _ValueChangedEvent()
-    try:
-        min_v = getattr(grammar_type, 'min', None)
-        max_v = getattr(grammar_type, 'max', None)
-    except Exception:
-        min_v = None
-        max_v = None
-    lo = float(min_v) if isinstance(min_v, (int, float)) else -1e16
-    hi = float(max_v) if isinstance(max_v, (int, float)) else 1e16
+    lo = coalesce(grammar_type.min, -1e16)
+    hi = coalesce(grammar_type.max, 1e16)
     box = QDoubleSpinBox()
     box.setDecimals(8)
     box.setRange(lo, hi)
+    box.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
     try:
-        box.setValue(float(current))
+        box.setValue(opt._value)
     except Exception:
         pass
-    box.setToolTip(
-        f"Real range [{lo}, {hi}]" if (min_v is not None and max_v is not None) else "Unbounded real (~±1e16)"
-    )
     box.valueChanged.connect(lambda v: ev.changed.emit(float(v)))
     return box, ev
-
 
 def _editor_energy(opt: Any, item: QTreeWidgetItem):
     grammar_type = opt._definition.grammar_type
     current = opt._value
     ev = _ValueChangedEvent()
-    try:
-        min_v = getattr(grammar_type, 'min', None)
-        max_v = getattr(grammar_type, 'max', None)
-    except Exception:
-        min_v = None
-        max_v = None
-    lo = float(min_v) if isinstance(min_v, (int, float)) else -1e16
-    hi = float(max_v) if isinstance(max_v, (int, float)) else 1e16
+    lo = coalesce(grammar_type.min, -1e16)
+    hi = coalesce(grammar_type.max, 1e16)
 
     cont = QWidget()
-    from PyQt6.QtWidgets import QHBoxLayout, QComboBox
-
     h = QHBoxLayout(cont)
     h.setContentsMargins(0, 0, 0, 0)
     val_spin = QDoubleSpinBox()
@@ -142,9 +104,12 @@ def _editor_energy(opt: Any, item: QTreeWidgetItem):
     h.addWidget(unit_combo, 1)
     cont._energy_value = val_spin
     cont._energy_unit = unit_combo
-    cont.setToolTip(f"Energy [{lo}, {hi}] units selectable")
-    val_spin.valueChanged.connect(lambda _v: ev.changed.emit(_get_editor_value(cont)))
-    unit_combo.currentTextChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(cont)))
+
+    def _get_energy_value():
+        return (val_spin.value(), unit_combo.currentText())
+
+    val_spin.valueChanged.connect(lambda _v: ev.changed.emit(_get_energy_value()))
+    unit_combo.currentTextChanged.connect(lambda _t: ev.changed.emit(_get_energy_value()))
     return cont, ev
 
 
@@ -167,26 +132,16 @@ def _editor_keyword(opt: Any, item: QTreeWidgetItem):
     from PyQt6.QtWidgets import QComboBox
 
     combo = QComboBox()
-    keywords = getattr(grammar_type, 'keywords', None)
-    if keywords and hasattr(keywords, '__iter__'):
-        for kw in keywords:
-            combo.addItem(str(kw))
-        try:
-            idx = combo.findText(str(current))
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-        except Exception:
-            pass
-        combo.setToolTip("Keyword enum")
-        combo.currentTextChanged.connect(lambda t: ev.changed.emit(t))
-        return combo, ev
-
-    edit = QLineEdit()
-    if current is not None:
-        edit.setText(str(current))
-    edit.setToolTip("Keyword (no keyword list provided)")
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
-    return edit, ev
+    for kw, info in grammar_type.items():
+        if info is None:
+            info = str(kw)
+        else:
+            info = str(kw) + ": " + str(info)
+        combo.addItem(info, kw)
+        if current == kw:
+            combo.setCurrentIndex(combo.count() - 1)
+    combo.currentTextChanged.connect(lambda t: ev.changed.emit(t))
+    return combo, ev
 
 
 def _editor_array(opt: Any, item: QTreeWidgetItem):
@@ -199,21 +154,17 @@ def _editor_array(opt: Any, item: QTreeWidgetItem):
             edit.setText(",".join(map(str, current)))
         else:
             edit.setText(str(current))
-    try:
-        min_len = getattr(grammar_type, 'min_length', None)
-        max_len = getattr(grammar_type, 'max_length', None)
-        item_type = getattr(grammar_type, 'type', None)
-        item_cls_name = item_type.__class__.__name__ if item_type is not None else '?'
-    except Exception:
-        min_len = None
-        max_len = None
-        item_type = None
-        item_cls_name = '?'
-    rng = f"[{min_len},{max_len}]" if (min_len is not None and max_len is not None) else "variable length"
-    edit.setToolTip(f"Array of {item_cls_name} length {rng}; comma separated values")
-    edit._array_item_type = item_type
-    edit._array_min = min_len
-    edit._array_max = max_len
+    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
+    return edit, ev
+
+
+def _editor_unknown(opt: Any, item: QTreeWidgetItem):
+    grammar_type = opt._definition.grammar_type
+    current = opt._value
+    ev = _ValueChangedEvent()
+    edit = QLineEdit()
+    if current is not None:
+        edit.setText(str(current))
     edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
     return edit, ev
 
@@ -224,19 +175,20 @@ def _editor_string(opt: Any, item: QTreeWidgetItem):
     edit = QLineEdit()
     if current is not None:
         edit.setText(str(current))
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
+
+    def changed(_t: str):
+        try:
+            out = opt._definition.grammar_type.parse(_t)
+        except Exception as e:
+            edit.setStyleSheet("border: 2px solid red;")
+            edit.setToolTip(str(e))
+        else:
+            edit.setStyleSheet("")
+            edit.setToolTip("")
+            ev.changed.emit(out)
+
+    edit.textChanged.connect(changed)
     return edit, ev
-
-
-def _editor_unknown(opt: Any, item: QTreeWidgetItem):
-    current = opt._value
-    ev = _ValueChangedEvent()
-    edit = QLineEdit()
-    if current is not None:
-        edit.setText(str(current))
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
-    return edit, ev
-
 
 _EDITOR_DISPATCH = {
     Integer: _editor_integer,
@@ -258,66 +210,36 @@ def _make_editor(opt: Any, item: QTreeWidgetItem):
     editor._changed_event = ev
     return editor, ev
 
-def _get_editor_value(w: QWidget) -> Any:
-    """Extract a python value from an editor widget created by _make_editor."""
-    if isinstance(w, QSpinBox):
-        return int(w.value())
-    if isinstance(w, QDoubleSpinBox):
-        return float(w.value())
-    if isinstance(w, QCheckBox):
-        return bool(w.isChecked())
-    from PyQt6.QtWidgets import QComboBox
-    if isinstance(w, QComboBox):
-        return w.currentText()
-    # Energy composite
-    if hasattr(w, '_energy_value') and hasattr(w, '_energy_unit'):
-        try:
-            val = float(w._energy_value.value())
-            unit = w._energy_unit.currentText()
-            return (val, unit)
-        except Exception:
-            return None
-    from PyQt6.QtWidgets import QLineEdit
-    if hasattr(w, '_editor_child'):
-        # composite path container
-        return _get_editor_value(w._editor_child)  # type: ignore
-    if isinstance(w, QLineEdit):
-        # Array detection
-        if hasattr(w,'_array_item_type'):
-            raw = w.text().strip()
-            if raw == '':
-                return []
-            parts = [p.strip() for p in raw.split(',')]
-            # Simple conversion for numeric underlying types
-            item_type = getattr(w,'_array_item_type',None)
-            try:
-                if item_type.__class__.__name__ in ('Integer','Real','Energy'):
-                    out = []
-                    for p in parts:
-                        if item_type.__class__.__name__=='Integer':
-                            out.append(int(p))
-                        else:
-                            out.append(float(p))
-                    return out
-            except Exception:
-                pass
-            return parts
-        return w.text()
-    return None
-
-
 class InputParametersDialog(QDialog):
     def __init__(self, params: InputParameters, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._params = params
         self.setWindowTitle('Edit Input Parameters')
         self.resize(800, 600)
+
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText("Filter by name…")
+        self._filter_clear_btn = QPushButton("Clear")
+        self._expand_all_btn = QPushButton("Expand all")
+        self._collapse_all_btn = QPushButton("Collapse all")
+
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(3)
-        self._tree.setHeaderLabels(['Name', 'Type', 'Value'])
+        self._tree.setColumnCount(4)
+        self._tree.setHeaderLabels(['Name', 'Type', 'Value', 'Comment'])
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._build_tree()
 
         root = QVBoxLayout(self)
+        header = QWidget(self)
+        header_l = QHBoxLayout(header)
+        header_l.setContentsMargins(0, 0, 0, 0)
+        header_l.addWidget(QLabel("Search:"))
+        header_l.addWidget(self._filter_edit, 1)
+        header_l.addWidget(self._filter_clear_btn)
+        header_l.addStretch(1)
+        header_l.addWidget(self._expand_all_btn)
+        header_l.addWidget(self._collapse_all_btn)
+        root.addWidget(header, 0)
         root.addWidget(self._tree, 1)
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -329,40 +251,80 @@ class InputParametersDialog(QDialog):
         btns.addWidget(self.ok_btn)
         root.addLayout(btns)
 
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        self._filter_clear_btn.clicked.connect(self._clear_filter)
+        self._expand_all_btn.clicked.connect(self._tree.expandAll)
+        self._collapse_all_btn.clicked.connect(self._tree.collapseAll)
+
+    def _clear_filter(self) -> None:
+        self._filter_edit.setText("")
+        self._filter_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _apply_filter(self, text: str) -> None:
+        needle = (text or "").strip().lower()
+
+        def visit(item: QTreeWidgetItem) -> bool:
+            if not needle:
+                for i in range(item.childCount()):
+                    visit(item.child(i))
+                item.setHidden(False)
+                return True
+
+            self_match = needle in (item.text(0) or "").lower()
+            child_match = False
+            for i in range(item.childCount()):
+                if visit(item.child(i)):
+                    child_match = True
+            visible = self_match or child_match
+            item.setHidden(not visible)
+            return visible
+
+        for i in range(self._tree.topLevelItemCount()):
+            visit(self._tree.topLevelItem(i))
+
     def _build_tree(self) -> None:
         self._build_section(self._params)
 
     def _build_section(self, parent, treeitem = None) -> None:
-        expert_parent: Optional[QTreeWidgetItem] = None
+
+        _expert_parent: Optional[QTreeWidgetItem] = None
+
+        def add(parent_item, child_item):
+            if parent_item is None:
+                self._tree.addTopLevelItem(child_item)
+            else:
+                parent_item.addChild(child_item)
+        def expert_parent() -> QTreeWidgetItem:
+            nonlocal _expert_parent
+            if _expert_parent is None:
+                _expert_parent = QTreeWidgetItem(["expert", "", "", "Expert options"])
+                add(treeitem, _expert_parent)
+            return _expert_parent
+
         # Iterate top-level sections
         for opt in parent:
             if isinstance(opt, Section):
                 # Each section is iterable returning options / subsections
-                sec_item = QTreeWidgetItem([opt.name])
-                if treeitem is not None:
-                    treeitem.addChild(sec_item)
-                else:
-                    self._tree.addTopLevelItem(sec_item)
+                info = opt.info
+                sec_item = QTreeWidgetItem([opt.name, "", "", info])
+                sec_item.setToolTip(3, info)
+                font = sec_item.font(0)
+                font.setBold(True)
+                sec_item.setFont(0, font)
+                add(treeitem, sec_item)
                 self._build_section(opt, sec_item)
             else:
                 # Some entries may themselves be subsections; skip if not option-like
                 is_expert = bool(getattr(opt._definition, 'expert', False))
                 parent_item: Any = treeitem
                 if is_expert:
-                    if expert_parent is None:
-                        if treeitem is None:
-                            expert_parent = QTreeWidgetItem(["expert", "", ""])
-                            self._tree.addTopLevelItem(expert_parent)
-                        else:
-                            expert_parent = QTreeWidgetItem(["expert", "", ""])
-                            treeitem.addChild(expert_parent)
-                    parent_item = expert_parent
-                if parent_item is None:
-                    item = QTreeWidgetItem([opt.name, str(opt._definition.grammar_type), ''])
-                    self._tree.addTopLevelItem(item)
-                else:
-                    item = QTreeWidgetItem([opt.name, str(opt._definition.grammar_type), ''])
-                    parent_item.addChild(item)
+                    parent_item = expert_parent()
+                info = opt.info
+                typ = str(opt._definition.grammar_type)
+                item = QTreeWidgetItem([opt.name, typ, '', info])
+                item.setToolTip(1, typ)
+                item.setToolTip(3, info)
+                add(parent_item, item)
                 # Editor widget
                 editor, ev = _make_editor(opt, item)
                 self._tree.setItemWidget(item, 2, editor)
