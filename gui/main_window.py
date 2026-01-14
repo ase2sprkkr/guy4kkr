@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView, QToolButton
+    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView, QToolButton, QPlainTextEdit, QStackedWidget, QStyle
 )
 from PyQt6.QtGui import QAction, QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -42,16 +42,60 @@ class MainWindow(QMainWindow):
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self._input_parameters = None
+        self.input_params_preview: Optional[QPlainTextEdit] = None
+        self.save_input_btn: Optional[QPushButton] = None
+        self.directory: Optional[str] = None
+        self._directory_label: Optional[QLabel] = None
+        self._directory_choose_btn: Optional[QToolButton] = None
+        self._sprkkr_run_window: Optional[QWidget] = None
 
         self._recent_files: list[str] = []
         self._recent_menu: Optional[QMenu] = None
         self._recent_start_button: Optional[QToolButton] = None
         self._recent_start_menu: Optional[QMenu] = None
 
+        self._left_stack: Optional[QStackedWidget] = None
+        self._left_content_widget: Optional[QWidget] = None
+
         self._build_ui()
         self._load_recent_files()
         self._refresh_recent_menu()
         self._update_structure_view()
+
+    def _update_input_params_preview(self) -> None:
+        if self.input_params_preview is None:
+            return
+        if self._input_parameters is None:
+            self.input_params_preview.setPlainText("")
+            if self.save_input_btn is not None:
+                self.save_input_btn.setEnabled(False)
+            return
+        try:
+            txt = self._input_parameters.to_string(validate=False)
+        except Exception:
+            txt = str(self._input_parameters)
+        self.input_params_preview.setPlainText(txt)
+        if self.save_input_btn is not None:
+            self.save_input_btn.setEnabled(True)
+
+    def _update_directory_label(self) -> None:
+        if self._directory_label is None:
+            return
+        if not self.directory:
+            self._directory_label.setText("—")
+            self._directory_label.setToolTip("")
+            return
+        self._directory_label.setText(self.directory)
+        self._directory_label.setToolTip(self.directory)
+
+    def _choose_directory(self) -> None:
+        start_dir = self.directory or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
+        if not chosen:
+            return
+        self.directory = str(chosen)
+        self._update_directory_label()
+        self.enable_run_calculation()
 
     def _config_dir(self) -> Path:
         config_home = platformdirs.user_config_dir('guy4ase', appauthor='ase2sprkkr')
@@ -234,12 +278,12 @@ class MainWindow(QMainWindow):
         viewer_widget = QWidget()
         viewer_layout = QVBoxLayout(viewer_widget)
 
-        # 3D visualization - will contain either plot or welcome screen
-        vis_group = QGroupBox("Structure Visualization")
-        self.vis_layout = QVBoxLayout(vis_group)
+        # Stack left panel: welcome vs loaded-structure content
+        self._left_stack = QStackedWidget(viewer_widget)
+        viewer_layout.addWidget(self._left_stack, 1)
 
-        # Welcome screen (shown when no structure loaded)
-        self.welcome_widget = QWidget()
+        # Welcome page (shown when no structure loaded)
+        self.welcome_widget = QWidget(self._left_stack)
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -296,16 +340,46 @@ class MainWindow(QMainWindow):
 
         welcome_layout.addStretch(1)
 
-        self.vis_layout.addWidget(self.welcome_widget)
+        self._left_stack.addWidget(self.welcome_widget)
 
-        # Canvas (shown when structure is loaded)
+        # Content page (shown when a structure is loaded)
+        self._left_content_widget = QWidget(self._left_stack)
+        content_layout = QVBoxLayout(self._left_content_widget)
+
+        # Visualization row: visualization on left, quick actions on right
+        top_row = QWidget(self._left_content_widget)
+        top_row_l = QHBoxLayout(top_row)
+        top_row_l.setContentsMargins(0, 0, 0, 0)
+
+        vis_group = QGroupBox("Structure Visualization")
+        self.vis_layout = QVBoxLayout(vis_group)
         self.fig = Figure(figsize=(6, 6))
         self.ax = self.fig.add_subplot(111, projection='3d')
         self.canvas = FigureCanvas(self.fig)
         self.vis_layout.addWidget(self.canvas)
-        self.canvas.hide()  # Initially hidden
+        top_row_l.addWidget(vis_group, 1)
 
-        viewer_layout.addWidget(vis_group, 2)
+        quick_actions = QGroupBox("Structure actions", top_row)
+        quick_actions_l = QVBoxLayout(quick_actions)
+        quick_actions_l.setContentsMargins(0, 0, 0, 0)
+        quick_actions_l.setSpacing(8)
+
+        self.save_btn = QPushButton("Save Structure...")
+        self.save_btn.setMinimumWidth(150)
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._on_save_structure)
+        quick_actions_l.addWidget(self.save_btn)
+
+        self.assign_elements_btn = QPushButton("Edit the structure")
+        self.assign_elements_btn.setEnabled(False)
+        self.assign_elements_btn.clicked.connect(self._on_assign_elements)
+        quick_actions_l.addWidget(self.assign_elements_btn)
+
+        quick_actions_l.addStretch(1)
+        quick_actions.setMaximumWidth(220)
+        top_row_l.addWidget(quick_actions, 0)
+
+        content_layout.addWidget(top_row, 2)
 
         # Lattice parameters
         lattice_group = QGroupBox("Lattice Parameters")
@@ -332,7 +406,25 @@ class MainWindow(QMainWindow):
                 row_labels.append(lbl)
             self.lattice_matrix_labels.append(row_labels)
 
-        viewer_layout.addWidget(lattice_group, 0)
+        # Structure information (moved beside lattice parameters)
+        info_group = QGroupBox("Structure Information")
+        info_layout = QVBoxLayout(info_group)
+        self.converged_label = QLabel("")
+        self.converged_label.setStyleSheet("font-weight: bold;")
+        info_layout.addWidget(self.converged_label)
+
+        self.info_label = QLabel("No structure loaded.\n\nUse Structure menu to create, load, or download a structure.")
+        self.info_label.setWordWrap(True)
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        info_layout.addWidget(self.info_label)
+
+        params_row = QWidget()
+        params_row_l = QHBoxLayout(params_row)
+        params_row_l.setContentsMargins(0, 0, 0, 0)
+        params_row_l.addWidget(lattice_group, 1)
+        params_row_l.addWidget(info_group, 1)
+
+        content_layout.addWidget(params_row, 0)
 
         # Atomic positions table
         positions_group = QGroupBox("Atomic Positions")
@@ -354,7 +446,10 @@ class MainWindow(QMainWindow):
         self.positions_table.cellEntered.connect(self._on_positions_table_hovered)
         self.positions_table.viewport().installEventFilter(self)
         positions_layout.addWidget(self.positions_table)
-        viewer_layout.addWidget(positions_group, 1)
+        content_layout.addWidget(positions_group, 1)
+
+        self._left_stack.addWidget(self._left_content_widget)
+        self._left_stack.setCurrentWidget(self.welcome_widget)
 
         splitter.addWidget(viewer_widget)
 
@@ -363,30 +458,52 @@ class MainWindow(QMainWindow):
         actions_layout = QVBoxLayout(actions_widget)
         actions_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        actions_group = QGroupBox("Structure Actions")
+        actions_group = QWidget()
         actions_group_layout = QVBoxLayout(actions_group)
 
-        # Action buttons
-        self.save_btn = QPushButton("Save Structure...")
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._on_save_structure)
-        actions_group_layout.addWidget(self.save_btn)
-
-        self.assign_elements_btn = QPushButton("Edit the structure")
-        self.assign_elements_btn.setEnabled(False)
-        self.assign_elements_btn.clicked.connect(self._on_assign_elements)
-        actions_group_layout.addWidget(self.assign_elements_btn)
-
-        actions_group_layout.addSpacing(20)
+        actions_group_layout.addSpacing(5)
 
         sprkkr_label = QLabel("SPRKKR Tools:")
         sprkkr_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         actions_group_layout.addWidget(sprkkr_label)
 
         self.create_input_btn = QPushButton("Create SPRKKR Input File...")
-        self.create_input_btn.setEnabled(False)
         self.create_input_btn.clicked.connect(self._on_create_sprkkr_input)
         actions_group_layout.addWidget(self.create_input_btn)
+
+        self.load_input_btn = QPushButton("Load SPRKKR Input File...")
+        self.load_input_btn.clicked.connect(self._on_load_sprkkr_input)
+        actions_group_layout.addWidget(self.load_input_btn)
+
+        self.save_input_btn = QPushButton("Save SPRKKR Input File...")
+        self.save_input_btn.setEnabled(False)
+        self.save_input_btn.clicked.connect(self._on_save_sprkkr_input)
+        actions_group_layout.addWidget(self.save_input_btn)
+
+        self.input_params_preview = QPlainTextEdit()
+        self.input_params_preview.setReadOnly(True)
+        self.input_params_preview.mouseDoubleClickEvent = lambda *args: self._on_create_sprkkr_input
+        self.input_params_preview.setPlaceholderText("SPRKKR input parameters preview")
+        self.input_params_preview.setMinimumHeight(120)
+        actions_group_layout.addWidget(self.input_params_preview)
+
+        dir_row = QWidget()
+        dir_row_l = QHBoxLayout(dir_row)
+        dir_row_l.setContentsMargins(0, 0, 0, 0)
+        dir_row_l.setSpacing(6)
+        dir_caption = QLabel("Directory:")
+        dir_row_l.addWidget(dir_caption)
+        self._directory_label = QLabel("—")
+        self._directory_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        dir_row_l.addWidget(self._directory_label, 1)
+        self._directory_choose_btn = QToolButton()
+        self._directory_choose_btn.setToolTip("Choose directory")
+        self._directory_choose_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self._directory_choose_btn.clicked.connect(self._choose_directory)
+        dir_row_l.addWidget(self._directory_choose_btn, 0)
+        actions_group_layout.addWidget(dir_row)
+
+        self._update_directory_label()
 
         self.run_calc_btn = QPushButton("Run SPRKKR Calculation...")
         self.run_calc_btn.setEnabled(False)
@@ -395,15 +512,6 @@ class MainWindow(QMainWindow):
 
         actions_group_layout.addStretch(1)
         actions_layout.addWidget(actions_group)
-
-        # Info panel
-        info_group = QGroupBox("Structure Information")
-        info_layout = QVBoxLayout(info_group)
-        self.info_label = QLabel("No structure loaded.\n\nUse Structure menu to create, load, or download a structure.")
-        self.info_label.setWordWrap(True)
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        info_layout.addWidget(self.info_label)
-        actions_layout.addWidget(info_group)
 
         actions_widget.setMaximumWidth(350)
         splitter.addWidget(actions_widget)
@@ -493,27 +601,74 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
 
     def _on_create_sprkkr_input(self) -> None:
-        """Create SPRKKR input file."""
-        if self.atoms is None:
-            return
-
         params = select_input_parameters(self.atoms, parent=self)
         if params is None:
             return
+        self.set_input_parameters(params)
+
+    def _on_load_sprkkr_input(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Input File",
+            "",
+            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
+        )
+        if file_path:
+            try:
+                from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
+                params = InputParameters.from_file(file_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{str(e)}")
+                return
+            self.set_input_parameters(params)
+
+    def _on_save_sprkkr_input(self) -> None:
+        if self._input_parameters is None:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Input File",
+            "",
+            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            if hasattr(self._input_parameters, "to_file"):
+                self._input_parameters.to_file(file_path)
+                return
+            try:
+                txt = self._input_parameters.to_string(validate=False)
+            except Exception:
+                txt = str(self._input_parameters)
+            Path(file_path).write_text(txt, encoding="utf-8")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save input parameters:\n{str(e)}")
+
+    def set_input_parameters(self, params: Any) -> None:
         self._input_parameters = params
+        self._update_input_params_preview()
+        if self.save_input_btn is not None:
+            self.save_input_btn.setEnabled(bool(self._input_parameters))
+        self.enable_run_calculation()
+        self.create_input_btn.setText("Edit SPRKKR Input File...")
 
     def _on_run_sprkkr_calculation(self) -> None:
         """Run SPRKKR calculation."""
-        if self.atoms is None:
+        if self.atoms is None or self._input_parameters is None or not self.directory:
             return
 
-        QMessageBox.information(
-            self,
-            "Run Calculation",
-            "SPRKKR calculation execution not yet implemented.\n\n"
-            "This will submit and monitor SPRKKR calculations."
+        from .sprkkr_run_window import SprkkrRunWindow
+
+        self._sprkkr_run_window = SprkkrRunWindow(
+            atoms=self.atoms,
+            input_parameters=self._input_parameters,
+            directory=self.directory,
+            parent=self,
         )
-        # TODO: Implement SPRKKR calculation execution
+        self._sprkkr_run_window.show()
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -531,12 +686,16 @@ class MainWindow(QMainWindow):
         self.atoms = atoms
         self._update_structure_view()
         self._enable_actions(True)
+        self._update_input_params_preview()
 
     def _enable_actions(self, enabled: bool) -> None:
         """Enable or disable action buttons based on structure availability."""
         self.save_btn.setEnabled(enabled)
         self.assign_elements_btn.setEnabled(enabled)
-        self.create_input_btn.setEnabled(enabled)
+        self.enable_run_calculation()
+
+    def enable_run_calculation(self) -> None:
+        enabled = bool(self.atoms is not None and self._input_parameters and self.directory)
         self.run_calc_btn.setEnabled(enabled)
 
     def _update_structure_view(self) -> None:
@@ -545,6 +704,9 @@ class MainWindow(QMainWindow):
             self._clear_view()
             return
 
+        if self._left_stack is not None and self._left_content_widget is not None:
+            self._left_stack.setCurrentWidget(self._left_content_widget)
+
         self._update_visualization()
         self._update_lattice_params()
         self._update_positions_table()
@@ -552,9 +714,8 @@ class MainWindow(QMainWindow):
 
     def _clear_view(self) -> None:
         """Clear all visualization panels."""
-        # Show welcome screen, hide canvas
-        self.welcome_widget.show()
-        self.canvas.hide()
+        if self._left_stack is not None:
+            self._left_stack.setCurrentWidget(self.welcome_widget)
         self._site_colors = {}
 
         for lbl in self.lattice_labels.values():
@@ -567,6 +728,7 @@ class MainWindow(QMainWindow):
         self.positions_table.setRowCount(0)
         self._hovered_atom_index = None
         self.info_label.setText("No structure loaded.\n\nUse Structure menu to create, load, or download a structure.")
+        self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
         if self.atoms is None:
@@ -601,10 +763,6 @@ class MainWindow(QMainWindow):
         """Update 3D visualization of the structure."""
         if self.atoms is None:
             return
-
-        # Hide welcome screen, show canvas
-        self.welcome_widget.hide()
-        self.canvas.show()
         self.ax.clear()
 
         arrays = getattr(self.atoms, 'arrays', {})
@@ -731,6 +889,13 @@ class MainWindow(QMainWindow):
         """Update structure information label."""
         if self.atoms is None:
             return
+        if self.atoms and hasattr(self.atoms, 'has_potential') and \
+            self.atoms.has_potential():
+                status = self.atoms.potential.SCF_INFO.SCFSTATUS()
+                if status != 'START':
+                    self.converged_label.setText(f"SCF Status: {status}")
+        else:
+            self.converged_label.setText("")
 
         n_atoms = len(self.atoms)
         formula_raw = self.atoms.get_chemical_formula()
