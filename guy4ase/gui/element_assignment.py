@@ -757,7 +757,7 @@ class ElementAssignmentDialog(QDialog):
 
             o = payload.get('index')
             if not changed:
-                if o is None or not np.all( np.arange(start, start+ln) == o ):
+                if o is None or len(o) != ln or not np.all( np.arange(start, start+ln) == o ):
                     changed = True
 
             if regions is not None:

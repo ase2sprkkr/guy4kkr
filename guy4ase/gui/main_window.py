@@ -597,6 +597,7 @@ class MainWindow(QMainWindow):
                     file_path += "." + ext
             try:
                 ase_write(file_path, self.atoms)
+                self._add_recent_file(file_path)
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
 
