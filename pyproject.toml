@@ -14,7 +14,7 @@ dependencies = [
   "ase",
   "platformdirs",
   "pyxtal",
-  "ase2sprkkr",
+  "ase2sprkkr>=3.4.2",
 ]
 
 [project.scripts]
