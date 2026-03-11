@@ -164,4 +164,10 @@ class SprkkrRunWindow(QDialog):
 
     @pyqtSlot(object)
     def _on_finished(self, _result: object) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "handle_sprkkr_finished_result"):
+            try:
+                parent.handle_sprkkr_finished_result(_result)
+            except Exception:
+                pass
         self._stop_btn.setEnabled(False)

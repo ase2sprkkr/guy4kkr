@@ -9,7 +9,9 @@ from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView, QToolButton, QPlainTextEdit, QStackedWidget, QStyle
+    QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView,
+    QToolButton, QPlainTextEdit, QStackedWidget, QStyle, QDialog,
+    QDialogButtonBox, QCheckBox
 )
 from PyQt6.QtGui import QAction, QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
         self._directory_label: Optional[QLabel] = None
         self._directory_choose_btn: Optional[QToolButton] = None
         self._sprkkr_run_window: Optional[QWidget] = None
+        self._last_sprkkr_result: Optional[Any] = None
 
         self._recent_files: list[str] = []
         self._recent_menu: Optional[QMenu] = None
@@ -475,6 +478,10 @@ class MainWindow(QMainWindow):
         self.load_input_btn.clicked.connect(self._on_load_sprkkr_input)
         actions_group_layout.addWidget(self.load_input_btn)
 
+        self.load_output_btn = QPushButton("Load SPRKKR Output File...")
+        self.load_output_btn.clicked.connect(self._on_load_sprkkr_output)
+        actions_group_layout.addWidget(self.load_output_btn)
+
         self.save_input_btn = QPushButton("Save SPRKKR Input File...")
         self.save_input_btn.setEnabled(False)
         self.save_input_btn.clicked.connect(self._on_save_sprkkr_input)
@@ -615,13 +622,105 @@ class MainWindow(QMainWindow):
             "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
         )
         if file_path:
+            self._load_sprkkr_input_from_path(file_path)
+
+    def _load_sprkkr_input_from_path(self, file_path: str) -> None:
+        try:
+            from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
+            params = InputParameters.from_file(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{str(e)}")
+            return
+        self.set_input_parameters(params)
+
+    def _choose_output_related_load_options(self, input_available: bool, potential_available: bool) -> Optional[tuple[bool, bool]]:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Load Associated Files")
+        layout = QVBoxLayout(dialog)
+
+        intro = QLabel("Load associated files from the selected SPRKKR output?")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        input_cb = QCheckBox("Load associated input file")
+        input_cb.setChecked(True)
+        input_cb.setEnabled(input_available)
+        layout.addWidget(input_cb)
+        if not input_available:
+            layout.addWidget(QLabel("  Associated input file is not available."))
+
+        potential_cb = QCheckBox("Load associated potential as structure")
+        potential_cb.setChecked(True)
+        potential_cb.setEnabled(potential_available)
+        layout.addWidget(potential_cb)
+        if not potential_available:
+            layout.addWidget(QLabel("  Associated potential file is not available."))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return (input_cb.isChecked(), potential_cb.isChecked())
+
+    def _on_load_sprkkr_output(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load SPRKKR Output File",
+            "",
+            "SPRKKR Output Files (*.out *.log *.txt);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            from ase2sprkkr.outputs.task_result import TaskResult  # type: ignore
+            parsed = TaskResult.from_file(file_path)
+            result = parsed.run() if hasattr(parsed, 'run') else parsed
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{str(e)}")
+            return
+
+        self._last_sprkkr_result = result
+
+        input_path = None
+        potential_path = None
+        try:
+            if hasattr(result, 'files') and 'input' in result.files:
+                input_path = result.path_to('input')
+        except Exception:
+            input_path = None
+        try:
+            if hasattr(result, 'files') and 'potential' in result.files:
+                potential_path = result.path_to('potential')
+        except Exception:
+            potential_path = None
+
+        input_available = bool(input_path and Path(input_path).is_file())
+        potential_available = bool(potential_path and Path(potential_path).is_file())
+
+        options = self._choose_output_related_load_options(input_available, potential_available)
+        if options is None:
+            return
+
+        load_input, load_potential = options
+
+        if load_input and input_available and input_path is not None:
+            self._load_sprkkr_input_from_path(input_path)
+
+        if load_potential and potential_available and potential_path is not None:
             try:
-                from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
-                params = InputParameters.from_file(file_path)
+                from ase2sprkkr.potentials.potentials import Potential  # type: ignore
+                atoms = Potential.from_file(potential_path).atoms
+                self.set_structure(atoms)
             except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{str(e)}")
-                return
-            self.set_input_parameters(params)
+                QMessageBox.warning(self, "Potential Load Warning", f"Failed to load structure from potential:\n{str(e)}")
+
+        self.directory = str(Path(file_path).resolve().parent)
+        self._update_directory_label()
+        self.enable_run_calculation()
 
     def _on_save_sprkkr_input(self) -> None:
         if self._input_parameters is None:
@@ -670,6 +769,9 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._sprkkr_run_window.show()
+
+    def handle_sprkkr_finished_result(self, result: Any) -> None:
+        self._last_sprkkr_result = result
 
     def _on_about(self) -> None:
         """Show about dialog."""
