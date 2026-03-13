@@ -1,35 +1,25 @@
-"""Dialog to view and edit ase2sprkkr InputParameters.
-
-First pass implementation:
-- Uses QTreeWidget: top-level items are sections.
-- Each section shows its non-expert options directly; expert options placed under a child item named "expert".
-- Option rows display name, type, and an editor widget appropriate for grammar_type.
-- Unknown types fall back to plain text entry.
-- On accept, values are written back to the original InputParameters object.
-
-This file avoids importing heavy ase2sprkkr modules until a dialog is actually used.
-"""
+"""Dialog to view and edit ase2sprkkr InputParameters."""
 from __future__ import annotations
 
-from typing import Any, Optional, Dict
+from typing import Any, Optional
+from collections.abc import Mapping, Sequence as AbcSequence
+from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget, QTreeWidgetItem,
-    QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QLabel,
+    QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QLabel,
     QComboBox
 )
-from PyQt6.QtCore import Qt, QObject, pyqtSignal
+from PyQt6.QtCore import Qt
 import numpy as np
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from ase2sprkkr.common.configuration_containers import Section  # type: ignore
-from ase2sprkkr.common.grammar_types import (
-    Integer, Real, Boolean, String, Keyword, Energy, Array
-)  # type: ignore
+from ase2sprkkr.common.grammar_types import (  # type: ignore
+    Integer, Real, Boolean, String, Keyword, Energy, Array,
+    Sequence as GrammarSequence, Table, SetOf, Flag,
+)
 
-
-class _ValueChangedEvent(QObject):
-    changed = pyqtSignal(object)
 
 def coalesce(*args):
     for a in args:
@@ -37,184 +27,197 @@ def coalesce(*args):
             return a
     return None
 
-def _editor_integer(opt: Any, item: QTreeWidgetItem) -> QWidget:
-    grammar_type = opt._definition.grammar_type
-    current = opt._value
-    ev = _ValueChangedEvent()
-    lo = coalesce(grammar_type.min, np.iinfo(np.int32).min)
-    hi = coalesce(grammar_type.max, np.iinfo(np.int32).max)
-    box = QSpinBox()
-    box.setRange(lo,hi)
+
+def _mark_editor_invalid(editor: QWidget, message: str) -> None:
+    editor.setStyleSheet("border: 2px solid red;")
+    editor.setToolTip(message)
+
+
+def _mark_editor_valid(editor: QWidget) -> None:
+    editor.setStyleSheet("")
+    editor.setToolTip("")
+
+
+def _stringify_value(grammar_type: Any, value: Any, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, np.ndarray) and not isinstance(grammar_type, (Array, SetOf, Table)):
+        return "<Data>"
     try:
-        box.setValue(int(opt._value))
+        return str(grammar_type.string(value))
     except Exception:
-        pass
-    box.valueChanged.connect(lambda v: ev.changed.emit(v))
-    return box, ev
-
-def _editor_real(opt: Any, item: QTreeWidgetItem):
-    grammar_type = opt._definition.grammar_type
-    ev = _ValueChangedEvent()
-    lo = coalesce(grammar_type.min, -1e16)
-    hi = coalesce(grammar_type.max, 1e16)
-    box = QDoubleSpinBox()
-    box.setDecimals(8)
-    box.setRange(lo, hi)
-    box.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
-    try:
-        box.setValue(opt._value)
-    except Exception:
-        pass
-    box.valueChanged.connect(lambda v: ev.changed.emit(float(v)))
-    return box, ev
-
-def _editor_energy(opt: Any, item: QTreeWidgetItem):
-    grammar_type = opt._definition.grammar_type
-    current = opt._value
-    ev = _ValueChangedEvent()
-    lo = coalesce(grammar_type.min, -1e16)
-    hi = coalesce(grammar_type.max, 1e16)
-
-    cont = QWidget()
-    h = QHBoxLayout(cont)
-    h.setContentsMargins(0, 0, 0, 0)
-    val_spin = QDoubleSpinBox()
-    val_spin.setDecimals(8)
-    val_spin.setRange(lo, hi)
-    val_spin.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
-    try:
-        if isinstance(current, (tuple, list)) and len(current) == 2:
-            val_spin.setValue(float(current[0]))
-        elif current is not None:
-            val_spin.setValue(float(current))
-    except Exception:
-        pass
-    units = getattr(grammar_type, 'units', {}) or {}
-    unit_combo = QComboBox()
-    for key in units.keys():
-        unit_combo.addItem(str(key))
-    try:
-        if isinstance(current, (tuple, list)) and len(current) == 2:
-            idx = unit_combo.findText(str(current[1]))
-            if idx >= 0:
-                unit_combo.setCurrentIndex(idx)
-    except Exception:
-        pass
-    h.addWidget(val_spin, 3)
-    h.addWidget(unit_combo, 1)
-    cont._energy_value = val_spin
-    cont._energy_unit = unit_combo
-
-    def _get_energy_value():
-        return (val_spin.value(), unit_combo.currentText())
-
-    val_spin.valueChanged.connect(lambda _v: ev.changed.emit(_get_energy_value()))
-    unit_combo.currentTextChanged.connect(lambda _t: ev.changed.emit(_get_energy_value()))
-    return cont, ev
-
-
-def _editor_boolean(opt: Any, item: QTreeWidgetItem):
-    current = opt._value
-    ev = _ValueChangedEvent()
-    cb = QCheckBox()
-    try:
-        cb.setChecked(bool(current))
-    except Exception:
-        pass
-    cb.toggled.connect(lambda v: ev.changed.emit(bool(v)))
-    return cb, ev
-
-
-def _editor_keyword(opt: Any, item: QTreeWidgetItem):
-    grammar_type = opt._definition.grammar_type
-    current = opt._value
-    ev = _ValueChangedEvent()
-    from PyQt6.QtWidgets import QComboBox
-
-    combo = QComboBox()
-    for kw, info in grammar_type.items():
-        if info is None:
-            info = str(kw)
-        else:
-            info = str(kw) + ": " + str(info)
-        combo.addItem(info, kw)
-        if current == kw:
-            combo.setCurrentIndex(combo.count() - 1)
-    combo.currentTextChanged.connect(lambda t: ev.changed.emit(t))
-    return combo, ev
-
-
-def _editor_array(opt: Any, item: QTreeWidgetItem):
-    grammar_type = opt._definition.grammar_type
-    current = opt._value
-    ev = _ValueChangedEvent()
-    edit = QLineEdit()
-    if current is not None:
-        if isinstance(current, (list, tuple)):
-            edit.setText(",".join(map(str, current)))
-        else:
-            edit.setText(str(current))
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
-    return edit, ev
-
-
-def _editor_unknown(opt: Any, item: QTreeWidgetItem):
-    grammar_type = opt._definition.grammar_type
-    current = opt._value
-    ev = _ValueChangedEvent()
-    edit = QLineEdit()
-    if current is not None:
-        edit.setText(str(current))
-    edit.textChanged.connect(lambda _t: ev.changed.emit(_get_editor_value(edit)))
-    return edit, ev
-
-
-def _editor_string(opt: Any, item: QTreeWidgetItem):
-    current = opt._value
-    ev = _ValueChangedEvent()
-    edit = QLineEdit()
-    if current is not None:
-        edit.setText(str(current))
-
-    def changed(_t: str):
         try:
-            out = opt._definition.grammar_type.parse(_t)
+            return str(value)
+        except Exception:
+            return fallback
+
+
+def _mutable_sequence(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, AbcSequence) and not isinstance(value, (str, bytes, bytearray)):
+        return list(value)
+    return [value]
+
+
+def _reverse_names_map(names: Any, size: int) -> list[str]:
+    labels = [f"[{i}]" for i in range(size)]
+    if isinstance(names, dict):
+        for name, index in names.items():
+            if isinstance(index, int) and 0 <= index < size:
+                labels[index] = str(name)
+    return labels
+
+
+def _option_value(opt: Any) -> Any:
+    try:
+        return opt.get()
+    except Exception:
+        return getattr(opt, '_value', None)
+
+
+def _create_scalar_editor(
+    grammar_type: Any,
+    current_value: Any,
+    on_value: callable,
+    *,
+    read_only: bool = False,
+    allow_empty: bool = False,
+) -> QWidget:
+    if grammar_type is None:
+        grammar_type = String()
+
+    if isinstance(grammar_type, Integer):
+        editor = QSpinBox()
+        editor.setRange(coalesce(getattr(grammar_type, 'min', None), np.iinfo(np.int32).min), coalesce(getattr(grammar_type, 'max', None), np.iinfo(np.int32).max))
+        try:
+            if current_value is not None:
+                editor.setValue(int(current_value))
+        except Exception:
+            pass
+        editor.setReadOnly(read_only)
+        editor.valueChanged.connect(lambda value: on_value(int(value)))
+        return editor
+
+    if isinstance(grammar_type, Real):
+        editor = QDoubleSpinBox()
+        lo = coalesce(getattr(grammar_type, 'min', None), -1e16)
+        hi = coalesce(getattr(grammar_type, 'max', None), 1e16)
+        editor.setDecimals(8)
+        editor.setRange(lo, hi)
+        editor.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
+        try:
+            if current_value is not None:
+                editor.setValue(float(current_value))
+        except Exception:
+            pass
+        editor.setReadOnly(read_only)
+        editor.valueChanged.connect(lambda value: on_value(float(value)))
+        return editor
+
+    if isinstance(grammar_type, Energy):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        value_box = QDoubleSpinBox(container)
+        lo = coalesce(getattr(grammar_type, 'min', None), -1e16)
+        hi = coalesce(getattr(grammar_type, 'max', None), 1e16)
+        value_box.setDecimals(8)
+        value_box.setRange(lo, hi)
+        value_box.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
+        unit_box = QComboBox(container)
+        units = getattr(grammar_type, 'units', {}) or {}
+        for unit in units.keys():
+            unit_box.addItem(str(unit))
+        try:
+            if isinstance(current_value, (list, tuple)) and len(current_value) == 2:
+                value_box.setValue(float(current_value[0]))
+                idx = unit_box.findText(str(current_value[1]))
+                if idx >= 0:
+                    unit_box.setCurrentIndex(idx)
+            elif current_value is not None:
+                value_box.setValue(float(current_value))
+        except Exception:
+            pass
+
+        def emit_value(*_args) -> None:
+            on_value((value_box.value(), unit_box.currentText()))
+
+        value_box.setReadOnly(read_only)
+        if read_only:
+            unit_box.setEnabled(False)
+        value_box.valueChanged.connect(emit_value)
+        unit_box.currentTextChanged.connect(emit_value)
+        layout.addWidget(value_box, 3)
+        layout.addWidget(unit_box, 1)
+        return container
+
+    if isinstance(grammar_type, (Boolean, Flag)):
+        editor = QCheckBox()
+        try:
+            editor.setChecked(bool(current_value))
+        except Exception:
+            pass
+        if read_only:
+            editor.setEnabled(False)
+        editor.toggled.connect(lambda value: on_value(bool(value)))
+        return editor
+
+    if isinstance(grammar_type, Keyword):
+        editor = QComboBox()
+        current_index = 0
+        for idx, (keyword, info) in enumerate(grammar_type.items()):
+            label = str(keyword) if info is None else f"{keyword}: {info}"
+            editor.addItem(label, keyword)
+            if current_value == keyword:
+                current_index = idx
+        editor.setCurrentIndex(current_index)
+        if read_only:
+            editor.setEnabled(False)
+        editor.currentIndexChanged.connect(lambda _index: on_value(editor.currentData()))
+        return editor
+
+    editor = QLineEdit()
+    if current_value is not None:
+        editor.setText(_stringify_value(grammar_type, current_value, fallback=str(current_value)))
+    editor.setReadOnly(read_only)
+
+    def commit() -> None:
+        text = editor.text().strip()
+        if allow_empty and not text:
+            _mark_editor_valid(editor)
+            return
+        try:
+            value = grammar_type.parse(text)
+        except Exception:
+            try:
+                value = grammar_type.convert(text)
+                grammar_type.validate(value)
+            except Exception as e:
+                _mark_editor_invalid(editor, str(e))
+                return
+        try:
+            on_value(value)
         except Exception as e:
-            edit.setStyleSheet("border: 2px solid red;")
-            edit.setToolTip(str(e))
-        else:
-            edit.setStyleSheet("")
-            edit.setToolTip("")
-            ev.changed.emit(out)
+            _mark_editor_invalid(editor, str(e))
+            return
+        _mark_editor_valid(editor)
+        try:
+            editor.setText(_stringify_value(grammar_type, value, fallback=text))
+        except Exception:
+            pass
 
-    edit.textChanged.connect(changed)
-    return edit, ev
-
-_EDITOR_DISPATCH = {
-    Integer: _editor_integer,
-    Real: _editor_real,
-    Energy: _editor_energy,
-    Boolean: _editor_boolean,
-    Keyword: _editor_keyword,
-    Array: _editor_array,
-    String: _editor_string,
-}
+    editor.editingFinished.connect(commit)
+    return editor
 
 
-def _make_editor(opt: Any, item: QTreeWidgetItem):
-    grammar_type = getattr(getattr(opt, '_definition', None), 'grammar_type', None)
-    cls = grammar_type.__class__ if grammar_type is not None else None
-    fn = _EDITOR_DISPATCH.get(cls, _editor_unknown)
-    editor, ev = fn(opt, item)
-    # Keep event alive; caller may also access via `editor._changed_event.changed`.
-    editor._changed_event = ev
-    return editor, ev
-
-class InputParametersDialog(QDialog):
-    def __init__(self, params: InputParameters, parent: Optional[QWidget] = None):
+class _TreeDialogBase(QDialog):
+    def __init__(self, title: str, parent: Optional[QWidget] = None, *, filter_all_columns: bool = False):
         super().__init__(parent)
-        self._params = params
-        self.setWindowTitle('Edit Input Parameters')
+        self._filter_all_columns = filter_all_columns
+        self.setWindowTitle(title)
         self.resize(800, 600)
 
         self._filter_edit = QLineEdit()
@@ -227,7 +230,6 @@ class InputParametersDialog(QDialog):
         self._tree.setColumnCount(4)
         self._tree.setHeaderLabels(['Name', 'Type', 'Value', 'Comment'])
         self._tree.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self._build_tree()
 
         root = QVBoxLayout(self)
         header = QWidget(self)
@@ -241,24 +243,36 @@ class InputParametersDialog(QDialog):
         header_l.addWidget(self._collapse_all_btn)
         root.addWidget(header, 0)
         root.addWidget(self._tree, 1)
-        btns = QHBoxLayout()
-        btns.addStretch(1)
-        self.cancel_btn = QPushButton('Cancel')
-        self.cancel_btn.clicked.connect(self.reject)
-        btns.addWidget(self.cancel_btn)
-        self.ok_btn = QPushButton('OK')
-        self.ok_btn.clicked.connect(self._on_ok)
-        btns.addWidget(self.ok_btn)
-        root.addLayout(btns)
+
+        self._footer = QHBoxLayout()
+        self._footer.addStretch(1)
+        root.addLayout(self._footer)
 
         self._filter_edit.textChanged.connect(self._apply_filter)
         self._filter_clear_btn.clicked.connect(self._clear_filter)
         self._expand_all_btn.clicked.connect(self._tree.expandAll)
         self._collapse_all_btn.clicked.connect(self._tree.collapseAll)
 
+    def _add_footer_button(self, text: str, slot: callable) -> QPushButton:
+        button = QPushButton(text)
+        button.clicked.connect(slot)
+        self._footer.addWidget(button)
+        return button
+
+    def _add_child(self, parent: Optional[QTreeWidgetItem], child: QTreeWidgetItem) -> None:
+        if parent is None:
+            self._tree.addTopLevelItem(child)
+        else:
+            parent.addChild(child)
+
     def _clear_filter(self) -> None:
         self._filter_edit.setText("")
         self._filter_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _item_filter_texts(self, item: QTreeWidgetItem) -> list[str]:
+        if self._filter_all_columns:
+            return [item.text(i) or "" for i in range(self._tree.columnCount())]
+        return [item.text(0) or ""]
 
     def _apply_filter(self, text: str) -> None:
         needle = (text or "").strip().lower()
@@ -270,7 +284,7 @@ class InputParametersDialog(QDialog):
                 item.setHidden(False)
                 return True
 
-            self_match = needle in (item.text(0) or "").lower()
+            self_match = any(needle in column.lower() for column in self._item_filter_texts(item))
             child_match = False
             for i in range(item.childCount()):
                 if visit(item.child(i)):
@@ -282,56 +296,243 @@ class InputParametersDialog(QDialog):
         for i in range(self._tree.topLevelItemCount()):
             visit(self._tree.topLevelItem(i))
 
+
+class InputParametersDialog(_TreeDialogBase):
+    def __init__(self, params: InputParameters, parent: Optional[QWidget] = None):
+        self._params = params
+        super().__init__('Edit Input Parameters', parent=parent, filter_all_columns=False)
+        self.cancel_btn = self._add_footer_button('Cancel', self.reject)
+        self.ok_btn = self._add_footer_button('OK', self._on_ok)
+        self._build_tree()
+
     def _build_tree(self) -> None:
         self._build_section(self._params)
+        self._tree.expandAll()
 
-    def _build_section(self, parent, treeitem = None) -> None:
+    def _build_section(self, parent: Any, treeitem: Optional[QTreeWidgetItem] = None) -> None:
+        expert_parent: Optional[QTreeWidgetItem] = None
 
-        _expert_parent: Optional[QTreeWidgetItem] = None
+        def get_expert_parent() -> QTreeWidgetItem:
+            nonlocal expert_parent
+            if expert_parent is None:
+                expert_parent = QTreeWidgetItem(["expert", "", "", "Expert options"])
+                self._add_child(treeitem, expert_parent)
+            return expert_parent
 
-        def add(parent_item, child_item):
-            if parent_item is None:
-                self._tree.addTopLevelItem(child_item)
-            else:
-                parent_item.addChild(child_item)
-        def expert_parent() -> QTreeWidgetItem:
-            nonlocal _expert_parent
-            if _expert_parent is None:
-                _expert_parent = QTreeWidgetItem(["expert", "", "", "Expert options"])
-                add(treeitem, _expert_parent)
-            return _expert_parent
-
-        # Iterate top-level sections
         for opt in parent:
             if isinstance(opt, Section):
-                # Each section is iterable returning options / subsections
                 info = opt.info
                 sec_item = QTreeWidgetItem([opt.name, "", "", info])
                 sec_item.setToolTip(3, info)
                 font = sec_item.font(0)
                 font.setBold(True)
                 sec_item.setFont(0, font)
-                add(treeitem, sec_item)
+                self._add_child(treeitem, sec_item)
                 self._build_section(opt, sec_item)
+                continue
+
+            parent_item = get_expert_parent() if bool(getattr(opt._definition, 'expert', False)) else treeitem
+            self._build_option(opt, parent_item)
+
+    def _build_option(self, opt: Any, parent_item: Optional[QTreeWidgetItem]) -> None:
+        grammar_type = opt._definition.grammar_type
+        info = opt.info
+        type_text = str(grammar_type)
+        item = QTreeWidgetItem([opt.name, type_text, '', info])
+        item.setToolTip(1, type_text)
+        item.setToolTip(3, info)
+        self._add_child(parent_item, item)
+
+        if isinstance(grammar_type, (Array, SetOf)):
+            self._build_array_option(opt, item, grammar_type)
+        elif isinstance(grammar_type, GrammarSequence):
+            self._build_sequence_option(opt, item, grammar_type)
+        elif isinstance(grammar_type, Table):
+            self._build_table_option(opt, item, grammar_type)
+        else:
+            value = _option_value(opt)
+            editor = _create_scalar_editor(grammar_type, value, lambda new_value, o=opt: o.set(new_value))
+            self._tree.setItemWidget(item, 2, editor)
+
+    def _clear_children(self, item: QTreeWidgetItem) -> None:
+        while item.childCount():
+            item.removeChild(item.child(0))
+
+    def _rebuild_compound_option(self, opt: Any, item: QTreeWidgetItem) -> None:
+        self._clear_children(item)
+        grammar_type = opt._definition.grammar_type
+        if isinstance(grammar_type, (Array, SetOf)):
+            self._build_array_option(opt, item, grammar_type)
+        elif isinstance(grammar_type, GrammarSequence):
+            self._build_sequence_option(opt, item, grammar_type)
+        elif isinstance(grammar_type, Table):
+            self._build_table_option(opt, item, grammar_type)
+
+    def _build_summary_editor(self, opt: Any, item: QTreeWidgetItem, grammar_type: Any, *, editable: bool) -> None:
+        value = _option_value(opt)
+        editor = QLineEdit()
+        editor.setText(_stringify_value(grammar_type, value))
+        editor.setReadOnly(not editable)
+
+        if editable:
+            def commit() -> None:
+                text = editor.text().strip()
+                try:
+                    value = grammar_type.parse(text)
+                    opt.set(value)
+                except Exception as e:
+                    _mark_editor_invalid(editor, str(e))
+                    return
+                _mark_editor_valid(editor)
+                editor.setText(_stringify_value(grammar_type, _option_value(opt)))
+                self._rebuild_compound_option(opt, item)
+
+            editor.editingFinished.connect(commit)
+
+        self._tree.setItemWidget(item, 2, editor)
+        item.setToolTip(2, editor.text())
+
+    def _build_array_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: Any) -> None:
+        self._build_summary_editor(opt, item, grammar_type, editable=True)
+        values = _mutable_sequence(_option_value(opt))
+        for index, value in enumerate(values):
+            child = QTreeWidgetItem([f'[{index}]', str(grammar_type.type), '', ''])
+            self._add_child(item, child)
+            editor = _create_scalar_editor(
+                grammar_type.type,
+                value,
+                lambda new_value, idx=index, o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
+            )
+            self._tree.setItemWidget(child, 2, editor)
+
+        max_length = getattr(grammar_type, 'max_length', None)
+        if max_length is None or len(values) < max_length:
+            append_item = QTreeWidgetItem([f'[{len(values)}]', str(grammar_type.type), '', 'Append new item'])
+            self._add_child(item, append_item)
+            editor = _create_scalar_editor(
+                grammar_type.type,
+                None,
+                lambda new_value, idx=len(values), o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
+                allow_empty=True,
+            )
+            self._tree.setItemWidget(append_item, 2, editor)
+
+    def _update_array_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
+        values = _mutable_sequence(_option_value(opt))
+        if index < len(values):
+            values[index] = value
+        else:
+            values.append(value)
+        opt.set(values)
+        self._rebuild_compound_option(opt, item)
+
+    def _build_sequence_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: GrammarSequence) -> None:
+        self._build_summary_editor(opt, item, grammar_type, editable=True)
+        values = _mutable_sequence(_option_value(opt))
+        labels = _reverse_names_map(getattr(grammar_type, 'names', None), len(grammar_type.types))
+        for index, subtype in enumerate(grammar_type.types):
+            value = values[index] if index < len(values) else None
+            child = QTreeWidgetItem([labels[index], str(subtype), '', ''])
+            self._add_child(item, child)
+            editor = _create_scalar_editor(
+                subtype,
+                value,
+                lambda new_value, idx=index, o=opt, parent_item=item: self._update_sequence_value(o, parent_item, idx, new_value),
+            )
+            self._tree.setItemWidget(child, 2, editor)
+
+    def _update_sequence_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
+        current = _mutable_sequence(_option_value(opt))
+        grammar_type = opt._definition.grammar_type
+        while len(current) < len(grammar_type.types):
+            current.append(None)
+        current[index] = value
+        opt.set(current)
+        self._rebuild_compound_option(opt, item)
+
+    def _build_table_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: Table) -> None:
+        item.setText(2, '<Table>')
+        item.setToolTip(2, '<Table>')
+        table_label = QLabel('<Table>')
+        table_label.setToolTip('<Table>')
+        self._tree.setItemWidget(item, 2, table_label)
+
+        value = _option_value(opt)
+        if value is None:
+            return
+        if not isinstance(value, np.ndarray):
+            try:
+                value = grammar_type.convert(value)
+            except Exception:
+                item.setText(2, '<Data>')
+                return
+        if not isinstance(value, np.ndarray):
+            item.setText(2, '<Data>')
+            return
+
+        if value.dtype.names:
+            column_names = list(value.dtype.names)
+            for row_index in range(len(value)):
+                row_item = QTreeWidgetItem([f'[{row_index}]', 'row', '', ''])
+                self._add_child(item, row_item)
+                for col_index, column_name in enumerate(column_names):
+                    subtype = grammar_type.sequence.types[col_index] if col_index < len(grammar_type.sequence.types) else String()
+                    cell_value = value[row_index][column_name]
+                    if isinstance(cell_value, np.generic):
+                        cell_value = cell_value.item()
+                    cell_item = QTreeWidgetItem([str(column_name), str(subtype), '', ''])
+                    self._add_child(row_item, cell_item)
+                    editor = _create_scalar_editor(
+                        subtype,
+                        cell_value,
+                        lambda new_value, r=row_index, c=column_name, o=opt, parent_item=item: self._update_table_field(o, parent_item, r, c, new_value),
+                    )
+                    self._tree.setItemWidget(cell_item, 2, editor)
+            return
+
+        array = np.asarray(value)
+        if array.ndim == 1:
+            if len(grammar_type.sequence.types) == 1:
+                array = array.reshape((-1, 1))
             else:
-                # Some entries may themselves be subsections; skip if not option-like
-                is_expert = bool(getattr(opt._definition, 'expert', False))
-                parent_item: Any = treeitem
-                if is_expert:
-                    parent_item = expert_parent()
-                info = opt.info
-                typ = str(opt._definition.grammar_type)
-                item = QTreeWidgetItem([opt.name, typ, '', info])
-                item.setToolTip(1, typ)
-                item.setToolTip(3, info)
-                add(parent_item, item)
-                # Editor widget
-                editor, ev = _make_editor(opt, item)
-                self._tree.setItemWidget(item, 2, editor)
-        self._tree.expandAll()
+                item.setText(2, '<Data>')
+                return
+        if array.ndim != 2:
+            item.setText(2, '<Data>')
+            return
+
+        column_names = list(getattr(grammar_type, 'names', []) or [f'[{i}]' for i in range(array.shape[1])])
+        for row_index in range(array.shape[0]):
+            row_item = QTreeWidgetItem([f'[{row_index}]', 'row', '', ''])
+            self._add_child(item, row_item)
+            for col_index in range(array.shape[1]):
+                subtype = grammar_type.sequence.types[col_index] if col_index < len(grammar_type.sequence.types) else String()
+                cell_value = array[row_index, col_index]
+                if isinstance(cell_value, np.generic):
+                    cell_value = cell_value.item()
+                name = column_names[col_index] if col_index < len(column_names) else f'[{col_index}]'
+                cell_item = QTreeWidgetItem([str(name), str(subtype), '', ''])
+                self._add_child(row_item, cell_item)
+                editor = _create_scalar_editor(
+                    subtype,
+                    cell_value,
+                    lambda new_value, r=row_index, c=col_index, o=opt, parent_item=item: self._update_table_cell(o, parent_item, r, c, new_value),
+                )
+                self._tree.setItemWidget(cell_item, 2, editor)
+
+    def _update_table_field(self, opt: Any, item: QTreeWidgetItem, row_index: int, column_name: str, value: Any) -> None:
+        current = np.array(_option_value(opt), copy=True)
+        current[row_index][column_name] = value
+        opt.set(current)
+        self._rebuild_compound_option(opt, item)
+
+    def _update_table_cell(self, opt: Any, item: QTreeWidgetItem, row_index: int, column_index: int, value: Any) -> None:
+        current = np.array(_option_value(opt), copy=True)
+        current[row_index, column_index] = value
+        opt.set(current)
+        self._rebuild_compound_option(opt, item)
 
     def _on_ok(self) -> None:
-        # write back values
         self.accept()
 
     def result(self) -> Optional[InputParameters]:
@@ -346,13 +547,105 @@ def edit_input_parameters(params: InputParameters, parent: Optional[QWidget] = N
     return None
 
 
-def select_input_parameters(atoms: Any, parent: Optional[QWidget] = None) -> Optional[InputParameters]:
-    """Open the input-parameters editor and return the resulting InputParameters.
+class ReadOnlyObjectDialog(_TreeDialogBase):
+    def __init__(self, value: Any, title: str = 'View Value', parent: Optional[QWidget] = None):
+        self._value = value
+        self._visited: set[int] = set()
+        super().__init__(title, parent=parent, filter_all_columns=True)
+        self.close_btn = self._add_footer_button('Close', self.close)
+        self._build_tree()
 
-    Current implementation uses default SCF input parameters. Atom-dependent wiring
-    can be added later.
-    """
-    # Keep heavy imports local.
+    def _build_tree(self) -> None:
+        self._visited.clear()
+        self._add_value('value', self._value, None)
+        self._tree.expandToDepth(1)
+
+    def _safe_text(self, value: Any) -> str:
+        if value is None:
+            return 'None'
+        if isinstance(value, np.ndarray):
+            return '<Data>'
+        if isinstance(value, str):
+            return value
+        try:
+            return str(value)
+        except Exception:
+            return repr(value)
+
+    def _is_scalar(self, value: Any) -> bool:
+        scalar_types = (str, bytes, int, float, bool, complex, type(None), Path)
+        if isinstance(value, scalar_types):
+            return True
+        if isinstance(value, (np.generic, np.ndarray)):
+            return True
+        return False
+
+    def _iter_object_items(self, value: Any) -> list[tuple[str, Any, str]]:
+        if isinstance(value, np.ndarray):
+            return []
+        if isinstance(value, Mapping):
+            return [(str(key), item, '') for key, item in value.items()]
+        if isinstance(value, AbcSequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [(f'[{idx}]', item, '') for idx, item in enumerate(value)]
+        if hasattr(value, '__dict__'):
+            out = []
+            for key, item in vars(value).items():
+                if key.startswith('_'):
+                    continue
+                if callable(item):
+                    continue
+                out.append((str(key), item, ''))
+            return out
+        return []
+
+    def _add_value(self, name: str, value: Any, parent: Optional[QTreeWidgetItem]) -> None:
+        type_name = type(value).__name__
+        display = self._safe_text(value)
+        if len(display) > 500:
+            display = display[:497] + '...'
+
+        item = QTreeWidgetItem([name, type_name, display if self._is_scalar(value) else '', ''])
+        item.setToolTip(1, type_name)
+        if display:
+            item.setToolTip(2, display)
+        self._add_child(parent, item)
+
+        if self._is_scalar(value):
+            return
+
+        obj_id = id(value)
+        if obj_id in self._visited:
+            item.setText(3, 'Already shown above')
+            return
+        self._visited.add(obj_id)
+
+        children = self._iter_object_items(value)
+        if not children:
+            item.setText(2, display)
+            return
+
+        for child_name, child_value, comment in children:
+            child = QTreeWidgetItem([child_name, type(child_value).__name__, '', comment])
+            self._add_child(item, child)
+            if self._is_scalar(child_value):
+                child_display = self._safe_text(child_value)
+                child.setText(2, child_display)
+                child.setToolTip(2, child_display)
+            else:
+                item.removeChild(child)
+                self._add_value(child_name, child_value, item)
+
+
+def show_readonly_object_dialog(value: Any, title: str = 'View Value', parent: Optional[QWidget] = None) -> ReadOnlyObjectDialog:
+    dlg = ReadOnlyObjectDialog(value, title=title, parent=parent)
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()
+    return dlg
+
+
+def select_input_parameters(atoms: Any, parent: Optional[QWidget] = None) -> Optional[InputParameters]:
+    """Open the input-parameters editor and return the resulting InputParameters."""
     from ase2sprkkr.input_parameters.definitions import scf
 
     params_def = scf.input_parameters()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Any, Dict, Sequence
 from pathlib import Path
+import inspect
 import json
 import os
 
@@ -11,13 +12,11 @@ from PyQt6.QtWidgets import (
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView,
     QToolButton, QPlainTextEdit, QStackedWidget, QStyle, QDialog,
-    QDialogButtonBox, QCheckBox
+    QDialogButtonBox, QCheckBox, QScrollArea, QFrame
 )
-from PyQt6.QtGui import QAction, QColor
+from PyQt6.QtGui import QAction, QColor, QIcon
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib import cm
-from matplotlib.colors import to_hex
 import numpy as np
 import re
 import platformdirs
@@ -25,12 +24,14 @@ import platformdirs
 from ase import Atoms
 from ase.io import read as ase_read, write as ase_write
 
-from .lattice import plot_lattice, plot_sites_in_lattice
+from .lattice import plot_atoms_preview
 from .common import chain_dialogs
 from .spacegroup_selector import select_spacegroup
 from .element_assignment import select_site_elements
-from .input_parameters_dialog import select_input_parameters
-
+from .input_parameters_dialog import select_input_parameters, show_readonly_object_dialog
+from .structure_transform_dialogs import scale_atoms, repeat_atoms, rotate_atoms
+from .build_2d_dialog import select_build_2d_structure
+from ase2sprkkr.outputs.task_result import TaskResult
 
 class MainWindow(QMainWindow):
     """Main application window for structure creation, loading, and manipulation."""
@@ -51,9 +52,22 @@ class MainWindow(QMainWindow):
         self._directory_choose_btn: Optional[QToolButton] = None
         self._sprkkr_run_window: Optional[QWidget] = None
         self._last_sprkkr_result: Optional[Any] = None
+        self._result_group: Optional[QGroupBox] = None
+        self._result_grid_layout: Optional[QGridLayout] = None
+        self._result_empty_label: Optional[QLabel] = None
+        self._open_result_dialogs: list[QDialog] = []
 
-        self._recent_files: list[str] = []
-        self._recent_menu: Optional[QMenu] = None
+        self._recent_files: Dict[str, list[str]] = {
+            'structure': [],
+            'input': [],
+            'output': [],
+        }
+        self._last_recent_kind: Optional[str] = None
+        self._recent_menus: Dict[str, Optional[QMenu]] = {
+            'structure': None,
+            'input': None,
+            'output': None,
+        }
         self._recent_start_button: Optional[QToolButton] = None
         self._recent_start_menu: Optional[QMenu] = None
 
@@ -62,8 +76,9 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._load_recent_files()
-        self._refresh_recent_menu()
+        self._refresh_recent_menus()
         self._update_structure_view()
+        self._refresh_result_panel()
 
     def _update_input_params_preview(self) -> None:
         if self.input_params_preview is None:
@@ -111,77 +126,123 @@ class MainWindow(QMainWindow):
 
     def _load_recent_files(self) -> None:
         path = self._recent_files_path()
+        def normalize_recent_list(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            return [str(item) for item in value]
+
         try:
             if not path.exists():
-                self._recent_files = []
                 return
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, list):
-                self._recent_files = [str(p) for p in data if isinstance(p, str)]
-            else:
-                self._recent_files = []
+                self._recent_files['structure'] = normalize_recent_list(data)
+                return
+            if not isinstance(data, dict):
+                return
+            recent_files = data.get('recent_files')
+            if isinstance(recent_files, dict):
+                for key in ('structure', 'input', 'output'):
+                    self._recent_files[key] = normalize_recent_list(recent_files.get(key, []))
+            last_kind = data.get('last_recent_kind')
+            if last_kind in {'structure', 'output'}:
+                self._last_recent_kind = last_kind
         except Exception:
-            self._recent_files = []
+            if not self._recent_files[self._last_kind]:
+                    self._last_kind = None
 
     def _save_recent_files(self) -> None:
         path = self._recent_files_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self._recent_files, indent=2), encoding="utf-8")
+            data = {
+                'recent_files': self._recent_files,
+                'last_recent_kind': self._last_recent_kind,
+            }
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
             # Non-fatal (e.g. read-only home); keep UI working.
             pass
 
-    def _add_recent_file(self, file_path: str) -> None:
+    def _remember_recent(self, kind: str, file_path: str) -> None:
         file_path = str(Path(file_path))
+        recent = self._recent_files[kind]
         try:
-            self._recent_files.remove(file_path)
-            self._recent_files.insert(0, file_path)
+            recent.remove(file_path)
         except ValueError:
-            self._recent_files = self._recent_files[:9]
-            self._recent_files.insert(0, file_path)
+            recent[:] = recent[:9]
+        recent.insert(0, file_path)
+        if kind in {'structure', 'output'}:
+            self._last_recent_kind = kind
         self._save_recent_files()
-        self._refresh_recent_menu()
+        self._refresh_recent_menus()
 
-    def _clear_recent_files(self) -> None:
-        self._recent_files = []
-        self._save_recent_files()
-        self._refresh_recent_menu()
+    def _refresh_recent_menu(self, what: str) -> None:
+        handlers = {
+            'structure': lambda path: self._open_recent_file('structure', path),
+            'input': lambda path: self._open_recent_file('input', path),
+            'output': lambda path: self._open_recent_file('output', path),
+        }
+        menu = self._recent_menus[what]
+        if menu is None:
+            return
+        menu.clear()
+        recent_files = self._recent_files[what]
+        if not recent_files:
+            empty_action = QAction("(No recent files)", self)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return
+        handler = handlers[what]
+        for file_path in recent_files:
+            action = QAction(file_path, self)
+            action.triggered.connect(lambda _checked=False, p=file_path, h=handler: h(p))
+            menu.addAction(action)
 
-    def _refresh_recent_menu(self) -> None:
-        if self._recent_menu is not None:
-            self._recent_menu.clear()
-
-            if not self._recent_files:
-                empty_action = QAction("(No recent files)", self)
-                empty_action.setEnabled(False)
-                self._recent_menu.addAction(empty_action)
-            else:
-                for file_path in self._recent_files:
-                    action = QAction(file_path, self)
-                    action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file(p))
-                    self._recent_menu.addAction(action)
-
-                self._recent_menu.addSeparator()
-                clear_action = QAction("Clear Recent", self)
-                clear_action.triggered.connect(self._clear_recent_files)
-                self._recent_menu.addAction(clear_action)
-
+    def _refresh_recent_menus(self) -> None:
+        for what in ('structure', 'input', 'output'):
+            self._refresh_recent_menu(what)
         self._refresh_recent_start_button()
+
+    def _open_recent_file(self, kind: str, file_path: str) -> None:
+        path = Path(file_path)
+        if not path.exists():
+            QMessageBox.warning(self, "Missing File", f"File not found:\n{file_path}")
+            self._recent_files[kind] = [p for p in self._recent_files[kind] if p != file_path]
+            self._save_recent_files()
+            self._refresh_recent_menus()
+            return
+        loaders = {
+            'structure': self._load_structure_from_path,
+            'input': self._load_sprkkr_input_from_path,
+            'output': self._load_sprkkr_output_from_path,
+        }
+        loaders[kind](file_path)
 
     def _refresh_recent_start_button(self) -> None:
         btn = self._recent_start_button
         if btn is None:
             return
 
-        has_recent = bool(self._recent_files)
+        has_recent = bool(self._recent_files['structure'] or self._recent_files['output'])
         btn.setVisible(has_recent)
         if not has_recent:
             return
 
-        most_recent = self._recent_files[0]
-        btn.setText(f"Continue: {Path(most_recent).name}")
-        btn.setToolTip(most_recent)
+        default_kind = self._last_recent_kind
+        if default_kind == 'structure' and not self._recent_files['structure']:
+            default_kind = None
+        if default_kind == 'output' and not self._recent_files['output']:
+            default_kind = None
+        if default_kind not in {'structure', 'output'}:
+            if self._recent_files['output']:
+                default_kind = 'output'
+            else:
+                default_kind = 'structure'
+        default_path = self._recent_files[default_kind][0]
+
+        btn.setText(f"Continue: {Path(default_path).name}")
+        btn.setToolTip(default_path)
 
         menu = self._recent_start_menu
         if menu is None:
@@ -190,40 +251,43 @@ class MainWindow(QMainWindow):
             btn.setMenu(menu)
 
         menu.clear()
-        for file_path in self._recent_files[1:]:
-            action = QAction(file_path, self)
-            action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file(p))
-            menu.addAction(action)
+        structures_menu = menu.addMenu("Structures")
+        if self._recent_files['structure']:
+            for file_path in self._recent_files['structure']:
+                action = QAction(file_path, self)
+                action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file('structure', p))
+                structures_menu.addAction(action)
+        else:
+            empty_action = QAction("(No recent files)", self)
+            empty_action.setEnabled(False)
+            structures_menu.addAction(empty_action)
 
-        if self._recent_files[1:]:
-            menu.addSeparator()
-
-        clear_action = QAction("Clear Recent", self)
-        clear_action.triggered.connect(self._clear_recent_files)
-        menu.addAction(clear_action)
+        outputs_menu = menu.addMenu("Outputs")
+        if self._recent_files['output']:
+            for file_path in self._recent_files['output']:
+                action = QAction(file_path, self)
+                action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file('output', p))
+                outputs_menu.addAction(action)
+        else:
+            empty_action = QAction("(No recent files)", self)
+            empty_action.setEnabled(False)
+            outputs_menu.addAction(empty_action)
 
         # Primary click action loads most recent
         try:
             btn.clicked.disconnect()
         except TypeError:
             pass
-        btn.clicked.connect(lambda _checked=False, p=most_recent: self._open_recent_file(p))
-
-    def _open_recent_file(self, file_path: str) -> None:
-        path = Path(file_path)
-        if not path.exists():
-            QMessageBox.warning(self, "Missing File", f"File not found:\n{file_path}")
-            self._recent_files = [p for p in self._recent_files if p != file_path]
-            self._save_recent_files()
-            self._refresh_recent_menu()
-            return
-        self._load_structure_from_path(file_path)
+        if default_kind == 'output':
+            btn.clicked.connect(lambda _checked=False, p=default_path: self._open_recent_file('output', p))
+        else:
+            btn.clicked.connect(lambda _checked=False, p=default_path: self._open_recent_file('structure', p))
 
     def _load_structure_from_path(self, file_path: str) -> None:
         try:
             atoms = ase_read(file_path)
             self.set_structure(atoms)
-            self._add_recent_file(file_path)
+            self._remember_recent('structure', file_path)
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load structure:\n{str(e)}")
 
@@ -245,12 +309,47 @@ class MainWindow(QMainWindow):
         load_action.triggered.connect(self._on_load_structure)
         structure_menu.addAction(load_action)
 
-        self._recent_menu = structure_menu.addMenu("Open &Recent")
+        self._recent_menus['structure'] = structure_menu.addMenu("Open &Recent")
+
+        input_menu = menubar.addMenu("&Input")
+        load_input_action = QAction("&Load Input File...", self)
+        load_input_action.triggered.connect(self._on_load_sprkkr_input)
+        input_menu.addAction(load_input_action)
+        save_input_action = QAction("&Save Input File...", self)
+        save_input_action.triggered.connect(self._on_save_sprkkr_input)
+        input_menu.addAction(save_input_action)
+        self._recent_menus['input'] = input_menu.addMenu("Open &Recent")
+
+        output_menu = menubar.addMenu("&Output")
+        load_output_action = QAction("&Load Output File...", self)
+        load_output_action.triggered.connect(self._on_load_sprkkr_output)
+        output_menu.addAction(load_output_action)
+        self._recent_menus['output'] = output_menu.addMenu("Open &Recent")
 
         assign_elements_action = QAction("&Edit the structure...", self)
         assign_elements_action.setShortcut("Ctrl+E")
         assign_elements_action.triggered.connect(self._on_assign_elements)
         structure_menu.addAction(assign_elements_action)
+
+        structure_menu.addSeparator()
+
+        scale_action = QAction("&Scale...", self)
+        scale_action.triggered.connect(self._on_scale_structure)
+        structure_menu.addAction(scale_action)
+
+        repeat_action = QAction("&Repeat...", self)
+        repeat_action.triggered.connect(self._on_repeat_structure)
+        structure_menu.addAction(repeat_action)
+
+        rotate_action = QAction("R&otate...", self)
+        rotate_action.triggered.connect(self._on_rotate_structure)
+        structure_menu.addAction(rotate_action)
+
+        build_2d_action = QAction("Build &2D Structure...", self)
+        build_2d_action.triggered.connect(self._on_build_2d_structure)
+        structure_menu.addAction(build_2d_action)
+
+        structure_menu.addSeparator()
 
         download_action = QAction("&Download from Materials Project...", self)
         download_action.triggered.connect(self._on_download_structure)
@@ -478,10 +577,6 @@ class MainWindow(QMainWindow):
         self.load_input_btn.clicked.connect(self._on_load_sprkkr_input)
         actions_group_layout.addWidget(self.load_input_btn)
 
-        self.load_output_btn = QPushButton("Load SPRKKR Output File...")
-        self.load_output_btn.clicked.connect(self._on_load_sprkkr_output)
-        actions_group_layout.addWidget(self.load_output_btn)
-
         self.save_input_btn = QPushButton("Save SPRKKR Input File...")
         self.save_input_btn.setEnabled(False)
         self.save_input_btn.clicked.connect(self._on_save_sprkkr_input)
@@ -489,7 +584,7 @@ class MainWindow(QMainWindow):
 
         self.input_params_preview = QPlainTextEdit()
         self.input_params_preview.setReadOnly(True)
-        self.input_params_preview.mouseDoubleClickEvent = lambda *args: self._on_create_sprkkr_input
+        self.input_params_preview.mouseDoubleClickEvent = self._on_input_preview_double_click
         self.input_params_preview.setPlaceholderText("SPRKKR input parameters preview")
         self.input_params_preview.setMinimumHeight(120)
         actions_group_layout.addWidget(self.input_params_preview)
@@ -517,8 +612,31 @@ class MainWindow(QMainWindow):
         self.run_calc_btn.clicked.connect(self._on_run_sprkkr_calculation)
         actions_group_layout.addWidget(self.run_calc_btn)
 
-        actions_group_layout.addStretch(1)
+        self.load_output_btn = QPushButton("Load SPRKKR Output File...")
+        self.load_output_btn.clicked.connect(self._on_load_sprkkr_output)
+        actions_group_layout.addWidget(self.load_output_btn)
+
         actions_layout.addWidget(actions_group)
+
+        self._result_group = QGroupBox("Calculation Result")
+        result_layout = QVBoxLayout(self._result_group)
+        self._result_empty_label = QLabel("No result loaded.")
+        self._result_empty_label.setWordWrap(True)
+        result_layout.addWidget(self._result_empty_label)
+
+        result_scroll = QScrollArea(self._result_group)
+        result_scroll.setWidgetResizable(True)
+        result_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        result_container = QWidget(result_scroll)
+        self._result_grid_layout = QGridLayout(result_container)
+        self._result_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self._result_grid_layout.setHorizontalSpacing(8)
+        self._result_grid_layout.setVerticalSpacing(6)
+        self._result_grid_layout.setColumnStretch(1, 1)
+        result_scroll.setWidget(result_container)
+        result_layout.addWidget(result_scroll, 1)
+
+        actions_layout.addWidget(self._result_group, 1)
 
         actions_widget.setMaximumWidth(350)
         splitter.addWidget(actions_widget)
@@ -604,7 +722,7 @@ class MainWindow(QMainWindow):
                     file_path += "." + ext
             try:
                 ase_write(file_path, self.atoms)
-                self._add_recent_file(file_path)
+                self._remember_recent('structure', file_path)
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
 
@@ -613,6 +731,11 @@ class MainWindow(QMainWindow):
         if params is None:
             return
         self.set_input_parameters(params)
+
+    def _on_input_preview_double_click(self, event) -> None:
+        self._on_create_sprkkr_input()
+        if event is not None:
+            event.accept()
 
     def _on_load_sprkkr_input(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -632,6 +755,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{str(e)}")
             return
         self.set_input_parameters(params)
+        self._remember_recent('input', file_path)
 
     def _choose_output_related_load_options(self, input_available: bool, potential_available: bool) -> Optional[tuple[bool, bool]]:
         dialog = QDialog(self)
@@ -675,28 +799,20 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        self._load_sprkkr_output_from_path(file_path)
+
+    def _load_sprkkr_output_from_path(self, file_path: str) -> None:
         try:
-            from ase2sprkkr.outputs.task_result import TaskResult  # type: ignore
-            parsed = TaskResult.from_file(file_path)
-            result = parsed.run() if hasattr(parsed, 'run') else parsed
+            result = TaskResult.from_file(file_path)
+            self._last_sprkkr_result = result
+            self._remember_recent('output', file_path)
+            self._refresh_result_panel()
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{str(e)}")
             return
 
-        self._last_sprkkr_result = result
-
-        input_path = None
-        potential_path = None
-        try:
-            if hasattr(result, 'files') and 'input' in result.files:
-                input_path = result.path_to('input')
-        except Exception:
-            input_path = None
-        try:
-            if hasattr(result, 'files') and 'potential' in result.files:
-                potential_path = result.path_to('potential')
-        except Exception:
-            potential_path = None
+        input_path = result.path_to('input') if 'input' in result.files else None
+        potential_path = result.path_to('potential') if 'potential' in result.files else None
 
         input_available = bool(input_path and Path(input_path).is_file())
         potential_available = bool(potential_path and Path(potential_path).is_file())
@@ -707,10 +823,10 @@ class MainWindow(QMainWindow):
 
         load_input, load_potential = options
 
-        if load_input and input_available and input_path is not None:
+        if load_input:
             self._load_sprkkr_input_from_path(input_path)
 
-        if load_potential and potential_available and potential_path is not None:
+        if load_potential:
             try:
                 from ase2sprkkr.potentials.potentials import Potential  # type: ignore
                 atoms = Potential.from_file(potential_path).atoms
@@ -736,14 +852,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            if hasattr(self._input_parameters, "to_file"):
-                self._input_parameters.to_file(file_path)
-                return
-            try:
-                txt = self._input_parameters.to_string(validate=False)
-            except Exception:
-                txt = str(self._input_parameters)
-            Path(file_path).write_text(txt, encoding="utf-8")
+            self._input_parameters.to_file(file_path)
+            self._remember_recent('input', file_path)
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save input parameters:\n{str(e)}")
 
@@ -770,8 +880,112 @@ class MainWindow(QMainWindow):
         )
         self._sprkkr_run_window.show()
 
+    def _clear_layout(self, layout: QGridLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                while child_layout.count():
+                    child_item = child_layout.takeAt(0)
+                    child_widget = child_item.widget()
+                    if child_widget is not None:
+                        child_widget.deleteLater()
+
+    def _execute_output_value_action(self, value: Any, action: str) -> None:
+        try:
+            if action == 'edit':
+                payload = value()
+                title = value.name
+                dialog = show_readonly_object_dialog(payload, title=f'View {title}', parent=self)
+                self._open_result_dialogs.append(dialog)
+                dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_result_dialog(dlg))
+                return
+
+            method = getattr(value, action, None)
+            method()
+        except Exception as e:
+            QMessageBox.critical(self, "Action Error", f"Failed to execute action '{action}':\n{str(e)}")
+
+    def _forget_result_dialog(self, dialog: QDialog) -> None:
+        self._open_result_dialogs = [item for item in self._open_result_dialogs if item is not dialog]
+
+    def _refresh_result_panel(self) -> None:
+        self._clear_layout(self._result_grid_layout)
+        if self._last_sprkkr_result is None:
+            self._result_empty_label.setText('No result loaded.')
+            self._result_empty_label.show()
+            return
+
+        def action_icon(action: str) -> QIcon:
+            if action == 'plot':
+                for theme_name in ('office-chart-line', 'view-statistics', 'x-office-spreadsheet'):
+                    icon = QIcon.fromTheme(theme_name)
+                    if not icon.isNull():
+                        return icon
+            icon_map = {
+                'plot': getattr(QStyle.StandardPixmap, 'SP_FileDialogContentsView', QStyle.StandardPixmap.SP_FileDialogListView),
+                'save': getattr(QStyle.StandardPixmap, 'SP_DialogSaveButton', QStyle.StandardPixmap.SP_DialogSaveButton),
+                'open': getattr(QStyle.StandardPixmap, 'SP_DialogOpenButton', QStyle.StandardPixmap.SP_DirOpenIcon),
+                'edit': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogDetailedView),
+                'data': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogContentsView),
+            }
+            return self.style().standardIcon(icon_map[action])
+
+        def action_label(action: str) -> str:
+            label_map = {
+                'data': 'View data',
+            }
+            return label_map.get(action, None) or action.capitalize();
+
+
+        self._result_empty_label.hide()
+        values = self._last_sprkkr_result.output_values
+        for row, (key, value) in enumerate(values.items()):
+            name_label = QLabel(value.name)
+            name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            name_label.setWordWrap(True)
+            self._result_grid_layout.addWidget(name_label, row, 0)
+
+            value_widget = QWidget(self._result_group)
+            value_layout = QHBoxLayout(value_widget)
+            value_layout.setContentsMargins(0, 0, 0, 0)
+            value_layout.setSpacing(4)
+
+            value_label = QLabel(str(value.value_label()))
+            value_label.setWordWrap(True)
+            value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value_layout.addWidget(value_label, 1)
+
+            for action in value.actions():
+                button = QToolButton(value_widget)
+                button.setAutoRaise(True)
+                button.setIcon(action_icon(action))
+                button.setToolTip(action_label(action))
+                button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_output_value_action(v, a))
+                value_layout.addWidget(button, 0)
+
+            self._result_grid_layout.addWidget(value_widget, row, 1)
+
+        self._result_grid_layout.setRowStretch(len(values), 1)
+
     def handle_sprkkr_finished_result(self, result: Any) -> None:
         self._last_sprkkr_result = result
+        output_file = None
+        try:
+            if hasattr(result, 'files') and 'output' in result.files:
+                output_file = result.path_to('output')
+        except Exception:
+            output_file = None
+        if not output_file:
+            output_file = getattr(result, 'output_file', None)
+            if output_file and getattr(result, 'directory', None) and not Path(output_file).is_absolute():
+                output_file = str(Path(result.directory) / output_file)
+        if output_file:
+            self._remember_recent('output', output_file)
+        self._refresh_result_panel()
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -854,6 +1068,58 @@ class MainWindow(QMainWindow):
             return
         self.set_structure(result)
 
+    def _on_scale_structure(self) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+
+        try:
+            atoms = scale_atoms(self.atoms, parent=self)
+            if atoms is None:
+                return
+            self.set_structure(atoms)
+        except Exception as e:
+            QMessageBox.critical(self, "Scale Error", f"Failed to scale structure:\n{str(e)}")
+
+    def _on_repeat_structure(self) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+
+        try:
+            atoms = repeat_atoms(self.atoms, parent=self)
+            if atoms is None:
+                return
+            self.set_structure(atoms)
+        except Exception as e:
+            QMessageBox.critical(self, "Repeat Error", f"Failed to repeat structure:\n{str(e)}")
+
+    def _on_rotate_structure(self) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+
+        try:
+            atoms = rotate_atoms(self.atoms, parent=self)
+            if atoms is None:
+                return
+            self.set_structure(atoms)
+        except Exception as e:
+            QMessageBox.critical(self, "Rotate Error", f"Failed to rotate structure:\n{str(e)}")
+
+    def _on_build_2d_structure(self) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+
+        try:
+            result = select_build_2d_structure(self.atoms, parent=self)
+            if result is None:
+                return
+            self.set_structure(result)
+        except Exception as e:
+            QMessageBox.critical(self, "Build 2D Structure Error", f"Failed to build 2D structure:\n{str(e)}")
+
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is getattr(self, 'positions_table', None).viewport():
             if event.type() == QEvent.Type.Leave:
@@ -866,47 +1132,12 @@ class MainWindow(QMainWindow):
         """Update 3D visualization of the structure."""
         if self.atoms is None:
             return
-        self.ax.clear()
-
-        arrays = getattr(self.atoms, 'arrays', {})
-        kinds = arrays.get('spacegroup_kinds')
-        lattice = self.atoms.get_cell()
-        plot_lattice(self.ax, lattice)
-
-        scaled = self.atoms.get_scaled_positions()
-        if kinds is None:
-            kinds = list(range(len(scaled)))
-        self._site_colors = color_map = self._compute_site_colors(kinds)
-
-        start = 0
-        def view(pos, color, hoovered=False):
-            if hoovered:
-                size = 60
-                color = 'black'
-            else:
-                size = 40
-            plot_sites_in_lattice(
-                self.ax,
-                lattice,
-                pos.reshape((-1, 3)),
-                color=color,
-                edgecolor='black',
-                linewidths=0.9,
-                s=size
-            )
-
-        old = None
-        for idx, kind in enumerate(kinds):
-            if idx == self._hovered_atom_index:
-                kind = view
-            if kind != old:
-                if old is not None:
-                    view(scaled[start:idx], color_map.get(old, '#1f77b4'), old is view)
-                start = idx
-                old = kind
-
-        view(scaled[start:], color_map.get(old, '#1f77b4'), old is view)
-        self.canvas.draw()
+        self._site_colors = plot_atoms_preview(
+            self.ax,
+            self.atoms,
+            canvas=self.canvas,
+            hovered_atom_indices=self._hovered_atom_index,
+        )
 
     def _update_lattice_params(self) -> None:
         """Update lattice parameters display."""
@@ -1024,20 +1255,6 @@ class MainWindow(QMainWindow):
                 info_text += f"  {element}: {count}\n"
 
         self.info_label.setText(info_text)
-
-    def _compute_site_colors(self, spacegroup_kinds: Sequence[Any]) -> Dict[Any, str]:
-        kinds = list(set(spacegroup_kinds))
-        cmap = cm.get_cmap('tab20', max(len(kinds), 1))
-        base_colors = list(getattr(cmap, 'colors', []))
-        if not base_colors:
-            steps = max(len(kinds), 1)
-            base_colors = [cmap(i / max(steps - 1, 1)) for i in range(steps)]
-        colors: Dict[Any, str] = {}
-        n = len(base_colors)
-        for idx, kind in enumerate(kinds):
-            rgba = base_colors[idx % n]
-            colors[kind] = to_hex(rgba)
-        return colors
 
     def _format_site_composition(self, occ_dict: Any) -> str:
         if not isinstance(occ_dict, dict) or not occ_dict:
