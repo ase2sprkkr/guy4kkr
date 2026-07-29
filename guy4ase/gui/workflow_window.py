@@ -252,6 +252,12 @@ class WorkflowWindow(QMainWindow):
                 "Start from a crystallographic structure prototype",
                 self._create_from_database,
             )
+            self._add_action(
+                "Download Structure from Online Database",
+                "Search an online crystallographic database",
+                self._download_structure,
+                icon=QStyle.StandardPixmap.SP_ArrowDown,
+            )
             self._add_action("Create a 2D Surface", "Build a surface with vacuum on one side", self._create_surface)
             self._add_action("Create a 2D Structure", "Build an interface or transitional layer", self._create_transition)
             self._add_action(
@@ -337,14 +343,6 @@ class WorkflowWindow(QMainWindow):
             )
 
         self._add_action(
-            "Load SPR-KKR Output",
-            "Open a different completed calculation",
-            self._load_output,
-            category="neutral",
-            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-        )
-
-        self._add_action(
             "Start Over",
             "Choose or load a different structure",
             self._start_over,
@@ -371,6 +369,10 @@ class WorkflowWindow(QMainWindow):
     def _create_from_database(self) -> None:
         self._structure_kind = "3d"
         self._expert._on_create_structure_from_database()
+
+    def _download_structure(self) -> None:
+        self._structure_kind = None
+        self._expert._on_download_structure()
 
     def _create_surface(self) -> None:
         self._structure_kind = "3d"

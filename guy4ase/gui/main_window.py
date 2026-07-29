@@ -28,6 +28,7 @@ from .common import chain_dialogs
 from .result_actions import ResultActionsWidget
 from .spacegroup_selector import select_spacegroup, select_spacegroup_from_prototype
 from .structure_database_dialog import select_structure_prototype
+from .online_structure_dialog import select_online_structure
 from .element_assignment import select_site_elements
 from .input_parameters_dialog import edit_input_parameters, select_input_parameters, show_readonly_object_dialog
 from .scf_parameters_dialog import select_guided_scf_parameters
@@ -330,6 +331,12 @@ class MainWindow(QMainWindow):
         )
         structure_menu.addAction(create_database_action)
 
+        download_action = QAction(
+            "&Download from Online Database...", self
+        )
+        download_action.triggered.connect(self._on_download_structure)
+        structure_menu.addAction(download_action)
+
         load_action = QAction("&Load from File...", self)
         load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self._on_load_structure)
@@ -374,12 +381,6 @@ class MainWindow(QMainWindow):
         build_2d_action = QAction("Build &2D Structure...", self)
         build_2d_action.triggered.connect(self._on_build_2d_structure)
         structure_menu.addAction(build_2d_action)
-
-        structure_menu.addSeparator()
-
-        download_action = QAction("&Download from Materials Project...", self)
-        download_action.triggered.connect(self._on_download_structure)
-        structure_menu.addAction(download_action)
 
         structure_menu.addSeparator()
 
@@ -455,6 +456,16 @@ class MainWindow(QMainWindow):
         )
 
         welcome_layout.addSpacing(15)
+
+        download_btn = QPushButton("Download Structure from Online Database")
+        download_btn.setMinimumWidth(btn_width)
+        download_btn.setMinimumHeight(45)
+        download_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
+        download_btn.clicked.connect(self._on_download_structure)
+        welcome_layout.addWidget(download_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+        welcome_layout.addSpacing(15)
+
         load_btn = QPushButton("Load from File...")
         load_btn.setMinimumWidth(btn_width)
         load_btn.setMinimumHeight(45)
@@ -482,15 +493,6 @@ class MainWindow(QMainWindow):
         self._recent_start_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._recent_start_button.hide()
         welcome_layout.addWidget(self._recent_start_button, 0, Qt.AlignmentFlag.AlignCenter)
-
-        welcome_layout.addSpacing(15)
-
-        download_btn = QPushButton("Download from Materials Project...")
-        download_btn.setMinimumWidth(btn_width)
-        download_btn.setMinimumHeight(45)
-        download_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
-        download_btn.clicked.connect(self._on_download_structure)
-        welcome_layout.addWidget(download_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         welcome_layout.addStretch(1)
 
@@ -749,14 +751,10 @@ class MainWindow(QMainWindow):
             self._load_structure_from_path(file_path)
 
     def _on_download_structure(self) -> None:
-        """Download structure from Materials Project."""
-        QMessageBox.information(
-            self,
-            "Materials Project",
-            "Materials Project integration not yet implemented.\n\n"
-            "This feature will allow downloading structures by material ID or searching the database."
-        )
-        # TODO: Implement Materials Project API integration
+        """Download a structure from a configured online provider."""
+        result = select_online_structure(parent=self)
+        if result is not None:
+            self.set_structure(result)
 
     def _on_save_structure(self) -> None:
         """Save current structure to file."""
