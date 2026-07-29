@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget, QTreeWidgetItem,
     QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QLabel,
-    QComboBox, QFileDialog, QMessageBox, QToolButton, QStyle
+    QComboBox, QFileDialog, QMessageBox, QToolButton
 )
 from PyQt6.QtCore import Qt
 import numpy as np
@@ -22,6 +22,8 @@ from ase2sprkkr.common.grammar_types import (  # type: ignore
     Integer, Real, Boolean, String, Keyword, Energy, Array,
     Sequence as GrammarSequence, Table, SetOf, Flag,
 )
+
+from .result_action_icons import result_action_icon
 
 
 def coalesce(*args):
@@ -820,18 +822,10 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
         layout = QHBoxLayout(holder)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        icon_map = {
-            'plot': QStyle.StandardPixmap.SP_FileDialogContentsView,
-            'save': QStyle.StandardPixmap.SP_DialogSaveButton,
-            'open': QStyle.StandardPixmap.SP_DialogOpenButton,
-            'open_directory': QStyle.StandardPixmap.SP_DirOpenIcon,
-            'edit': QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            'data': QStyle.StandardPixmap.SP_FileDialogDetailedView,
-        }
         for action in actions:
             button = QToolButton(holder)
             button.setAutoRaise(True)
-            button.setIcon(self.style().standardIcon(icon_map.get(action, QStyle.StandardPixmap.SP_FileIcon)))
+            button.setIcon(result_action_icon(self.style(), action))
             labels = {'data': 'View data', 'open_directory': 'Open containing directory'}
             button.setToolTip(labels.get(action, action.capitalize()))
             button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_action(v, a))

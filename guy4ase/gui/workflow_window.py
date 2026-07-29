@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .main_window import MainWindow
+from .result_action_icons import result_action_icon
 
 
 class WorkflowWindow(QMainWindow):
@@ -109,22 +110,6 @@ class WorkflowWindow(QMainWindow):
             if item.widget() is not None:
                 item.widget().deleteLater()
 
-    def _result_action_icon(self, action: str) -> QIcon:
-        if action == "plot":
-            for name in ("office-chart-line", "view-statistics", "x-office-spreadsheet"):
-                icon = QIcon.fromTheme(name)
-                if not icon.isNull():
-                    return icon
-        icons = {
-            "plot": QStyle.StandardPixmap.SP_FileDialogContentsView,
-            "save": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "open": QStyle.StandardPixmap.SP_DialogOpenButton,
-            "open_directory": QStyle.StandardPixmap.SP_DirOpenIcon,
-            "edit": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            "data": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-        }
-        return self.style().standardIcon(icons.get(action, QStyle.StandardPixmap.SP_FileIcon))
-
     def _refresh_result_actions(self) -> None:
         self._clear_grid(self._result_actions_layout)
         result = self._expert._last_sprkkr_result
@@ -159,7 +144,7 @@ class WorkflowWindow(QMainWindow):
             button_layout.setSpacing(4)
             for action in actions:
                 button = QToolButton(buttons)
-                button.setIcon(self._result_action_icon(action))
+                button.setIcon(result_action_icon(self.style(), action))
                 labels = {"data": "View data", "open_directory": "Open containing directory"}
                 button.setToolTip(labels.get(action, action.capitalize()))
                 button.clicked.connect(

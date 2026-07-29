@@ -27,6 +27,7 @@ from ase.io import read as ase_read, write as ase_write
 
 from .lattice import plot_atoms_preview
 from .common import chain_dialogs
+from .result_action_icons import result_action_icon
 from .spacegroup_selector import select_spacegroup
 from .element_assignment import select_site_elements
 from .input_parameters_dialog import edit_input_parameters, select_input_parameters, show_readonly_object_dialog
@@ -837,6 +838,7 @@ class MainWindow(QMainWindow):
             self._remember_recent('output', file_path)
             self._refresh_result_panel()
         except Exception as e:
+            breakpoint()  # For debugging purposes; can be removed in production
             QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{str(e)}")
             return
 
@@ -944,22 +946,6 @@ class MainWindow(QMainWindow):
             self._result_empty_label.show()
             return
 
-        def action_icon(action: str) -> QIcon:
-            if action == 'plot':
-                for theme_name in ('office-chart-line', 'view-statistics', 'x-office-spreadsheet'):
-                    icon = QIcon.fromTheme(theme_name)
-                    if not icon.isNull():
-                        return icon
-            icon_map = {
-                'plot': getattr(QStyle.StandardPixmap, 'SP_FileDialogContentsView', QStyle.StandardPixmap.SP_FileDialogListView),
-                'save': getattr(QStyle.StandardPixmap, 'SP_DialogSaveButton', QStyle.StandardPixmap.SP_DialogSaveButton),
-                'open': getattr(QStyle.StandardPixmap, 'SP_DialogOpenButton', QStyle.StandardPixmap.SP_DirOpenIcon),
-                'open_directory': QStyle.StandardPixmap.SP_DirOpenIcon,
-                'edit': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogDetailedView),
-                'data': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogContentsView),
-            }
-            return self.style().standardIcon(icon_map[action])
-
         def action_label(action: str) -> str:
             label_map = {
                 'data': 'View data',
@@ -994,7 +980,7 @@ class MainWindow(QMainWindow):
             for action in value.actions():
                 button = QToolButton(value_widget)
                 button.setAutoRaise(True)
-                button.setIcon(action_icon(action))
+                button.setIcon(result_action_icon(self.style(), action))
                 button.setToolTip(action_label(action))
                 button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_output_value_action(v, a))
                 value_layout.addWidget(button, 0)
