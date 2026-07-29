@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QColor, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -17,13 +16,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStyle,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .main_window import MainWindow
-from .result_action_icons import result_action_icon
+from .result_actions import ResultActionsWidget
 
 
 class WorkflowWindow(QMainWindow):
@@ -50,11 +50,17 @@ class WorkflowWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
         root.setContentsMargins(32, 28, 24, 28)
-        root.setSpacing(28)
+        root.setSpacing(0)
 
-        content = QWidget(central)
+        splitter = QSplitter(Qt.Orientation.Horizontal, central)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
+        root.addWidget(splitter)
+
+        content = QWidget(splitter)
+        content.setMinimumWidth(480)
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setContentsMargins(0, 0, 24, 0)
         title = QLabel("What would you like to do?")
         title.setStyleSheet("font-size: 24pt; font-weight: 600;")
         content_layout.addWidget(title)
@@ -71,18 +77,32 @@ class WorkflowWindow(QMainWindow):
         content_layout.addWidget(self._actions)
 
         content_layout.addStretch(1)
-        root.addWidget(content, 1)
+        splitter.addWidget(content)
 
-        side = QFrame(central)
+        side = QFrame(splitter)
         side.setFrameShape(QFrame.Shape.StyledPanel)
-        side.setFixedWidth(340)
+        side.setMinimumWidth(300)
+        side.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(8)
 
-        self._result_actions = QGroupBox("Available result actions", side)
-        self._result_actions_layout = QGridLayout(self._result_actions)
-        self._result_actions_layout.setColumnStretch(1, 1)
-        side_layout.addWidget(self._result_actions)
-        side_layout.addStretch(1)
+        self._result_actions = QWidget(side)
+        result_actions_layout = QVBoxLayout(self._result_actions)
+        result_actions_layout.setContentsMargins(0, 0, 0, 0)
+        result_actions_layout.setSpacing(4)
+        result_actions_title = QLabel("Results...", self._result_actions)
+        result_actions_title.setStyleSheet("font-weight: 600;")
+        result_actions_layout.addWidget(result_actions_title)
+        self._result_actions_widget = ResultActionsWidget(
+            lambda value, action: self._expert._execute_output_value_action(
+                value, action, parent=self
+            ),
+            show_values_without_actions=False,
+            parent=self._result_actions,
+        )
+        result_actions_layout.addWidget(self._result_actions_widget, 1)
+        side_layout.addWidget(self._result_actions, 1)
 
         expert_box = QGroupBox("Expert mode", side)
         expert_layout = QVBoxLayout(expert_box)
@@ -95,68 +115,20 @@ class WorkflowWindow(QMainWindow):
         expert_btn.clicked.connect(self._open_expert_mode)
         expert_layout.addWidget(expert_btn)
         side_layout.addWidget(expert_box)
-        root.addWidget(side)
+        splitter.addWidget(side)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([560, 360])
 
     def _clear_actions(self) -> None:
         while self._actions_layout.count():
             item = self._actions_layout.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-
-    @staticmethod
-    def _clear_grid(layout: QGridLayout) -> None:
-        while layout.count():
-            item = layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
-
     def _refresh_result_actions(self) -> None:
-        self._clear_grid(self._result_actions_layout)
         result = self._expert._last_sprkkr_result
-        if result is None:
-            self._result_actions.hide()
-            return
-
-        try:
-            values = result.output_values
-        except Exception:
-            self._result_actions.hide()
-            return
-
-        row = 0
-        iterable = values.values() if isinstance(values, dict) else values
-        for value in iterable:
-            actions = tuple(value.actions())
-            if not actions:
-                continue
-            name = QLabel(value.name, self._result_actions)
-            name.setWordWrap(True)
-            self._result_actions_layout.addWidget(name, row, 0)
-
-            summary = QLabel(str(value.value_label()), self._result_actions)
-            summary.setWordWrap(True)
-            summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self._result_actions_layout.addWidget(summary, row, 1)
-
-            buttons = QWidget(self._result_actions)
-            button_layout = QHBoxLayout(buttons)
-            button_layout.setContentsMargins(0, 0, 0, 0)
-            button_layout.setSpacing(4)
-            for action in actions:
-                button = QToolButton(buttons)
-                button.setIcon(result_action_icon(self.style(), action))
-                labels = {"data": "View data", "open_directory": "Open containing directory"}
-                button.setToolTip(labels.get(action, action.capitalize()))
-                button.clicked.connect(
-                    lambda _checked=False, v=value, a=action: self._expert._execute_output_value_action(
-                        v, a, parent=self
-                    )
-                )
-                button_layout.addWidget(button)
-            self._result_actions_layout.addWidget(buttons, row, 2)
-            row += 1
-
-        self._result_actions.setVisible(row > 0)
+        self._result_actions_widget.set_result(result)
+        self._result_actions.setVisible(self._result_actions_widget.has_rows)
 
     @staticmethod
     def _blend_color(base: QColor, tint: QColor, amount: float) -> QColor:
@@ -279,9 +251,15 @@ class WorkflowWindow(QMainWindow):
             self._add_action("Create a 2D Structure", "Build an interface or transitional layer", self._create_transition)
             self._add_action(
                 "Load a Structure",
-                "Open a structure or SPR-KKR output file",
+                "Open a supported atomic structure file",
                 self._load_structure,
                 icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+            )
+            self._add_action(
+                "Load SPR-KKR Output",
+                "Open a completed calculation and its structure",
+                self._load_output,
+                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
             )
             self._add_recent_load_action()
             return
@@ -354,6 +332,14 @@ class WorkflowWindow(QMainWindow):
             )
 
         self._add_action(
+            "Load SPR-KKR Output",
+            "Open a different completed calculation",
+            self._load_output,
+            category="neutral",
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+        )
+
+        self._add_action(
             "Start Over",
             "Choose or load a different structure",
             self._start_over,
@@ -392,6 +378,11 @@ class WorkflowWindow(QMainWindow):
     def _load_structure(self) -> None:
         self._structure_kind = None
         self._expert._on_load_structure()
+
+    def _load_output(self) -> None:
+        self._structure_kind = None
+        self._expert._on_load_sprkkr_output()
+        self._refresh()
 
     def _load_recent(self, kind: str, file_path: str) -> None:
         self._structure_kind = None

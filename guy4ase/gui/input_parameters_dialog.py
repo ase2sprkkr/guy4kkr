@@ -23,7 +23,7 @@ from ase2sprkkr.common.grammar_types import (  # type: ignore
     Sequence as GrammarSequence, Table, SetOf, Flag,
 )
 
-from .result_action_icons import result_action_icon
+from .result_actions import result_action_icon, result_action_tooltip
 
 
 def coalesce(*args):
@@ -826,8 +826,7 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
             button = QToolButton(holder)
             button.setAutoRaise(True)
             button.setIcon(result_action_icon(self.style(), action))
-            labels = {'data': 'View data', 'open_directory': 'Open containing directory'}
-            button.setToolTip(labels.get(action, action.capitalize()))
+            button.setToolTip(result_action_tooltip(value, action))
             button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_action(v, a))
             layout.addWidget(button)
         layout.addStretch(1)
@@ -838,7 +837,8 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
             method = getattr(value, action)
             result = method()
             if action in {'data', 'edit'}:
-                dialog = ReadOnlyObjectDialog(result, title=f'View {value.name}', parent=self)
+                display_name = getattr(value, 'display_name', value.name)
+                dialog = ReadOnlyObjectDialog(result, title=f'View {display_name}', parent=self)
                 self._child_dialogs.append(dialog)
                 dialog.destroyed.connect(
                     lambda _obj=None, dlg=dialog: self._child_dialogs.remove(dlg)

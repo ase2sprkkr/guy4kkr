@@ -14,7 +14,7 @@ dependencies = [
   "ase",
   "platformdirs",
   "pyxtal",
-  "ase2sprkkr>=3.4.2",
+  "ase2sprkkr>=3.5.1",
 ]
 
 [project.scripts]
@@ -26,3 +26,6 @@ include = ["guy4ase*"]
 
 [tool.setuptools.package-data]
 guy4ase = ["assets/icons/*.svg", "assets/icons/*.md", "assets/icons/COPYING-ICONS"]
+
+[tool.uv.sources]
+ase2sprkkr = { path = "../ase2sprkkr", editable = true }

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional, Any, Dict, Sequence
-from collections.abc import Mapping
 from pathlib import Path
 import inspect
 import json
@@ -13,7 +12,6 @@ from PyQt6.QtWidgets import (
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QMenuBar, QMenu, QFileDialog, QMessageBox, QGridLayout, QHeaderView,
     QToolButton, QPlainTextEdit, QStackedWidget, QStyle, QDialog,
-    QDialogButtonBox, QCheckBox, QScrollArea, QFrame
 )
 from PyQt6.QtGui import QAction, QColor, QIcon
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -27,7 +25,7 @@ from ase.io import read as ase_read, write as ase_write
 
 from .lattice import plot_atoms_preview
 from .common import chain_dialogs
-from .result_action_icons import result_action_icon
+from .result_actions import ResultActionsWidget
 from .spacegroup_selector import select_spacegroup
 from .element_assignment import select_site_elements
 from .input_parameters_dialog import edit_input_parameters, select_input_parameters, show_readonly_object_dialog
@@ -62,8 +60,7 @@ class MainWindow(QMainWindow):
         self._sprkkr_run_window: Optional[QWidget] = None
         self._last_sprkkr_result: Optional[Any] = None
         self._result_group: Optional[QGroupBox] = None
-        self._result_grid_layout: Optional[QGridLayout] = None
-        self._result_empty_label: Optional[QLabel] = None
+        self._result_actions_widget: Optional[ResultActionsWidget] = None
         self._open_result_dialogs: list[QDialog] = []
 
         self._recent_files: Dict[str, list[str]] = {
@@ -442,6 +439,18 @@ class MainWindow(QMainWindow):
         load_btn.clicked.connect(self._on_load_structure)
         welcome_layout.addWidget(load_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
+        welcome_layout.addSpacing(15)
+
+        load_output_btn = QPushButton("Load SPRKKR Output File...")
+        load_output_btn.setMinimumWidth(btn_width)
+        load_output_btn.setMinimumHeight(45)
+        load_output_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
+        load_output_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+        )
+        load_output_btn.clicked.connect(self._on_load_sprkkr_output)
+        welcome_layout.addWidget(load_output_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
         # Recent start button (shown only when there are recent files)
         self._recent_start_button = QToolButton(self.welcome_widget)
         self._recent_start_button.setMinimumWidth(btn_width)
@@ -650,21 +659,12 @@ class MainWindow(QMainWindow):
 
         self._result_group = QGroupBox("Calculation Result")
         result_layout = QVBoxLayout(self._result_group)
-        self._result_empty_label = QLabel("No result loaded.")
-        self._result_empty_label.setWordWrap(True)
-        result_layout.addWidget(self._result_empty_label)
-
-        result_scroll = QScrollArea(self._result_group)
-        result_scroll.setWidgetResizable(True)
-        result_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        result_container = QWidget(result_scroll)
-        self._result_grid_layout = QGridLayout(result_container)
-        self._result_grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._result_grid_layout.setHorizontalSpacing(8)
-        self._result_grid_layout.setVerticalSpacing(6)
-        self._result_grid_layout.setColumnStretch(1, 1)
-        result_scroll.setWidget(result_container)
-        result_layout.addWidget(result_scroll, 1)
+        self._result_actions_widget = ResultActionsWidget(
+            self._execute_output_value_action,
+            show_values_without_actions=True,
+            parent=self._result_group,
+        )
+        result_layout.addWidget(self._result_actions_widget, 1)
 
         actions_layout.addWidget(self._result_group, 1)
 
@@ -900,20 +900,6 @@ class MainWindow(QMainWindow):
         )
         self._sprkkr_run_window.show()
 
-    def _clear_layout(self, layout: QGridLayout) -> None:
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            child_layout = item.layout()
-            if widget is not None:
-                widget.deleteLater()
-            elif child_layout is not None:
-                while child_layout.count():
-                    child_item = child_layout.takeAt(0)
-                    child_widget = child_item.widget()
-                    if child_widget is not None:
-                        child_widget.deleteLater()
-
     def _execute_output_value_action(
         self,
         value: Any,
@@ -925,7 +911,7 @@ class MainWindow(QMainWindow):
         try:
             if action in {'edit', 'data'}:
                 payload = value.data() if action == 'data' else value()
-                title = value.name
+                title = getattr(value, "display_name", value.name)
                 dialog = show_readonly_object_dialog(payload, title=f'View {title}', parent=parent)
                 self._open_result_dialogs.append(dialog)
                 dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_result_dialog(dlg))
@@ -940,54 +926,7 @@ class MainWindow(QMainWindow):
         self._open_result_dialogs = [item for item in self._open_result_dialogs if item is not dialog]
 
     def _refresh_result_panel(self) -> None:
-        self._clear_layout(self._result_grid_layout)
-        if self._last_sprkkr_result is None:
-            self._result_empty_label.setText('No result loaded.')
-            self._result_empty_label.show()
-            return
-
-        def action_label(action: str) -> str:
-            label_map = {
-                'data': 'View data',
-                'open_directory': 'Open containing directory',
-            }
-            return label_map.get(action, None) or action.capitalize();
-
-
-        self._result_empty_label.hide()
-        values = self._last_sprkkr_result.output_values
-        member_items = values.items()
-        if isinstance(member_items, Mapping):
-            member_items = member_items.items()
-        row_count = 0
-        for row, (key, value) in enumerate(member_items):
-            row_count = row + 1
-            name_label = QLabel(value.name)
-            name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            name_label.setWordWrap(True)
-            self._result_grid_layout.addWidget(name_label, row, 0)
-
-            value_widget = QWidget(self._result_group)
-            value_layout = QHBoxLayout(value_widget)
-            value_layout.setContentsMargins(0, 0, 0, 0)
-            value_layout.setSpacing(4)
-
-            value_label = QLabel(str(value.value_label()))
-            value_label.setWordWrap(True)
-            value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            value_layout.addWidget(value_label, 1)
-
-            for action in value.actions():
-                button = QToolButton(value_widget)
-                button.setAutoRaise(True)
-                button.setIcon(result_action_icon(self.style(), action))
-                button.setToolTip(action_label(action))
-                button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_output_value_action(v, a))
-                value_layout.addWidget(button, 0)
-
-            self._result_grid_layout.addWidget(value_widget, row, 1)
-
-        self._result_grid_layout.setRowStretch(row_count, 1)
+        self._result_actions_widget.set_result(self._last_sprkkr_result)
 
     def handle_sprkkr_finished_result(self, result: Any) -> None:
         self._last_sprkkr_result = result
