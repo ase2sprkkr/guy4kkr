@@ -23,3 +23,6 @@ guy4ase = "guy4ase.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["guy4ase*"]
+
+[tool.setuptools.package-data]
+guy4ase = ["assets/icons/*.svg", "assets/icons/*.md", "assets/icons/COPYING-ICONS"]

@@ -39,22 +39,30 @@ def _spacegroup_kinds_from_atoms(atoms: Any, count: int) -> list[Any]:
     arrays = getattr(atoms, 'arrays', {})
     kinds = arrays.get('spacegroup_kinds')
     if kinds is None:
-        return list(range(count))
+        symbols = list(atoms.get_chemical_symbols())
+        if len(symbols) == count:
+            return symbols
+        return ['atom'] * count
     return list(kinds)
 
 
+def _kind_key(kind: Any) -> Any:
+    """Return a stable, hashable key for a site kind."""
+    try:
+        hash(kind)
+    except Exception:
+        return ('repr', repr(kind))
+    return kind
+
+
 def compute_site_colors(atoms: Any) -> Dict[Any, str]:
-    scaled = np.asarray(atoms.get_scaled_positions(wrap=False), dtype=float)
+    scaled = np.asarray(atoms.get_scaled_positions(), dtype=float)
     kinds = _spacegroup_kinds_from_atoms(atoms, len(scaled))
 
     ordered_kinds: list[Any] = []
     seen_keys: set[Any] = set()
     for kind in kinds:
-        try:
-            key = ('h', kind)
-            hash(key)
-        except Exception:
-            key = ('r', repr(kind))
+        key = _kind_key(kind)
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -70,7 +78,7 @@ def compute_site_colors(atoms: Any) -> Dict[Any, str]:
     n = len(base_colors)
     for idx, kind in enumerate(ordered_kinds):
         rgba = base_colors[idx % n]
-        colors[kind] = to_hex(rgba)
+        colors[_kind_key(kind)] = to_hex(rgba)
     return colors
 
 
@@ -88,15 +96,9 @@ def plot_atoms_preview(
     hovered_style: Optional[Dict[str, Any]] = None,
     default_color: str = '#1f77b4',
     extra_draw: Optional[Callable[[Any, Optional[Any], Optional[np.ndarray]], None]] = None,
-    fit_to_atoms: bool = False,
-    fit_to_cell: bool = False,
 ) -> Dict[Any, str]:
     if clear_axes:
         ax.clear()
-    try:
-        ax.set_position([0.03, 0.03, 0.94, 0.94])
-    except Exception:
-        pass
     if axis_on:
         ax.set_axis_on()
 
@@ -116,7 +118,7 @@ def plot_atoms_preview(
             canvas.draw_idle()
         return site_colors or {}
 
-    scaled = np.asarray(atoms.get_scaled_positions(wrap=False), dtype=float)
+    scaled = np.asarray(atoms.get_scaled_positions(), dtype=float)
     if scaled.size == 0:
         if extra_draw is not None:
             extra_draw(ax, atoms, lattice)
@@ -139,28 +141,18 @@ def plot_atoms_preview(
     if base_style:
         style.update(base_style)
 
-    ordered_kinds: list[Any] = []
-    seen_keys: set[Any] = set()
-    for kind in kinds:
-        try:
-            key = ('h', kind)
-            hash(key)
-        except Exception:
-            key = ('r', repr(kind))
-        if key in seen_keys:
+    grouped_indices: Dict[Any, list[int]] = {}
+    for idx, kind in enumerate(kinds):
+        if idx in hovered_set:
             continue
-        seen_keys.add(key)
-        ordered_kinds.append(kind)
+        key = _kind_key(kind)
+        grouped_indices.setdefault(key, []).append(idx)
 
-    for kind in ordered_kinds:
-        selected_indices = [
-            idx for idx, this_kind in enumerate(kinds)
-            if this_kind == kind and idx not in hovered_set
-        ]
+    for key, selected_indices in grouped_indices.items():
         if not selected_indices:
             continue
         kind_style = dict(style)
-        kind_style['color'] = color_map.get(kind, default_color)
+        kind_style['color'] = color_map.get(key, default_color)
         plot_sites_in_lattice(ax, lattice, scaled[selected_indices], **kind_style)
 
     focus_style = dict(style)
@@ -172,40 +164,6 @@ def plot_atoms_preview(
 
     for idx in sorted(hovered_set):
         plot_sites_in_lattice(ax, lattice, scaled[idx], **focus_style)
-
-    if fit_to_atoms:
-        cart = np.asarray(atoms.get_positions(), dtype=float)
-        if len(cart) >= 20:
-            mins = np.percentile(cart, 2.0, axis=0)
-            maxs = np.percentile(cart, 98.0, axis=0)
-        else:
-            mins = cart.min(axis=0)
-            maxs = cart.max(axis=0)
-        center = (mins + maxs) / 2.0
-        spans = np.maximum(maxs - mins, 1e-6)
-        padding = 0.10 * spans
-        half = (spans + 2.0 * padding) / 2.0
-        ax.set_xlim(center[0] - half[0], center[0] + half[0])
-        ax.set_ylim(center[1] - half[1], center[1] + half[1])
-        ax.set_zlim(center[2] - half[2], center[2] + half[2])
-        ax.set_autoscale_on(False)
-
-    elif fit_to_cell and lattice is not None:
-        corners = corner_indices.T @ lattice
-        mins = corners.min(axis=0)
-        maxs = corners.max(axis=0)
-        spans = np.maximum(maxs - mins, 1e-6)
-        padding = 0.05 * spans
-        mins = mins - padding
-        maxs = maxs + padding
-        ax.set_xlim(mins[0], maxs[0])
-        ax.set_ylim(mins[1], maxs[1])
-        ax.set_zlim(mins[2], maxs[2])
-        try:
-            ax.set_box_aspect(tuple(spans.tolist()))
-        except Exception:
-            pass
-        ax.set_autoscale_on(False)
 
     if extra_draw is not None:
         extra_draw(ax, atoms, lattice)

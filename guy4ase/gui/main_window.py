@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from typing import Optional, Any, Dict, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 import inspect
 import json
 import os
 
-from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
@@ -28,13 +29,18 @@ from .lattice import plot_atoms_preview
 from .common import chain_dialogs
 from .spacegroup_selector import select_spacegroup
 from .element_assignment import select_site_elements
-from .input_parameters_dialog import select_input_parameters, show_readonly_object_dialog
+from .input_parameters_dialog import edit_input_parameters, select_input_parameters, show_readonly_object_dialog
+from .scf_parameters_dialog import select_guided_scf_parameters
+from .task_parameters_dialog import select_guided_task_parameters
 from .structure_transform_dialogs import scale_atoms, repeat_atoms, rotate_atoms
 from .build_2d_dialog import select_build_2d_structure
 from ase2sprkkr.outputs.task_result import TaskResult
 
 class MainWindow(QMainWindow):
     """Main application window for structure creation, loading, and manipulation."""
+
+    structureChanged = pyqtSignal(object)
+    calculationResultChanged = pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -48,7 +54,9 @@ class MainWindow(QMainWindow):
         self.input_params_preview: Optional[QPlainTextEdit] = None
         self.save_input_btn: Optional[QPushButton] = None
         self.directory: Optional[str] = None
+        self._potential_path: Optional[str] = None
         self._directory_label: Optional[QLabel] = None
+        self._potential_path_label: Optional[QLabel] = None
         self._directory_choose_btn: Optional[QToolButton] = None
         self._sprkkr_run_window: Optional[QWidget] = None
         self._last_sprkkr_result: Optional[Any] = None
@@ -105,6 +113,13 @@ class MainWindow(QMainWindow):
             return
         self._directory_label.setText(self.directory)
         self._directory_label.setToolTip(self.directory)
+
+    def _update_potential_path_label(self) -> None:
+        if self._potential_path_label is None:
+            return
+        value = self._potential_path or "—"
+        self._potential_path_label.setText(value)
+        self._potential_path_label.setToolTip(self._potential_path or "")
 
     def _choose_directory(self) -> None:
         start_dir = self.directory or str(Path.home())
@@ -286,7 +301,11 @@ class MainWindow(QMainWindow):
     def _load_structure_from_path(self, file_path: str) -> None:
         try:
             atoms = ase_read(file_path)
-            self.set_structure(atoms)
+            resolved = Path(file_path).resolve()
+            is_potential = resolved.suffix.lower() in {'.pot', '.pot_new'}
+            self.directory = str(resolved.parent)
+            self.set_structure(atoms, potential_path=str(resolved) if is_potential else None)
+            self._update_directory_label()
             self._remember_recent('structure', file_path)
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load structure:\n{str(e)}")
@@ -605,6 +624,16 @@ class MainWindow(QMainWindow):
         dir_row_l.addWidget(self._directory_choose_btn, 0)
         actions_group_layout.addWidget(dir_row)
 
+        potential_row = QWidget()
+        potential_row_l = QHBoxLayout(potential_row)
+        potential_row_l.setContentsMargins(0, 0, 0, 0)
+        potential_row_l.setSpacing(6)
+        potential_row_l.addWidget(QLabel("Potential:"))
+        self._potential_path_label = QLabel("—")
+        self._potential_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        potential_row_l.addWidget(self._potential_path_label, 1)
+        actions_group_layout.addWidget(potential_row)
+
         self._update_directory_label()
 
         self.run_calc_btn = QPushButton("Run SPRKKR Calculation...")
@@ -726,11 +755,38 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
 
-    def _on_create_sprkkr_input(self) -> None:
-        params = select_input_parameters(self.atoms, parent=self)
+    def _on_create_sprkkr_input(self, task: str = "scf") -> None:
+        # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
+        if not isinstance(task, str):
+            task = "scf"
+        params = select_input_parameters(self.atoms, parent=self, task=task)
         if params is None:
             return
         self.set_input_parameters(params)
+
+    def _on_create_guided_scf_input(self) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+        selection = select_guided_scf_parameters(self.atoms, parent=self, directory=self.directory)
+        if selection is not None:
+            params, directory = selection
+            self.directory = directory
+            self._update_directory_label()
+            self.set_input_parameters(params)
+            self._on_run_sprkkr_calculation()
+
+    def _on_create_guided_task_input(self, task: str) -> None:
+        if self.atoms is None:
+            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
+            return
+        selection = select_guided_task_parameters(task, parent=self, directory=self.directory, atoms=self.atoms)
+        if selection is not None:
+            params, directory = selection
+            self.directory = directory
+            self._update_directory_label()
+            self.set_input_parameters(params)
+            self._on_run_sprkkr_calculation()
 
     def _on_input_preview_double_click(self, event) -> None:
         self._on_create_sprkkr_input()
@@ -745,49 +801,22 @@ class MainWindow(QMainWindow):
             "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
         )
         if file_path:
-            self._load_sprkkr_input_from_path(file_path)
+            if self._load_sprkkr_input_from_path(file_path) and self._input_parameters is not None:
+                candidate = self._input_parameters.copy(copy_values=True)
+                edited = edit_input_parameters(candidate, parent=self, show_changed_only=True)
+                if edited is not None:
+                    self.set_input_parameters(edited)
 
-    def _load_sprkkr_input_from_path(self, file_path: str) -> None:
+    def _load_sprkkr_input_from_path(self, file_path: str) -> bool:
         try:
             from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
             params = InputParameters.from_file(file_path)
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{str(e)}")
-            return
+            return False
         self.set_input_parameters(params)
         self._remember_recent('input', file_path)
-
-    def _choose_output_related_load_options(self, input_available: bool, potential_available: bool) -> Optional[tuple[bool, bool]]:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Load Associated Files")
-        layout = QVBoxLayout(dialog)
-
-        intro = QLabel("Load associated files from the selected SPRKKR output?")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        input_cb = QCheckBox("Load associated input file")
-        input_cb.setChecked(True)
-        input_cb.setEnabled(input_available)
-        layout.addWidget(input_cb)
-        if not input_available:
-            layout.addWidget(QLabel("  Associated input file is not available."))
-
-        potential_cb = QCheckBox("Load associated potential as structure")
-        potential_cb.setChecked(True)
-        potential_cb.setEnabled(potential_available)
-        layout.addWidget(potential_cb)
-        if not potential_available:
-            layout.addWidget(QLabel("  Associated potential file is not available."))
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None
-        return (input_cb.isChecked(), potential_cb.isChecked())
+        return True
 
     def _on_load_sprkkr_output(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -811,26 +840,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{str(e)}")
             return
 
-        input_path = result.path_to('input') if 'input' in result.files else None
-        potential_path = result.path_to('potential') if 'potential' in result.files else None
-
-        input_available = bool(input_path and Path(input_path).is_file())
+        potential_key = 'converged' if 'converged' in result.files else 'potential'
+        potential_path = result.path_to(potential_key) if potential_key in result.files else None
         potential_available = bool(potential_path and Path(potential_path).is_file())
 
-        options = self._choose_output_related_load_options(input_available, potential_available)
-        if options is None:
-            return
-
-        load_input, load_potential = options
-
-        if load_input:
-            self._load_sprkkr_input_from_path(input_path)
-
-        if load_potential:
+        if potential_available:
             try:
                 from ase2sprkkr.potentials.potentials import Potential  # type: ignore
                 atoms = Potential.from_file(potential_path).atoms
-                self.set_structure(atoms)
+                self.set_structure(atoms, potential_path=str(Path(potential_path).resolve()))
             except Exception as e:
                 QMessageBox.warning(self, "Potential Load Warning", f"Failed to load structure from potential:\n{str(e)}")
 
@@ -894,12 +912,19 @@ class MainWindow(QMainWindow):
                     if child_widget is not None:
                         child_widget.deleteLater()
 
-    def _execute_output_value_action(self, value: Any, action: str) -> None:
+    def _execute_output_value_action(
+        self,
+        value: Any,
+        action: str,
+        *,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        parent = parent or self
         try:
-            if action == 'edit':
-                payload = value()
+            if action in {'edit', 'data'}:
+                payload = value.data() if action == 'data' else value()
                 title = value.name
-                dialog = show_readonly_object_dialog(payload, title=f'View {title}', parent=self)
+                dialog = show_readonly_object_dialog(payload, title=f'View {title}', parent=parent)
                 self._open_result_dialogs.append(dialog)
                 dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_result_dialog(dlg))
                 return
@@ -907,7 +932,7 @@ class MainWindow(QMainWindow):
             method = getattr(value, action, None)
             method()
         except Exception as e:
-            QMessageBox.critical(self, "Action Error", f"Failed to execute action '{action}':\n{str(e)}")
+            QMessageBox.critical(parent, "Action Error", f"Failed to execute action '{action}':\n{str(e)}")
 
     def _forget_result_dialog(self, dialog: QDialog) -> None:
         self._open_result_dialogs = [item for item in self._open_result_dialogs if item is not dialog]
@@ -929,6 +954,7 @@ class MainWindow(QMainWindow):
                 'plot': getattr(QStyle.StandardPixmap, 'SP_FileDialogContentsView', QStyle.StandardPixmap.SP_FileDialogListView),
                 'save': getattr(QStyle.StandardPixmap, 'SP_DialogSaveButton', QStyle.StandardPixmap.SP_DialogSaveButton),
                 'open': getattr(QStyle.StandardPixmap, 'SP_DialogOpenButton', QStyle.StandardPixmap.SP_DirOpenIcon),
+                'open_directory': QStyle.StandardPixmap.SP_DirOpenIcon,
                 'edit': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogDetailedView),
                 'data': getattr(QStyle.StandardPixmap, 'SP_FileDialogDetailedView', QStyle.StandardPixmap.SP_FileDialogContentsView),
             }
@@ -937,13 +963,19 @@ class MainWindow(QMainWindow):
         def action_label(action: str) -> str:
             label_map = {
                 'data': 'View data',
+                'open_directory': 'Open containing directory',
             }
             return label_map.get(action, None) or action.capitalize();
 
 
         self._result_empty_label.hide()
         values = self._last_sprkkr_result.output_values
-        for row, (key, value) in enumerate(values.items()):
+        member_items = values.items()
+        if isinstance(member_items, Mapping):
+            member_items = member_items.items()
+        row_count = 0
+        for row, (key, value) in enumerate(member_items):
+            row_count = row + 1
             name_label = QLabel(value.name)
             name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             name_label.setWordWrap(True)
@@ -969,7 +1001,7 @@ class MainWindow(QMainWindow):
 
             self._result_grid_layout.addWidget(value_widget, row, 1)
 
-        self._result_grid_layout.setRowStretch(len(values), 1)
+        self._result_grid_layout.setRowStretch(row_count, 1)
 
     def handle_sprkkr_finished_result(self, result: Any) -> None:
         self._last_sprkkr_result = result
@@ -985,7 +1017,42 @@ class MainWindow(QMainWindow):
                 output_file = str(Path(result.directory) / output_file)
         if output_file:
             self._remember_recent('output', output_file)
+            self.directory = str(Path(output_file).resolve().parent)
+            self._update_directory_label()
+
+        converged_path = None
+        try:
+            if hasattr(result, 'files') and 'converged' in result.files:
+                converged_path = result.path_to('converged')
+        except Exception:
+            converged_path = None
+        if not converged_path:
+            try:
+                converged_path = result.potential_filename
+            except Exception:
+                converged_path = None
+        if converged_path:
+            potential_file = Path(converged_path)
+            if not potential_file.is_absolute():
+                result_directory = getattr(result, 'directory', None) or self.directory
+                if result_directory:
+                    potential_file = Path(result_directory) / potential_file
+        else:
+            potential_file = None
+        if potential_file is not None and potential_file.is_file():
+            try:
+                from ase2sprkkr.potentials.potentials import Potential  # type: ignore
+                resolved_potential = str(potential_file.resolve())
+                atoms = Potential.from_file(resolved_potential).atoms
+                self.set_structure(atoms, potential_path=resolved_potential)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Potential Load Warning",
+                    f"Calculation finished, but the generated potential could not be loaded:\n{exc}",
+                )
         self._refresh_result_panel()
+        self.calculationResultChanged.emit(result)
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -998,12 +1065,15 @@ class MainWindow(QMainWindow):
             "Built with ASE and PyQt6."
         )
 
-    def set_structure(self, atoms: Any) -> None:  # atoms is ASE Atoms object
+    def set_structure(self, atoms: Any, *, potential_path: Optional[str] = None) -> None:  # atoms is ASE Atoms object
         """Set the current structure and update all views."""
         self.atoms = atoms
+        self._potential_path = potential_path
+        self._update_potential_path_label()
         self._update_structure_view()
         self._enable_actions(True)
         self._update_input_params_preview()
+        self.structureChanged.emit(atoms)
 
     def _enable_actions(self, enabled: bool) -> None:
         """Enable or disable action buttons based on structure availability."""
@@ -1107,13 +1177,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Rotate Error", f"Failed to rotate structure:\n{str(e)}")
 
-    def _on_build_2d_structure(self) -> None:
+    def _on_build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
         if self.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            result = select_build_2d_structure(self.atoms, parent=self)
+            result = select_build_2d_structure(self.atoms, parent=self, surface_mode=surface_mode)
             if result is None:
                 return
             self.set_structure(result)

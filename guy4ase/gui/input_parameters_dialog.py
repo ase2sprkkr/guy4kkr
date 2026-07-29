@@ -8,13 +8,16 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget, QTreeWidgetItem,
     QWidget, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QLabel,
-    QComboBox
+    QComboBox, QFileDialog, QMessageBox, QToolButton, QStyle
 )
 from PyQt6.QtCore import Qt
 import numpy as np
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from ase2sprkkr.common.configuration_containers import Section  # type: ignore
+from ase2sprkkr.common.configuration_containers import ConfigurationContainer  # type: ignore
+from ase2sprkkr.common.repeated_configuration_containers import RepeatedConfigurationContainer  # type: ignore
+from ase2sprkkr.common.options import BaseOption  # type: ignore
 from ase2sprkkr.common.grammar_types import (  # type: ignore
     Integer, Real, Boolean, String, Keyword, Energy, Array,
     Sequence as GrammarSequence, Table, SetOf, Flag,
@@ -230,8 +233,10 @@ class _TreeDialogBase(QDialog):
         self._tree.setColumnCount(4)
         self._tree.setHeaderLabels(['Name', 'Type', 'Value', 'Comment'])
         self._tree.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._tree.setColumnWidth(0, 300)
 
         root = QVBoxLayout(self)
+        self._root_layout = root
         header = QWidget(self)
         header_l = QHBoxLayout(header)
         header_l.setContentsMargins(0, 0, 0, 0)
@@ -241,6 +246,7 @@ class _TreeDialogBase(QDialog):
         header_l.addStretch(1)
         header_l.addWidget(self._expand_all_btn)
         header_l.addWidget(self._collapse_all_btn)
+        self._header_layout = header_l
         root.addWidget(header, 0)
         root.addWidget(self._tree, 1)
 
@@ -298,16 +304,74 @@ class _TreeDialogBase(QDialog):
 
 
 class InputParametersDialog(_TreeDialogBase):
-    def __init__(self, params: InputParameters, parent: Optional[QWidget] = None):
+    _CHANGED_ROLE = Qt.ItemDataRole.UserRole
+
+    def __init__(
+        self,
+        params: InputParameters,
+        parent: Optional[QWidget] = None,
+        *,
+        show_changed_only: bool = False,
+        calculate_mode: bool = False,
+        directory: Optional[str] = None,
+    ):
         self._params = params
+        self._calculate_mode = calculate_mode
+        self._directory = directory or ''
         super().__init__('Edit Input Parameters', parent=parent, filter_all_columns=False)
+        if calculate_mode:
+            directory_row = QWidget(self)
+            directory_layout = QHBoxLayout(directory_row)
+            directory_layout.setContentsMargins(0, 0, 0, 0)
+            directory_layout.addWidget(QLabel('Working directory:'))
+            self._directory_edit = QLineEdit(self._directory, directory_row)
+            self._directory_edit.setPlaceholderText('Select a calculation directory')
+            directory_layout.addWidget(self._directory_edit, 1)
+            choose_directory = QPushButton('Browse…', directory_row)
+            choose_directory.clicked.connect(self._choose_directory)
+            directory_layout.addWidget(choose_directory)
+            self._root_layout.insertWidget(1, directory_row)
+        else:
+            self._directory_edit = None
+        self._changed_only_checkbox = QCheckBox('Show changed only')
+        self._header_layout.insertWidget(3, self._changed_only_checkbox)
+        self._changed_only_checkbox.toggled.connect(lambda _checked: self._apply_filter(self._filter_edit.text()))
+        self.load_btn = self._add_footer_button('Load input…', self._load_input)
         self.cancel_btn = self._add_footer_button('Cancel', self.reject)
-        self.ok_btn = self._add_footer_button('OK', self._on_ok)
+        self.ok_btn = self._add_footer_button('Calculate' if calculate_mode else 'OK', self._on_ok)
         self._build_tree()
+        self._changed_only_checkbox.setChecked(show_changed_only)
 
     def _build_tree(self) -> None:
+        self._tree.clear()
         self._build_section(self._params)
         self._tree.expandAll()
+        self._apply_filter(self._filter_edit.text())
+
+    def _apply_filter(self, text: str) -> None:
+        if not hasattr(self, '_changed_only_checkbox'):
+            super()._apply_filter(text)
+            return
+        needle = (text or '').strip().lower()
+        changed_only = self._changed_only_checkbox.isChecked()
+
+        def visit(item: QTreeWidgetItem) -> bool:
+            self_match = not needle or needle in (item.text(0) or '').lower()
+            own_changed = bool(item.data(0, self._CHANGED_ROLE))
+            child_visible = False
+            for index in range(item.childCount()):
+                child_visible = visit(item.child(index)) or child_visible
+
+            has_children = item.childCount() > 0
+            changed_match = not changed_only or own_changed or child_visible
+            visible = (self_match and changed_match) or child_visible
+            if has_children and changed_only and not own_changed and not child_visible:
+                visible = False
+            item.setHidden(not visible)
+            return visible
+
+        for index in range(self._tree.topLevelItemCount()):
+            visit(self._tree.topLevelItem(index))
 
     def _build_section(self, parent: Any, treeitem: Optional[QTreeWidgetItem] = None) -> None:
         expert_parent: Optional[QTreeWidgetItem] = None
@@ -342,6 +406,7 @@ class InputParametersDialog(_TreeDialogBase):
         item.setToolTip(1, type_text)
         item.setToolTip(3, info)
         self._add_child(parent_item, item)
+        self._update_changed_style(opt, item, refresh_filter=False)
 
         if isinstance(grammar_type, (Array, SetOf)):
             self._build_array_option(opt, item, grammar_type)
@@ -351,8 +416,34 @@ class InputParametersDialog(_TreeDialogBase):
             self._build_table_option(opt, item, grammar_type)
         else:
             value = _option_value(opt)
-            editor = _create_scalar_editor(grammar_type, value, lambda new_value, o=opt: o.set(new_value))
+            editor = _create_scalar_editor(
+                grammar_type,
+                value,
+                lambda new_value, o=opt, option_item=item: self._set_option_value(o, option_item, new_value),
+            )
             self._tree.setItemWidget(item, 2, editor)
+
+    def _set_option_value(self, opt: Any, item: QTreeWidgetItem, value: Any) -> None:
+        opt.set(value)
+        self._update_changed_style(opt, item)
+
+    def _update_changed_style(
+        self,
+        opt: Any,
+        item: QTreeWidgetItem,
+        *,
+        refresh_filter: bool = True,
+    ) -> None:
+        try:
+            changed = bool(opt.is_changed())
+        except Exception:
+            changed = False
+        item.setData(0, self._CHANGED_ROLE, changed)
+        font = item.font(0)
+        font.setBold(changed)
+        item.setFont(0, font)
+        if refresh_filter and hasattr(self, '_changed_only_checkbox'):
+            self._apply_filter(self._filter_edit.text())
 
     def _clear_children(self, item: QTreeWidgetItem) -> None:
         while item.childCount():
@@ -384,6 +475,7 @@ class InputParametersDialog(_TreeDialogBase):
                     _mark_editor_invalid(editor, str(e))
                     return
                 _mark_editor_valid(editor)
+                self._update_changed_style(opt, item)
                 editor.setText(_stringify_value(grammar_type, _option_value(opt)))
                 self._rebuild_compound_option(opt, item)
 
@@ -424,6 +516,7 @@ class InputParametersDialog(_TreeDialogBase):
         else:
             values.append(value)
         opt.set(values)
+        self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
 
     def _build_sequence_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: GrammarSequence) -> None:
@@ -448,6 +541,7 @@ class InputParametersDialog(_TreeDialogBase):
             current.append(None)
         current[index] = value
         opt.set(current)
+        self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
 
     def _build_table_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: Table) -> None:
@@ -524,25 +618,79 @@ class InputParametersDialog(_TreeDialogBase):
         current = np.array(_option_value(opt), copy=True)
         current[row_index][column_name] = value
         opt.set(current)
+        self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
 
     def _update_table_cell(self, opt: Any, item: QTreeWidgetItem, row_index: int, column_index: int, value: Any) -> None:
         current = np.array(_option_value(opt), copy=True)
         current[row_index, column_index] = value
         opt.set(current)
+        self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
 
+    def _load_input(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Load SPRKKR Input File',
+            '',
+            'SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)',
+        )
+        if not file_path:
+            return
+        try:
+            self._params = InputParameters.from_file(file_path)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Load Error', f'Failed to load input parameters:\n{exc}')
+            return
+        self._build_tree()
+        self._changed_only_checkbox.setChecked(True)
+
+    def _choose_directory(self) -> bool:
+        start = self._directory_edit.text().strip() if self._directory_edit is not None else self._directory
+        selected = QFileDialog.getExistingDirectory(self, 'Select Calculation Directory', start)
+        if not selected:
+            return False
+        self._directory = str(selected)
+        if self._directory_edit is not None:
+            self._directory_edit.setText(self._directory)
+        return True
+
     def _on_ok(self) -> None:
+        if self._calculate_mode:
+            self._directory = self._directory_edit.text().strip() if self._directory_edit is not None else ''
+            if not self._directory and not self._choose_directory():
+                return
         self.accept()
 
     def result(self) -> Optional[InputParameters]:
         return getattr(self, '_params', None)
 
+    def directory(self) -> str:
+        if self._directory_edit is not None:
+            return self._directory_edit.text().strip()
+        return self._directory
 
-def edit_input_parameters(params: InputParameters, parent: Optional[QWidget] = None) -> Optional[InputParameters]:
-    dlg = InputParametersDialog(params, parent=parent)
+
+def edit_input_parameters(
+    params: InputParameters,
+    parent: Optional[QWidget] = None,
+    *,
+    show_changed_only: bool = False,
+    calculate_mode: bool = False,
+    directory: Optional[str] = None,
+    return_directory: bool = False,
+) -> Any:
+    dlg = InputParametersDialog(
+        params,
+        parent=parent,
+        show_changed_only=show_changed_only,
+        calculate_mode=calculate_mode,
+        directory=directory,
+    )
     code = dlg.exec()
     if code == QDialog.DialogCode.Accepted:
+        if return_directory:
+            return dlg.result(), dlg.directory()
         return dlg.result()
     return None
 
@@ -551,7 +699,11 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
     def __init__(self, value: Any, title: str = 'View Value', parent: Optional[QWidget] = None):
         self._value = value
         self._visited: set[int] = set()
+        self._child_dialogs: list[ReadOnlyObjectDialog] = []
         super().__init__(title, parent=parent, filter_all_columns=True)
+        self._tree.setColumnCount(5)
+        self._tree.setHeaderLabels(['Name', 'Type', 'Value', 'Comment', 'Actions'])
+        self._tree.setColumnWidth(4, 140)
         self.close_btn = self._add_footer_button('Close', self.close)
         self._build_tree()
 
@@ -561,6 +713,11 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
         self._tree.expandToDepth(1)
 
     def _safe_text(self, value: Any) -> str:
+        if isinstance(value, BaseOption):
+            try:
+                value = value()
+            except Exception as exc:
+                return f'<error: {exc}>'
         if value is None:
             return 'None'
         if isinstance(value, np.ndarray):
@@ -573,6 +730,11 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
             return repr(value)
 
     def _is_scalar(self, value: Any) -> bool:
+        if isinstance(value, BaseOption):
+            try:
+                value = value()
+            except Exception:
+                return True
         scalar_types = (str, bytes, int, float, bool, complex, type(None), Path)
         if isinstance(value, scalar_types):
             return True
@@ -583,6 +745,12 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
     def _iter_object_items(self, value: Any) -> list[tuple[str, Any, str]]:
         if isinstance(value, np.ndarray):
             return []
+        if isinstance(value, RepeatedConfigurationContainer):
+            values = value._values
+            iterable = values.items() if isinstance(values, Mapping) else enumerate(values)
+            return [(f'[{key}]', item, '') for key, item in iterable]
+        if isinstance(value, ConfigurationContainer):
+            return [(str(key), item, '') for key, item in value.items().items()]
         if isinstance(value, Mapping):
             return [(str(key), item, '') for key, item in value.items()]
         if isinstance(value, AbcSequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -609,6 +777,7 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
         if display:
             item.setToolTip(2, display)
         self._add_child(parent, item)
+        self._add_actions(item, value)
 
         if self._is_scalar(value):
             return
@@ -631,9 +800,59 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
                 child_display = self._safe_text(child_value)
                 child.setText(2, child_display)
                 child.setToolTip(2, child_display)
+                self._add_actions(child, child_value)
             else:
                 item.removeChild(child)
                 self._add_value(child_name, child_value, item)
+
+    def _add_actions(self, item: QTreeWidgetItem, value: Any) -> None:
+        actions_method = getattr(value, 'actions', None)
+        if not callable(actions_method):
+            return
+        try:
+            actions = tuple(actions_method())
+        except Exception:
+            return
+        if not actions:
+            return
+
+        holder = QWidget(self._tree)
+        layout = QHBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        icon_map = {
+            'plot': QStyle.StandardPixmap.SP_FileDialogContentsView,
+            'save': QStyle.StandardPixmap.SP_DialogSaveButton,
+            'open': QStyle.StandardPixmap.SP_DialogOpenButton,
+            'open_directory': QStyle.StandardPixmap.SP_DirOpenIcon,
+            'edit': QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            'data': QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        }
+        for action in actions:
+            button = QToolButton(holder)
+            button.setAutoRaise(True)
+            button.setIcon(self.style().standardIcon(icon_map.get(action, QStyle.StandardPixmap.SP_FileIcon)))
+            labels = {'data': 'View data', 'open_directory': 'Open containing directory'}
+            button.setToolTip(labels.get(action, action.capitalize()))
+            button.clicked.connect(lambda _checked=False, v=value, a=action: self._execute_action(v, a))
+            layout.addWidget(button)
+        layout.addStretch(1)
+        self._tree.setItemWidget(item, 4, holder)
+
+    def _execute_action(self, value: Any, action: str) -> None:
+        try:
+            method = getattr(value, action)
+            result = method()
+            if action in {'data', 'edit'}:
+                dialog = ReadOnlyObjectDialog(result, title=f'View {value.name}', parent=self)
+                self._child_dialogs.append(dialog)
+                dialog.destroyed.connect(
+                    lambda _obj=None, dlg=dialog: self._child_dialogs.remove(dlg)
+                    if dlg in self._child_dialogs else None
+                )
+                dialog.show()
+        except Exception as exc:
+            QMessageBox.critical(self, 'Action Error', f"Failed to execute action '{action}':\n{exc}")
 
 
 def show_readonly_object_dialog(value: Any, title: str = 'View Value', parent: Optional[QWidget] = None) -> ReadOnlyObjectDialog:
@@ -644,10 +863,15 @@ def show_readonly_object_dialog(value: Any, title: str = 'View Value', parent: O
     return dlg
 
 
-def select_input_parameters(atoms: Any, parent: Optional[QWidget] = None) -> Optional[InputParameters]:
+def select_input_parameters(
+    atoms: Any,
+    parent: Optional[QWidget] = None,
+    task: str = "scf",
+) -> Optional[InputParameters]:
     """Open the input-parameters editor and return the resulting InputParameters."""
-    from ase2sprkkr.input_parameters.definitions import scf
+    from importlib import import_module
 
-    params_def = scf.input_parameters()
+    task_module = import_module(f"ase2sprkkr.input_parameters.definitions.{task.lower()}")
+    params_def = task_module.input_parameters()
     params = params_def.create_object()
     return edit_input_parameters(params, parent=parent)

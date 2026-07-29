@@ -3,13 +3,13 @@ from __future__ import annotations
 import sys
 from PyQt6.QtWidgets import QApplication
 
-from .gui.main_window import MainWindow
+from .gui.workflow_window import WorkflowWindow
 
 
 def main() -> int:
     app = QApplication(sys.argv)
 
-    window = MainWindow()
+    window = WorkflowWindow()
     window.show()
 
     return app.exec()
