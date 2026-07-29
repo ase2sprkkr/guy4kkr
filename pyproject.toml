@@ -25,7 +25,13 @@ where = ["."]
 include = ["guy4ase*"]
 
 [tool.setuptools.package-data]
-guy4ase = ["assets/icons/*.svg", "assets/icons/*.md", "assets/icons/COPYING-ICONS"]
+guy4ase = [
+  "assets/icons/*.svg",
+  "assets/icons/*.md",
+  "assets/icons/COPYING-ICONS",
+  "assets/structures/*.dat",
+  "assets/structures/*.md",
+]
 
 [tool.uv.sources]
 ase2sprkkr = { path = "../ase2sprkkr", editable = true }
