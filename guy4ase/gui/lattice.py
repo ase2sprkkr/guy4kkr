@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 import numpy as np
 from itertools import product
 import matplotlib.pyplot as plt
-from matplotlib import cm
+from matplotlib import colormaps
 from matplotlib.colors import to_hex
 
 _SITE_ROLE_STYLES = {
@@ -68,7 +68,9 @@ def compute_site_colors(atoms: Any) -> Dict[Any, str]:
         seen_keys.add(key)
         ordered_kinds.append(kind)
 
-    cmap = cm.get_cmap('tab20', max(len(ordered_kinds), 1))
+    cmap = colormaps.get_cmap('tab20').resampled(
+        max(len(ordered_kinds), 1)
+    )
     base_colors = list(getattr(cmap, 'colors', []))
     if not base_colors:
         steps = max(len(ordered_kinds), 1)
@@ -141,18 +143,19 @@ def plot_atoms_preview(
     if base_style:
         style.update(base_style)
 
-    grouped_indices: Dict[Any, list[int]] = {}
+    grouped_indices: Dict[str, list[int]] = {}
     for idx, kind in enumerate(kinds):
         if idx in hovered_set:
             continue
         key = _kind_key(kind)
-        grouped_indices.setdefault(key, []).append(idx)
+        color = color_map.get(key, default_color)
+        grouped_indices.setdefault(color, []).append(idx)
 
-    for key, selected_indices in grouped_indices.items():
+    for color, selected_indices in grouped_indices.items():
         if not selected_indices:
             continue
         kind_style = dict(style)
-        kind_style['color'] = color_map.get(key, default_color)
+        kind_style['color'] = color
         plot_sites_in_lattice(ax, lattice, scaled[selected_indices], **kind_style)
 
     focus_style = dict(style)
