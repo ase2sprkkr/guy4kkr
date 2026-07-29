@@ -26,8 +26,59 @@ from .main_window import MainWindow
 from .result_actions import ResultActionsWidget
 
 
+def _set_action_button_content(
+    button: QPushButton | QToolButton,
+    title: str,
+    description: str,
+    icon: QIcon,
+    icon_size: QSize,
+    *,
+    menu_button: bool = False,
+) -> None:
+    """Lay out an action icon and text with explicit, theme-safe spacing."""
+    button.setText("")
+    button.setProperty("workflowActionTitle", title)
+    button.setAccessibleName(title)
+    button.setAccessibleDescription(description)
+
+    layout = QHBoxLayout(button)
+    layout.setContentsMargins(16, 8, 34 if menu_button else 16, 8)
+    layout.setSpacing(16)
+
+    icon_label = QLabel(button)
+    icon_label.setFixedSize(icon_size)
+    icon_label.setPixmap(icon.pixmap(icon_size))
+    icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    icon_label.setAttribute(
+        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+    )
+    layout.addWidget(icon_label)
+
+    text = title if not description else f"{title}\n{description}"
+    text_label = QLabel(text, button)
+    text_label.setForegroundRole(QPalette.ColorRole.ButtonText)
+    text_label.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+    )
+    text_label.setAttribute(
+        Qt.WidgetAttribute.WA_TransparentForMouseEvents
+    )
+    layout.addWidget(text_label, 1)
+
+
 class WorkflowWindow(QMainWindow):
     """Task-oriented entry point that keeps the full UI available as expert mode."""
+
+    _GROUP_CALCULATE = "Calculate"
+    _GROUP_CREATE = "Create structure"
+    _GROUP_LOAD = "Load structure"
+    _GROUP_DIFFERENT = "And now something completely different..."
+    _ACTION_GROUPS = (
+        _GROUP_CALCULATE,
+        _GROUP_CREATE,
+        _GROUP_LOAD,
+        _GROUP_DIFFERENT,
+    )
 
     def __init__(self):
         super().__init__()
@@ -73,7 +124,8 @@ class WorkflowWindow(QMainWindow):
         self._actions = QWidget(content)
         self._actions_layout = QVBoxLayout(self._actions)
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
-        self._actions_layout.setSpacing(12)
+        self._actions_layout.setSpacing(16)
+        self._action_group_layouts: dict[str, QVBoxLayout] = {}
         content_layout.addWidget(self._actions)
 
         content_layout.addStretch(1)
@@ -124,7 +176,45 @@ class WorkflowWindow(QMainWindow):
         while self._actions_layout.count():
             item = self._actions_layout.takeAt(0)
             if item.widget() is not None:
+                item.widget().hide()
                 item.widget().deleteLater()
+        self._action_group_layouts.clear()
+
+    def _action_group(self, title: str) -> QVBoxLayout:
+        layout = self._action_group_layouts.get(title)
+        if layout is not None:
+            return layout
+        if title not in self._ACTION_GROUPS:
+            raise ValueError(f"Unknown workflow action group {title!r}.")
+
+        group = QWidget(self._actions)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        display_title = (
+            "Create derived structure"
+            if title == self._GROUP_CREATE
+            and self._expert.atoms is not None
+            else title
+        )
+        label = QLabel(display_title, group)
+        label.setObjectName("workflowActionGroupLabel")
+        label.setForegroundRole(QPalette.ColorRole.WindowText)
+        label.setStyleSheet(
+            "font-size: 9pt; font-weight: 600;"
+        )
+        layout.addWidget(label)
+
+        position = sum(
+            group_title in self._action_group_layouts
+            for group_title in self._ACTION_GROUPS[
+                :self._ACTION_GROUPS.index(title)
+            ]
+        )
+        self._actions_layout.insertWidget(position, group)
+        self._action_group_layouts[title] = layout
+        return layout
+
     def _refresh_result_actions(self) -> None:
         result = self._expert._last_sprkkr_result
         self._result_actions_widget.set_result(result)
@@ -145,6 +235,7 @@ class WorkflowWindow(QMainWindow):
         text = palette.color(QPalette.ColorRole.ButtonText)
         accents = {
             'structure': QColor('#3979b8'),
+            'load': QColor('#527f9f'),
             'calculation': QColor('#398552'),
             'destructive': QColor('#b34444'),
             'neutral': palette.color(QPalette.ColorRole.Mid),
@@ -154,7 +245,7 @@ class WorkflowWindow(QMainWindow):
         background = self._blend_color(base, accent, tint_amount)
         hover = self._blend_color(base, accent, min(tint_amount + 0.12, 1.0))
         return (
-            f"{widget} {{ text-align: left; padding: 10px 16px; font-size: 11pt; "
+            f"{widget} {{ text-align: left; padding: 0; font-size: 11pt; "
             f"color: {text.name()}; background-color: {background.name()}; "
             f"border: 1px solid {accent.name()}; border-left: 6px solid {accent.name()}; "
             f"border-radius: 4px; }} "
@@ -167,23 +258,33 @@ class WorkflowWindow(QMainWindow):
         description: str,
         callback: Callable[[], None],
         *,
+        group: str = "Create structure",
         category: str = 'structure',
         icon: QStyle.StandardPixmap | QIcon | str = QStyle.StandardPixmap.SP_FileIcon,
     ) -> None:
-        button = QPushButton(f"{title}\n{description}")
+        button = QPushButton(self._actions)
         button.setMinimumHeight(68)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         if isinstance(icon, QIcon):
-            button.setIcon(icon)
+            action_icon = icon
         elif isinstance(icon, str):
-            button.setIcon(QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "icons" / icon)))
+            action_icon = QIcon(
+                str(
+                    Path(__file__).resolve().parent.parent
+                    / "assets"
+                    / "icons"
+                    / icon
+                )
+            )
         else:
-            button.setIcon(self.style().standardIcon(icon))
-        button.setIconSize(QSize(26, 26))
+            action_icon = self.style().standardIcon(icon)
+        _set_action_button_content(
+            button, title, description, action_icon, QSize(26, 26)
+        )
         button.setStyleSheet(self._action_style(category, 'QPushButton'))
         button.clicked.connect(callback)
-        self._actions_layout.addWidget(button)
+        self._action_group(group).addWidget(button)
 
     def _add_recent_load_action(self) -> None:
         recent_structures = self._expert._recent_files['structure']
@@ -206,16 +307,23 @@ class WorkflowWindow(QMainWindow):
         default_path = recent_by_kind[default_kind][0]
 
         button = QToolButton(self._actions)
-        button.setText(f"Continue: {Path(default_path).name}")
+        title = f"Continue: {Path(default_path).name}"
         button.setToolTip(default_path)
         button.setMinimumHeight(52)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
-        button.setIconSize(QSize(24, 24))
-        button.setStyleSheet(self._action_style('structure', 'QToolButton'))
+        _set_action_button_content(
+            button,
+            title,
+            "",
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_ArrowForward
+            ),
+            QSize(24, 24),
+            menu_button=True,
+        )
+        button.setStyleSheet(self._action_style('load', 'QToolButton'))
         button.clicked.connect(
             lambda _checked=False, kind=default_kind, path=default_path: self._load_recent(kind, path)
         )
@@ -238,7 +346,7 @@ class WorkflowWindow(QMainWindow):
                 )
                 submenu.addAction(action)
         button.setMenu(menu)
-        self._actions_layout.addWidget(button)
+        self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:
         self._clear_actions()
@@ -256,6 +364,8 @@ class WorkflowWindow(QMainWindow):
                 "Download Structure from Online Database",
                 "Search an online crystallographic database",
                 self._download_structure,
+                group=self._GROUP_LOAD,
+                category='load',
                 icon=QStyle.StandardPixmap.SP_ArrowDown,
             )
             self._add_action("Create a 2D Surface", "Build a surface with vacuum on one side", self._create_surface)
@@ -264,12 +374,16 @@ class WorkflowWindow(QMainWindow):
                 "Load a Structure",
                 "Open a supported atomic structure file",
                 self._load_structure,
+                group=self._GROUP_LOAD,
+                category='load',
                 icon=QStyle.StandardPixmap.SP_DialogOpenButton,
             )
             self._add_action(
                 "Load SPR-KKR Output",
                 "Open a completed calculation and its structure",
                 self._load_output,
+                group=self._GROUP_LOAD,
+                category='load',
                 icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
             )
             self._add_recent_load_action()
@@ -301,6 +415,7 @@ class WorkflowWindow(QMainWindow):
                 scf_label,
                 scf_description,
                 lambda: self._prepare_task("scf"),
+                group=self._GROUP_CALCULATE,
                 category='calculation',
                 icon='system-run.svg',
             )
@@ -317,6 +432,7 @@ class WorkflowWindow(QMainWindow):
                     label,
                     description,
                     lambda _checked=False, name=task: self._prepare_task(name),
+                    group=self._GROUP_CALCULATE,
                     category='calculation',
                     icon='system-run.svg',
                 )
@@ -326,6 +442,7 @@ class WorkflowWindow(QMainWindow):
                 "Recalculate SCF",
                 "Discard SCF progress and calculate again from the initial state",
                 self._recalculate_scf,
+                group=self._GROUP_DIFFERENT,
                 category='destructive',
                 icon='run-build-clean.svg',
             )
@@ -346,7 +463,8 @@ class WorkflowWindow(QMainWindow):
             "Start Over",
             "Choose or load a different structure",
             self._start_over,
-            category='neutral',
+            group=self._GROUP_DIFFERENT,
+            category='destructive',
             icon=QStyle.StandardPixmap.SP_BrowserReload,
         )
 
