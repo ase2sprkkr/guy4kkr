@@ -104,7 +104,7 @@ class WorkflowWindow(QMainWindow):
         result_actions_layout.addWidget(self._result_actions_widget, 1)
         side_layout.addWidget(self._result_actions, 1)
 
-        expert_box = QGroupBox("Expert mode", side)
+        expert_box = QGroupBox("", side)
         expert_layout = QVBoxLayout(expert_box)
         side_text = QLabel("Access every setting directly.", expert_box)
         side_text.setWordWrap(True)
