@@ -26,7 +26,8 @@ from ase.io import read as ase_read, write as ase_write
 from .lattice import plot_atoms_preview
 from .common import chain_dialogs
 from .result_actions import ResultActionsWidget
-from .spacegroup_selector import select_spacegroup
+from .spacegroup_selector import select_spacegroup, select_spacegroup_from_prototype
+from .structure_database_dialog import select_structure_prototype
 from .element_assignment import select_site_elements
 from .input_parameters_dialog import edit_input_parameters, select_input_parameters, show_readonly_object_dialog
 from .scf_parameters_dialog import select_guided_scf_parameters
@@ -321,6 +322,14 @@ class MainWindow(QMainWindow):
         create_action.triggered.connect(self._on_create_structure)
         structure_menu.addAction(create_action)
 
+        create_database_action = QAction(
+            "Create from &Prototype Database...", self
+        )
+        create_database_action.triggered.connect(
+            self._on_create_structure_from_database
+        )
+        structure_menu.addAction(create_database_action)
+
         load_action = QAction("&Load from File...", self)
         load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self._on_load_structure)
@@ -421,7 +430,7 @@ class MainWindow(QMainWindow):
         welcome_layout.addSpacing(30)
 
         # Action buttons
-        btn_width = 250
+        btn_width = 300
 
         create_btn = QPushButton("Create New Structure")
         create_btn.setMinimumWidth(btn_width)
@@ -432,6 +441,20 @@ class MainWindow(QMainWindow):
 
         welcome_layout.addSpacing(15)
 
+        create_database_btn = QPushButton(
+            "Create Structure from Prototype Database"
+        )
+        create_database_btn.setMinimumWidth(btn_width)
+        create_database_btn.setMinimumHeight(45)
+        create_database_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
+        create_database_btn.clicked.connect(
+            self._on_create_structure_from_database
+        )
+        welcome_layout.addWidget(
+            create_database_btn, 0, Qt.AlignmentFlag.AlignCenter
+        )
+
+        welcome_layout.addSpacing(15)
         load_btn = QPushButton("Load from File...")
         load_btn.setMinimumWidth(btn_width)
         load_btn.setMinimumHeight(45)
@@ -689,6 +712,18 @@ class MainWindow(QMainWindow):
         )
         # chain_dialogs now returns the actual result from the last dialog
         # select_site_elements returns an Atoms object or None
+        if result is not None:
+            self.set_structure(result)
+
+    def _on_create_structure_from_database(self) -> None:
+        """Create a structure from a database prototype using shared editors."""
+        result = chain_dialogs(
+            select_structure_prototype,
+            select_spacegroup_from_prototype,
+            select_site_elements,
+            back=True,
+            kwargs={"parent": self},
+        )
         if result is not None:
             self.set_structure(result)
 

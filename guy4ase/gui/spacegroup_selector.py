@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
     QTableWidget, QTableWidgetItem, QPushButton, QWidget,
     QSplitter, QGroupBox, QScrollArea, QCheckBox, QGridLayout, QSizePolicy,
-    QHeaderView, QDoubleSpinBox
+    QHeaderView, QDoubleSpinBox, QMessageBox
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from pyxtal.symmetry import Group
 from weakref import WeakKeyDictionary
 from itertools import zip_longest, chain
-from ase.cell import Cell
 from ase import Atoms
 
 from .lattice import plot_lattice, plot_sites_in_lattice
@@ -23,6 +22,7 @@ from ..physics.pyxtal_utils import complete_lattice_params, lattice_from_params,
                                    lattice_default_params, lattice_fixed_params,\
                                    WyckoffPosition
 from .common import create_units_combo, QDoubleEdit
+from ..physics.structure_database import StructurePrototype
 import numpy as np
 
 _DIALOGS = WeakKeyDictionary()
@@ -34,6 +34,8 @@ _DEFAULT_KEY = _GlobalSentinel()
 
 
 class SpaceGroupSelectorDialog(QDialog):
+    _DEFAULT_TITLE = "Select Space Group"
+
     def __init__(self, parent: Optional[QWidget] = None, back: bool = False):
         """Initialize dialog state, caches, and build the UI layout.
 
@@ -75,7 +77,7 @@ class SpaceGroupSelectorDialog(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
             | Qt.WindowType.WindowMinimizeButtonHint
         )
-        self.setWindowTitle("Select Space Group")
+        self.setWindowTitle(self._DEFAULT_TITLE)
         self.resize(1100, 700)
         self._allow_back = bool(back)
         self.selected_group: Optional[Group] = None
@@ -92,6 +94,7 @@ class SpaceGroupSelectorDialog(QDialog):
         self._filter_timer.setSingleShot(True)
         self._filter_timer.timeout.connect(self._populate_table)
         self._selected_sites: Dict[str, list[list[float]]] = {}
+        self._active_prototype: Optional[StructurePrototype] = None
         # Durable user-entered lattice memory (not cleared when params become fixed)
         self._wyckoff_widgets = {}
         self._build_ui()
@@ -255,10 +258,10 @@ class SpaceGroupSelectorDialog(QDialog):
         right_bottom_v.addWidget(self.error_label)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-        if self._allow_back:
-            self.back_btn = QPushButton("Back")
-            self.back_btn.clicked.connect(self._on_back)
-            btn_row.addWidget(self.back_btn)
+        self.back_btn = QPushButton("Back")
+        self.back_btn.setVisible(self._allow_back)
+        self.back_btn.clicked.connect(self._on_back)
+        btn_row.addWidget(self.back_btn)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.cancel_btn)
@@ -280,9 +283,11 @@ class SpaceGroupSelectorDialog(QDialog):
             self.ok_btn.setEnabled(False)
             return
         sg_no = int(self.table.item(row, 0).text())
-        # Record previously fixed params before switching
+        self._load_group(sg_no)
 
-        self.selected_group = Group(sg_no)
+    def _load_group(self, group: int) -> None:
+        """Load one space group into the shared Wyckoff/lattice editor."""
+        self.selected_group = Group(group)
         wps = sorted(self.selected_group.Wyckoff_positions, key=lambda wp: wp.letter)
         self.wyckoff_positions = { wp.letter: WyckoffPosition(wp) for wp in wps}
 
@@ -291,6 +296,157 @@ class SpaceGroupSelectorDialog(QDialog):
         # If some params were fixed previously but are now free, restore user value if remembered, else clear
         self._on_lattice_changed()
         self._update_ok_state()
+
+    def prepare_manual_selection(self) -> None:
+        """Return a database-preloaded dialog to its normal selection mode."""
+        if self._active_prototype is None:
+            return
+        self._active_prototype = None
+        self.setWindowTitle(self._DEFAULT_TITLE)
+        self.lattice_params = {}
+        self._selected_sites = {}
+        row = self.table.currentRow()
+        if row >= 0:
+            self._load_group(int(self.table.item(row, 0).text()))
+
+    def _select_space_group_in_table(self, space_group: int) -> None:
+        """Keep the selector table synchronized with a preloaded prototype."""
+        with self._safe_signal_block(self.system_combo), \
+                self._safe_signal_block(self.search_edit), \
+                self._safe_signal_block(self.table):
+            self.system_combo.setCurrentText("All")
+            self.search_edit.clear()
+            self._populate_table()
+            for row in range(self.table.rowCount()):
+                if int(self.table.item(row, 0).text()) == space_group:
+                    self.table.selectRow(row)
+                    break
+
+    def load_prototype(self, prototype: StructurePrototype) -> None:
+        """Preload a database prototype into the existing structure editor."""
+        if self._active_prototype == prototype:
+            return
+
+        self._active_prototype = None
+        self.setWindowTitle(
+            f"Create Structure from Prototype Database — {prototype.name}"
+        )
+        self.lattice_params = {}
+        self._selected_sites = {}
+        self._select_space_group_in_table(prototype.space_group)
+        self._load_group(prototype.space_group)
+
+        occurrences: Dict[str, int] = {}
+        for site in prototype.sites:
+            expected_multiplicity = site.multiplicity
+            if prototype.is_rhombohedral_setting:
+                expected_multiplicity *= 3
+
+            wp = self.wyckoff_positions.get(site.wyckoff_letter)
+            if wp is None:
+                compatible = [
+                    candidate
+                    for candidate in self.wyckoff_positions.values()
+                    if candidate.multiplicity == expected_multiplicity
+                ]
+                if len(compatible) != 1:
+                    raise ValueError(
+                        f"Prototype {prototype.name!r} uses unknown Wyckoff site "
+                        f"{site.wyckoff_letter!r} in space group "
+                        f"{prototype.space_group}, and no unique equivalent site "
+                        f"can be identified."
+                    )
+                wp = compatible[0]
+
+            if wp.multiplicity != expected_multiplicity:
+                raise ValueError(
+                    f"Prototype {prototype.name!r}, site {site.wyckoff_letter!r}, "
+                    f"has multiplicity {site.multiplicity}; the selected PyXtal "
+                    f"setting has multiplicity {wp.multiplicity}."
+                )
+
+            occurrence = occurrences.get(wp.letter, 0)
+            occurrences[wp.letter] = occurrence + 1
+            values = self._prototype_site_values(site, wp, occurrence)
+            self._selected_sites.setdefault(wp.letter, []).append(values)
+
+        self._active_prototype = prototype
+        self._rebuild_wyckoff_panel()
+        self._update_lattice_constraints()
+        self._on_lattice_changed()
+        self._update_ok_state()
+
+    def focus_lattice_parameters(self) -> None:
+        """Focus the first editable lattice parameter."""
+        for key in lattice_default_params:
+            editor = self._lat_vars[key]
+            if editor.isEnabled():
+                editor.setFocus(Qt.FocusReason.OtherFocusReason)
+                editor.selectAll()
+                return
+
+    def create_atoms(self) -> Atoms:
+        """Build an ASE structure from the current validated editor state."""
+        if not self._is_valid():
+            raise ValueError("The space-group selection is incomplete.")
+
+        lat = self.lattice
+        pos_blocks: List[np.ndarray] = []
+        kinds: List[int] = []
+        labels = []
+        kind = 0
+
+        for letter, wp in self.wyckoff_positions.items():
+            vals = self._selected_sites.get(letter, [])
+            for duplicate, val in enumerate(vals):
+                label = letter
+                if len(vals) > 1:
+                    label = f"{letter}.{duplicate + 1}"
+                fractional_positions = wp.all_positions_for_free_dofs(val)
+                cartesian_positions = np.dot(fractional_positions, lat)
+                pos_blocks.append(cartesian_positions)
+                kinds.extend([kind] * len(cartesian_positions))
+                if len(cartesian_positions) == 1:
+                    labels.append(label)
+                else:
+                    labels.extend(
+                        f"{label}.{position}"
+                        for position in range(1, len(cartesian_positions) + 1)
+                    )
+                kind += 1
+
+        atoms = Atoms(positions=np.vstack(pos_blocks), cell=lat, pbc=True)
+        atoms.set_array("labels", np.asarray(labels, dtype=object))
+        atoms.set_array("spacegroup_kinds", np.asarray(kinds, dtype=int))
+        return atoms
+
+    @staticmethod
+    def _prototype_site_values(site, wp, occurrence: int) -> list[float]:
+        """Choose editable, non-degenerate initial values for a prototype site."""
+        if wp.n_dofs == 0:
+            return []
+
+        seeds = {
+            "x": (0.17 + occurrence * 0.11) % 1.0,
+            "y": (0.29 + occurrence * 0.13) % 1.0,
+            "z": (0.41 + occurrence * 0.17) % 1.0,
+        }
+        position = np.asarray(site.position(**seeds), dtype=float)
+        try:
+            values = list(np.asarray(wp.wp.get_free_xyzs(position), dtype=float))
+            if wp.is_the_same_position(position):
+                return wp.ensure_free_dofs(values)
+        except (TypeError, ValueError):
+            pass
+
+        # Rhombohedral database entries are displayed in the equivalent
+        # conventional hexagonal setting. Their coordinate axes differ, but
+        # the number of free parameters is unchanged.
+        variables = []
+        for name in ("x", "y", "z"):
+            if any(name in expression for expression in site.coordinates):
+                variables.append(seeds[name])
+        return wp.ensure_free_dofs(variables)
 
     def _on_ok(self) -> None:
         """Accept the dialog when the current selection passes validation."""
@@ -641,11 +797,14 @@ class SpaceGroupSelectorDialog(QDialog):
         return ""
 
 
-def select_spacegroup(parent: Optional[QWidget] = None, back: bool = False,
-                      **kwargs: Any) -> Optional[Dict[str, Any]] | str:
+def select_spacegroup(
+    parent: Optional[QWidget] = None,
+    back: bool = False,
+    prototype: Optional[StructurePrototype] = None,
+) -> Optional[Atoms] | str:
     """
     PyQt6 version of the spacegroup selector. Returns:
-      - {'spacegroup': int, 'cell': ase.Cell, 'wyckoff_positions': dict} on OK
+      - an ASE ``Atoms`` structure on OK
       - 'back' if Back is enabled and pressed
       - None on cancel
     """
@@ -659,45 +818,39 @@ def select_spacegroup(parent: Optional[QWidget] = None, back: bool = False,
         _DIALOGS[key] = dlg
     else:
         dlg._allow_back = bool(back)
+        dlg.back_btn.setVisible(dlg._allow_back)
+
+    try:
+        if prototype is None:
+            dlg.prepare_manual_selection()
+        else:
+            dlg.load_prototype(prototype)
+    except ValueError as exc:
+        QMessageBox.critical(parent, "Invalid Structure Prototype", str(exc))
+        return "back" if back else None
+
+    if prototype is not None:
+        QTimer.singleShot(0, dlg.focus_lattice_parameters)
 
     result = dlg.exec()
     if result == 42:
         return 'back'
     if result == QDialog.DialogCode.Accepted:
-        lat = getattr(dlg, 'lattice', None)
-        cell_obj = Cell(lat) if lat is not None and lat is not False else None
-
-        pos_blocks: List[np.ndarray] = []
-        kinds: List[int] = []
-        kind = 0
-        labels = []
-
-        sg = dlg.selected_group
-        for letter, wp in dlg.wyckoff_positions.items():
-            vals = dlg._selected_sites.get(letter, [])
-            for i, val in enumerate(vals):
-                label = letter
-                if len(vals) > 1:
-                    label = f"{letter}.{i + 1}"
-                pos = wp.all_positions_for_free_dofs(val)
-                cart = np.dot(pos, lat)
-                pos_blocks.append(cart)
-                kinds.extend([kind] * len(cart))
-                if len(cart) == 1:
-                    labels.append(label)
-                else:
-                    labels.extend(
-                        [f"{label}.{i}" for i in range (1, len(cart)+1)]
-                    )
-                kind +=1
-
-        positions = np.vstack(pos_blocks)
-        # Construct an Atoms object with 'X' species (Z=0) for all sites
-        atoms = Atoms(positions=positions, cell=lat, pbc=True)
-        atoms.set_array('labels', np.asarray(labels, dtype=object))
-        atoms.set_array('spacegroup_kinds', np.asarray(kinds, dtype=int))
-        return atoms
+        return dlg.create_atoms()
     return None
+
+
+def select_spacegroup_from_prototype(
+    prototype: StructurePrototype,
+    parent: Optional[QWidget] = None,
+    back: bool = False,
+) -> Optional[Atoms] | str:
+    """Run the shared space-group editor preloaded from a database prototype."""
+    return select_spacegroup(
+        parent=parent,
+        back=back,
+        prototype=prototype,
+    )
 
 
 class WyckoffPositionWidget(QWidget):

@@ -247,6 +247,11 @@ class WorkflowWindow(QMainWindow):
         if atoms is None:
             self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
             self._add_action("Create a 3D Structure", "Build a periodic bulk crystal", self._create_3d)
+            self._add_action(
+                "Create Structure from Prototype Database",
+                "Start from a crystallographic structure prototype",
+                self._create_from_database,
+            )
             self._add_action("Create a 2D Surface", "Build a surface with vacuum on one side", self._create_surface)
             self._add_action("Create a 2D Structure", "Build an interface or transitional layer", self._create_transition)
             self._add_action(
@@ -362,6 +367,10 @@ class WorkflowWindow(QMainWindow):
     def _create_3d(self) -> None:
         self._structure_kind = "3d"
         self._expert._on_create_structure()
+
+    def _create_from_database(self) -> None:
+        self._structure_kind = "3d"
+        self._expert._on_create_structure_from_database()
 
     def _create_surface(self) -> None:
         self._structure_kind = "3d"
