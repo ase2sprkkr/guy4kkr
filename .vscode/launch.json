@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "guy4ase.main",
-            "cwd": "${workspaceFolder}/..",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true
         }
