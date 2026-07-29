@@ -1,20 +1,110 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Optional
+
+
+@dataclass(frozen=True)
+class PropertyFilter:
+    """One validated provider-specific OPTIMADE property condition."""
+
+    key: str
+    operator: str
+    value: Any
 
 
 @dataclass(frozen=True)
 class StructureSearchQuery:
     text: str = ""
+    query_mode: str = "auto"
     elements: tuple[str, ...] = ()
-    exact_elements: bool = True
+    element_match: str = "only"
+    excluded_elements: tuple[str, ...] = ()
+    min_elements: Optional[int] = None
+    max_elements: Optional[int] = None
     space_group: Optional[int] = None
+    min_sites: Optional[int] = None
     max_sites: Optional[int] = None
+    dimensionality: Optional[int] = None
+    structure_order: str = "any"
+    modified_after: Optional[date] = None
+    modified_before: Optional[date] = None
     hide_duplicates: bool = True
     hide_invalid: bool = True
-    ordered_only: bool = False
+    property_filters: tuple[PropertyFilter, ...] = ()
     page_limit: int = 50
+
+    def __post_init__(self) -> None:
+        if self.query_mode not in {
+            "auto",
+            "id",
+            "name",
+            "reduced",
+            "hill",
+            "anonymous",
+            "descriptive",
+        }:
+            raise ValueError(f"Unknown query mode {self.query_mode!r}.")
+        if self.element_match not in {"all", "any", "only"}:
+            raise ValueError(
+                f"Unknown element matching mode {self.element_match!r}."
+            )
+        if self.structure_order not in {"any", "ordered", "disordered"}:
+            raise ValueError(
+                f"Unknown structure ordering mode {self.structure_order!r}."
+            )
+        self._validate_range(
+            "number of elements", self.min_elements, self.max_elements
+        )
+        self._validate_range("number of sites", self.min_sites, self.max_sites)
+        if self.dimensionality is not None and not 0 <= self.dimensionality <= 3:
+            raise ValueError("Dimensionality must be between 0 and 3.")
+        for label, value in (
+            ("earliest", self.modified_after),
+            ("latest", self.modified_before),
+        ):
+            if value is not None and not isinstance(value, date):
+                raise ValueError(
+                    f"The {label} modification date must be a date."
+                )
+        if (
+            self.modified_after is not None
+            and self.modified_before is not None
+            and self.modified_after > self.modified_before
+        ):
+            raise ValueError(
+                "The earliest modification date must not be after the latest."
+            )
+        if set(self.elements).intersection(self.excluded_elements):
+            raise ValueError(
+                "Required and excluded elements must not overlap."
+            )
+        if self.element_match == "only" and self.elements:
+            count = len(set(self.elements))
+            if self.min_elements is not None and self.min_elements > count:
+                raise ValueError(
+                    "The minimum element count conflicts with “Only these "
+                    "elements”."
+                )
+            if self.max_elements is not None and self.max_elements < count:
+                raise ValueError(
+                    "The maximum element count conflicts with “Only these "
+                    "elements”."
+                )
+
+    @staticmethod
+    def _validate_range(
+        label: str, minimum: Optional[int], maximum: Optional[int]
+    ) -> None:
+        if minimum is not None and minimum < 0:
+            raise ValueError(f"The minimum {label} must not be negative.")
+        if maximum is not None and maximum < 0:
+            raise ValueError(f"The maximum {label} must not be negative.")
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError(
+                f"The minimum {label} must not exceed the maximum."
+            )
 
 
 @dataclass(frozen=True)
@@ -59,6 +149,7 @@ class SearchPage:
     next_url: Optional[str] = None
     previous_url: Optional[str] = None
     total: Optional[int] = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,7 +161,7 @@ class StructureProvenance:
     retrieved_at: str
     license_name: str
     license_url: str
-    experimental: bool
+    experimental: Optional[bool]
     doi: str = ""
     method: str = ""
     temperature_kelvin: Optional[float] = None

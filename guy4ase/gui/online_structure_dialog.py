@@ -20,9 +20,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -33,6 +35,8 @@ from PyQt6.QtWidgets import (
 from guy4ase.online_databases import (
     CodOptimadeProvider,
     DownloadedStructure,
+    MaterialsCloudMc3dOptimadeProvider,
+    NomadOptimadeProvider,
     SearchPage,
     StructureDatabaseProvider,
     StructureSearchQuery,
@@ -40,6 +44,22 @@ from guy4ase.online_databases import (
 )
 
 from .lattice import plot_atoms_preview
+from .optimade_filter_widgets import (
+    CollapsibleSection,
+    OptionalDateRange,
+    OptionalIntegerRange,
+    ProviderPropertyFilterEditor,
+)
+
+_QUERY_MODE_LABELS = {
+    "auto": "Automatic",
+    "id": "Database ID",
+    "name": "Name",
+    "reduced": "Reduced formula",
+    "hill": "Hill formula",
+    "anonymous": "Anonymous formula (A₂B)",
+    "descriptive": "Descriptive formula",
+}
 
 
 class _WorkerSignals(QObject):
@@ -78,6 +98,8 @@ class OnlineStructureDialog(QDialog):
 
         available = tuple(providers) if providers is not None else (
             CodOptimadeProvider(),
+            MaterialsCloudMc3dOptimadeProvider(),
+            NomadOptimadeProvider(),
         )
         if not available:
             raise ValueError("At least one online structure provider is required.")
@@ -111,17 +133,29 @@ class OnlineStructureDialog(QDialog):
 
         filters = QFrame(splitter)
         filters.setFrameShape(QFrame.Shape.StyledPanel)
-        filters.setMinimumWidth(280)
-        filters.setMaximumWidth(440)
+        filters.setMinimumWidth(340)
+        filters.setMaximumWidth(480)
         filters_layout = QVBoxLayout(filters)
         filters_layout.setContentsMargins(14, 14, 14, 14)
 
-        heading = QLabel("Search", filters)
+        filter_scroll = QScrollArea(filters)
+        filter_scroll.setWidgetResizable(True)
+        filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        filter_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        filter_fields = QWidget(filter_scroll)
+        filter_fields_layout = QVBoxLayout(filter_fields)
+        filter_fields_layout.setContentsMargins(0, 0, 0, 0)
+        filter_scroll.setWidget(filter_fields)
+        filters_layout.addWidget(filter_scroll, 1)
+
+        heading = QLabel("Search", filter_fields)
         heading.setStyleSheet("font-size: 14pt; font-weight: 600;")
-        filters_layout.addWidget(heading)
+        filter_fields_layout.addWidget(heading)
 
         form = QFormLayout()
-        self._provider_combo = QComboBox(filters)
+        self._provider_combo = QComboBox(filter_fields)
         for provider in providers:
             self._provider_combo.addItem(provider.name, provider.id)
         self._provider_combo.currentIndexChanged.connect(
@@ -129,41 +163,92 @@ class OnlineStructureDialog(QDialog):
         )
         form.addRow("Provider:", self._provider_combo)
 
-        self._text_edit = QLineEdit(filters)
+        self._text_edit = QLineEdit(filter_fields)
         self._text_edit.setPlaceholderText("Formula, name, or database ID")
         self._text_edit.returnPressed.connect(self._start_new_search)
         form.addRow("Query:", self._text_edit)
 
-        self._elements_edit = QLineEdit(filters)
+        self._query_mode = QComboBox(filter_fields)
+        form.addRow("Query type:", self._query_mode)
+
+        self._elements_edit = QLineEdit(filter_fields)
         self._elements_edit.setPlaceholderText("Fe, O")
         self._elements_edit.returnPressed.connect(self._start_new_search)
-        form.addRow("Elements:", self._elements_edit)
+        form.addRow("Required elements:", self._elements_edit)
 
-        self._element_match = QComboBox(filters)
-        self._element_match.addItem("Exactly these elements", True)
-        self._element_match.addItem("Contains these elements", False)
+        self._element_match = QComboBox(filter_fields)
+        self._element_match.addItem("All required, no others", "only")
+        self._element_match.addItem("All required", "all")
+        self._element_match.addItem("Any required", "any")
         form.addRow("Element match:", self._element_match)
 
-        self._space_group_spin = QSpinBox(filters)
+        self._excluded_elements_edit = QLineEdit(filter_fields)
+        self._excluded_elements_edit.setPlaceholderText("e.g. Pb, U")
+        self._excluded_elements_edit.returnPressed.connect(
+            self._start_new_search
+        )
+        form.addRow("Excluded elements:", self._excluded_elements_edit)
+
+        self._space_group_spin = QSpinBox(filter_fields)
         self._space_group_spin.setRange(0, 230)
         self._space_group_spin.setSpecialValueText("Any")
         form.addRow("Space group:", self._space_group_spin)
+        filter_fields_layout.addLayout(form)
 
-        self._max_sites_spin = QSpinBox(filters)
-        self._max_sites_spin.setRange(0, 10000)
-        self._max_sites_spin.setSpecialValueText("Any")
-        form.addRow("Maximum sites:", self._max_sites_spin)
-        filters_layout.addLayout(form)
+        advanced = CollapsibleSection("Advanced filters", filter_fields)
+        advanced_form = QFormLayout()
+        self._element_count = OptionalIntegerRange(118, advanced.content)
+        advanced_form.addRow("Element count:", self._element_count)
+        self._site_count = OptionalIntegerRange(10000, advanced.content)
+        advanced_form.addRow("Site count:", self._site_count)
+        self._dimensionality = QComboBox(advanced.content)
+        self._dimensionality.addItem("Any", None)
+        self._dimensionality.addItem("0D", 0)
+        self._dimensionality.addItem("1D", 1)
+        self._dimensionality.addItem("2D", 2)
+        self._dimensionality.addItem("3D", 3)
+        advanced_form.addRow("Dimensionality:", self._dimensionality)
+        self._structure_order = QComboBox(advanced.content)
+        self._structure_order.addItem("Any", "any")
+        self._structure_order.addItem("Ordered", "ordered")
+        self._structure_order.addItem("Disordered", "disordered")
+        advanced_form.addRow("Structure order:", self._structure_order)
+        self._modified_range = OptionalDateRange(advanced.content)
+        self._modified_range.after.returnPressed.connect(
+            self._start_new_search
+        )
+        self._modified_range.before.returnPressed.connect(
+            self._start_new_search
+        )
+        advanced_form.addRow("Last modified:", self._modified_range)
+        advanced.content_layout.addLayout(advanced_form)
 
-        self._hide_duplicates = QCheckBox("Hide duplicate entries", filters)
+        self._hide_duplicates = QCheckBox(
+            "Hide duplicate entries", advanced.content
+        )
         self._hide_duplicates.setChecked(True)
-        filters_layout.addWidget(self._hide_duplicates)
-        self._hide_invalid = QCheckBox("Hide invalid or retracted entries", filters)
+        advanced.content_layout.addWidget(self._hide_duplicates)
+        self._hide_invalid = QCheckBox(
+            "Hide invalid or retracted entries", advanced.content
+        )
         self._hide_invalid.setChecked(True)
-        filters_layout.addWidget(self._hide_invalid)
-        self._ordered_only = QCheckBox("Ordered structures only", filters)
-        filters_layout.addWidget(self._ordered_only)
-        filters_layout.addStretch(1)
+        advanced.content_layout.addWidget(self._hide_invalid)
+        filter_fields_layout.addWidget(advanced)
+
+        self._provider_filters_section = CollapsibleSection(
+            "Provider-specific filters", filter_fields
+        )
+        self._provider_filter_editor = ProviderPropertyFilterEditor(
+            self._provider_filters_section.content
+        )
+        self._provider_filter_editor.validation_failed.connect(
+            lambda message: self._set_search_status(message, error=True)
+        )
+        self._provider_filters_section.content_layout.addWidget(
+            self._provider_filter_editor
+        )
+        filter_fields_layout.addWidget(self._provider_filters_section)
+        filter_fields_layout.addStretch(1)
 
         search_buttons = QHBoxLayout()
         clear_button = QPushButton("Clear", filters)
@@ -180,20 +265,34 @@ class OnlineStructureDialog(QDialog):
         results_layout = QVBoxLayout(results)
         results_layout.setContentsMargins(8, 0, 0, 0)
 
-        self._search_status = QLabel(
-            "Set filters and press Search.", results
-        )
-        self._search_status.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        results_layout.addWidget(self._search_status)
-
         result_splitter = QSplitter(Qt.Orientation.Vertical, results)
         result_splitter.setChildrenCollapsible(False)
         result_splitter.setHandleWidth(7)
         results_layout.addWidget(result_splitter, 1)
 
-        table_panel = QWidget(result_splitter)
+        self._results_stack = QStackedWidget(result_splitter)
+
+        status_panel = QWidget(self._results_stack)
+        status_layout = QVBoxLayout(status_panel)
+        status_layout.setContentsMargins(32, 32, 32, 32)
+        status_layout.addStretch(1)
+        self._search_status = QLabel(
+            "Set filters and press Search.", status_panel
+        )
+        self._search_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._search_status.setWordWrap(True)
+        self._search_status.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._search_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        status_layout.addWidget(self._search_status)
+        status_layout.addStretch(1)
+        self._status_panel = status_panel
+        self._results_stack.addWidget(status_panel)
+
+        table_panel = QWidget(self._results_stack)
         table_layout = QVBoxLayout(table_panel)
         table_layout.setContentsMargins(0, 0, 0, 0)
         self._table = QTableWidget(0, 8, table_panel)
@@ -221,12 +320,20 @@ class OnlineStructureDialog(QDialog):
         self._previous_button = QPushButton("Previous", table_panel)
         self._previous_button.clicked.connect(self._previous_page)
         navigation.addWidget(self._previous_button)
-        navigation.addStretch(1)
+        self._page_status = QLabel(table_panel)
+        self._page_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._page_status.setWordWrap(True)
+        self._page_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        navigation.addWidget(self._page_status, 1)
         self._next_button = QPushButton("Next", table_panel)
         self._next_button.clicked.connect(self._next_page)
         navigation.addWidget(self._next_button)
         table_layout.addLayout(navigation)
-        result_splitter.addWidget(table_panel)
+        self._table_panel = table_panel
+        self._results_stack.addWidget(table_panel)
+        result_splitter.addWidget(self._results_stack)
 
         detail_panel = QWidget(result_splitter)
         detail_layout = QVBoxLayout(detail_panel)
@@ -266,7 +373,7 @@ class OnlineStructureDialog(QDialog):
         splitter.addWidget(results)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([330, 750])
+        splitter.setSizes([400, 700])
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel, parent=self
@@ -284,20 +391,45 @@ class OnlineStructureDialog(QDialog):
         return self._providers[str(provider_id)]
 
     def _update_provider_capabilities(self) -> None:
-        capabilities = self._provider().capabilities
+        provider = self._provider()
+        capabilities = provider.capabilities
+        self._text_edit.setPlaceholderText(
+            provider.query_placeholder
+        )
+        current_mode = self._query_mode.currentData()
+        self._query_mode.clear()
+        for mode in provider.query_modes:
+            self._query_mode.addItem(_QUERY_MODE_LABELS[mode], mode)
+        current_index = self._query_mode.findData(current_mode)
+        self._query_mode.setCurrentIndex(max(0, current_index))
         self._text_edit.setEnabled(capabilities.formula_or_name)
+        self._query_mode.setEnabled(capabilities.formula_or_name)
         self._elements_edit.setEnabled(capabilities.elements)
         self._element_match.setEnabled(capabilities.elements)
+        self._excluded_elements_edit.setEnabled(capabilities.elements)
+        self._element_count.setEnabled(capabilities.elements)
         self._space_group_spin.setEnabled(capabilities.space_group)
-        self._max_sites_spin.setEnabled(capabilities.max_sites)
+        self._site_count.setEnabled(capabilities.max_sites)
         self._hide_duplicates.setEnabled(capabilities.duplicate_filter)
         self._hide_invalid.setEnabled(capabilities.validity_filter)
-        self._ordered_only.setEnabled(capabilities.disorder_filter)
+        self._structure_order.setEnabled(capabilities.disorder_filter)
+        definitions = provider.property_filter_definitions
+        self._provider_filter_editor.set_definitions(definitions)
+        self._provider_filters_section.setVisible(bool(definitions))
         unsupported = "The selected provider does not support this filter."
-        self._max_sites_spin.setToolTip(
+        self._space_group_spin.setToolTip(
+            "" if capabilities.space_group else unsupported
+        )
+        self._site_count.setToolTip(
             "" if capabilities.max_sites else unsupported
         )
-        self._ordered_only.setToolTip(
+        self._hide_duplicates.setToolTip(
+            "" if capabilities.duplicate_filter else unsupported
+        )
+        self._hide_invalid.setToolTip(
+            "" if capabilities.validity_filter else unsupported
+        )
+        self._structure_order.setToolTip(
             "" if capabilities.disorder_filter else unsupported
         )
 
@@ -316,19 +448,56 @@ class OnlineStructureDialog(QDialog):
 
     def _clear_filters(self) -> None:
         self._text_edit.clear()
+        self._query_mode.setCurrentIndex(0)
         self._elements_edit.clear()
+        self._excluded_elements_edit.clear()
         self._element_match.setCurrentIndex(0)
         self._space_group_spin.setValue(0)
-        self._max_sites_spin.setValue(0)
+        self._element_count.clear()
+        self._site_count.clear()
+        self._dimensionality.setCurrentIndex(0)
+        self._structure_order.setCurrentIndex(0)
+        self._modified_range.clear()
         self._hide_duplicates.setChecked(True)
         self._hide_invalid.setChecked(True)
-        self._ordered_only.setChecked(False)
+        self._provider_filter_editor.clear()
         self._text_edit.setFocus()
 
     def _query(self) -> StructureSearchQuery:
+        elements = self._parse_elements(
+            self._elements_edit.text(), "required"
+        )
+        excluded_elements = self._parse_elements(
+            self._excluded_elements_edit.text(), "excluded"
+        )
+        min_elements, max_elements = self._element_count.values()
+        min_sites, max_sites = self._site_count.values()
+        modified_after, modified_before = self._modified_range.values()
+        return StructureSearchQuery(
+            text=self._text_edit.text().strip(),
+            query_mode=str(self._query_mode.currentData()),
+            elements=elements,
+            element_match=str(self._element_match.currentData()),
+            excluded_elements=excluded_elements,
+            min_elements=min_elements,
+            max_elements=max_elements,
+            space_group=self._space_group_spin.value() or None,
+            min_sites=min_sites,
+            max_sites=max_sites,
+            dimensionality=self._dimensionality.currentData(),
+            structure_order=str(self._structure_order.currentData()),
+            modified_after=modified_after,
+            modified_before=modified_before,
+            hide_duplicates=self._hide_duplicates.isChecked(),
+            hide_invalid=self._hide_invalid.isChecked(),
+            property_filters=self._provider_filter_editor.filters(),
+        )
+
+    @staticmethod
+    def _parse_elements(value: str, label: str) -> tuple[str, ...]:
         elements = []
         invalid = []
-        for item in re.split(r"[\s,;]+", self._elements_edit.text().strip()):
+        for item in re.split(r"[\s,;]+", value.strip()):
             if not item:
                 continue
             symbol = item[:1].upper() + item[1:].lower()
@@ -338,18 +507,9 @@ class OnlineStructureDialog(QDialog):
                 elements.append(symbol)
         if invalid:
             raise ValueError(
-                "Unknown element symbol(s): " + ", ".join(invalid)
+                f"Unknown {label} element symbol(s): " + ", ".join(invalid)
             )
-        return StructureSearchQuery(
-            text=self._text_edit.text().strip(),
-            elements=tuple(elements),
-            exact_elements=bool(self._element_match.currentData()),
-            space_group=self._space_group_spin.value() or None,
-            max_sites=self._max_sites_spin.value() or None,
-            hide_duplicates=self._hide_duplicates.isChecked(),
-            hide_invalid=self._hide_invalid.isChecked(),
-            ordered_only=self._ordered_only.isChecked(),
-        )
+        return tuple(elements)
 
     def _start_new_search(self) -> None:
         try:
@@ -408,7 +568,9 @@ class OnlineStructureDialog(QDialog):
                 f"{count} result{'s' if count != 1 else ''} on this page; "
                 f"{result.total} matching entries."
             )
-        self._set_search_status(message)
+        if result.warnings:
+            message += " " + " ".join(result.warnings)
+        self._show_results(message)
 
     def _search_failed(self, token: int, message: str) -> None:
         if token != self._search_token:
@@ -580,6 +742,11 @@ class OnlineStructureDialog(QDialog):
         self._search_status.setStyleSheet(
             "color: #b00020;" if error else ""
         )
+        self._results_stack.setCurrentWidget(self._status_panel)
+
+    def _show_results(self, message: str) -> None:
+        self._page_status.setText(message)
+        self._results_stack.setCurrentWidget(self._table_panel)
 
     def _set_detail_status(
         self,
