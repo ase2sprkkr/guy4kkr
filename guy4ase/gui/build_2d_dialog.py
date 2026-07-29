@@ -18,8 +18,9 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QWidget,
     QGridLayout,
+    QSizePolicy,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -35,14 +36,19 @@ from .structure_transform_dialogs import scale_atoms, rotate_atoms
 
 
 class Build2DStructureDialog(QDialog):
-    def __init__(self, atoms: Any, parent: Optional[QWidget] = None):
+    def __init__(self, atoms: Any, parent: Optional[QWidget] = None, *, surface_mode: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Build 2D Structure")
+        self._surface_mode = surface_mode
+        self.setWindowTitle("Build 2D Surface" if surface_mode else "Build 2D Structure")
         self.resize(1200, 760)
 
         self._left_atoms = atoms.copy()
         self._right_atoms: Optional[Any] = None
         self._semiinfinite_atoms: Optional[Any] = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(200)
+        self._preview_timer.timeout.connect(self._update_result_preview)
 
         root = QVBoxLayout(self)
 
@@ -52,7 +58,7 @@ class Build2DStructureDialog(QDialog):
         left_group = QGroupBox("Main System")
         left_layout = QVBoxLayout(left_group)
         left_preview_row = QHBoxLayout()
-        self._left_fig = Figure(figsize=(4.0, 3.2), tight_layout=True)
+        self._left_fig = Figure(figsize=(4.0, 3.2))
         self._left_canvas = FigureCanvas(self._left_fig)
         self._left_ax = self._left_fig.add_subplot(111, projection='3d')
         left_preview_row.addWidget(self._left_canvas, 1)
@@ -113,7 +119,7 @@ class Build2DStructureDialog(QDialog):
         self._vacuum_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._right_stack.addWidget(self._vacuum_label)
 
-        self._right_fig = Figure(figsize=(3.8, 2.8), tight_layout=True)
+        self._right_fig = Figure(figsize=(3.8, 2.8))
         self._right_canvas = FigureCanvas(self._right_fig)
         self._right_ax = self._right_fig.add_subplot(111, projection='3d')
         self._right_stack.addWidget(self._right_canvas)
@@ -153,38 +159,47 @@ class Build2DStructureDialog(QDialog):
         right_layout.addWidget(right_lattice_box)
         right_col.addWidget(right_group, 1)
 
+        if self._surface_mode:
+            right_group.hide()
+            self._left_match_axis_btn.hide()
+
         params_group = QGroupBox("2D Build Parameters")
         params_layout = QFormLayout(params_group)
 
         self._repeat_left = QDoubleSpinBox(params_group)
         self._repeat_left.setDecimals(6)
-        self._repeat_left.setRange(1.0, 1e6)
-        self._repeat_left.setValue(1.0)
-        self._repeat_left.valueChanged.connect(self._update_result_preview)
+        self._repeat_left.setRange(0.0, 30.0)
+        self._repeat_left.setValue(0.0)
+        self._repeat_left.setKeyboardTracking(False)
+        self._repeat_left.valueChanged.connect(self._schedule_result_preview)
         params_layout.addRow("Repeat left:", self._repeat_left)
 
         self._repeat_right = QDoubleSpinBox(params_group)
         self._repeat_right.setDecimals(6)
-        self._repeat_right.setRange(1.0, 1e6)
-        self._repeat_right.setValue(1.0)
-        self._repeat_right.valueChanged.connect(self._update_result_preview)
-        params_layout.addRow("Repeat right:", self._repeat_right)
+        self._repeat_right.setRange(0.0, 30.0)
+        self._repeat_right.setValue(0.0)
+        self._repeat_right.setKeyboardTracking(False)
+        self._repeat_right.valueChanged.connect(self._schedule_result_preview)
+        right_repeat_label = "Repeat vacuum:" if self._surface_mode else "Repeat right:"
+        params_layout.addRow(right_repeat_label, self._repeat_right)
 
         self._axis = QComboBox(params_group)
         self._axis.addItem("x", 0)
         self._axis.addItem("y", 1)
         self._axis.addItem("z", 2)
         self._axis.setCurrentIndex(2)
-        self._axis.currentIndexChanged.connect(self._update_result_preview)
+        self._axis.currentIndexChanged.connect(self._schedule_result_preview)
         params_layout.addRow("Axis:", self._axis)
 
         right_col.addWidget(params_group, 0)
 
         result_group = QGroupBox("Semiinfinite System")
         result_layout = QVBoxLayout(result_group)
-        self._result_fig = Figure(figsize=(4.0, 3.2), tight_layout=True)
+        self._result_fig = Figure(figsize=(4.0, 3.2))
         self._result_canvas = FigureCanvas(self._result_fig)
-        self._result_ax = self._result_fig.add_subplot(111, projection='3d')
+        self._result_canvas.setMinimumSize(0, 0)
+        self._result_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._result_ax = self._result_fig.add_subplot(111)
         result_layout.addWidget(self._result_canvas, 1)
         root.addWidget(result_group, 1)
 
@@ -213,85 +228,75 @@ class Build2DStructureDialog(QDialog):
         else:
             self._status_label.setStyleSheet("color: #2f6f2f;")
 
-    def _plot_structure(self, ax, canvas, atoms: Any, *, view_axis: Optional[int] = None) -> None:
-        if view_axis is None:
-            plot_atoms_preview(ax, atoms, canvas=canvas, fit_to_atoms=True)
-            return
+    def _plot_structure(self, ax, canvas, atoms: Any) -> None:
+        plot_atoms_preview(ax, atoms, canvas=canvas)
 
-        def _extra_draw(axis_obj, atoms_obj, lattice) -> None:
-            if lattice is None:
-                return
+    def _plot_result_structure(self, atoms: Any, axis: int) -> None:
+        ax = self._result_ax
+        ax.clear()
 
-            axis_idx = int(view_axis)
-            e1 = np.asarray(lattice[axis_idx], dtype=float)
-            e1_norm = float(np.linalg.norm(e1))
-            if e1_norm <= 1e-12:
-                return
-            e1 = e1 / e1_norm
+        lattice = np.asarray(atoms.get_cell(), dtype=float)
+        horizontal = lattice[axis].copy()
+        horizontal_norm = float(np.linalg.norm(horizontal))
+        if horizontal_norm <= 1e-12:
+            raise ValueError("Selected build axis has zero length.")
+        horizontal /= horizontal_norm
 
-            candidates = []
-            for idx in range(3):
-                if idx == axis_idx:
-                    continue
-                vec = np.asarray(lattice[idx], dtype=float)
-                orth = vec - np.dot(vec, e1) * e1
-                orth_norm = float(np.linalg.norm(orth))
-                if orth_norm > 1e-12:
-                    candidates.append((orth_norm, orth / orth_norm))
+        transverse = []
+        for idx in range(3):
+            if idx == axis:
+                continue
+            candidate = lattice[idx].copy()
+            candidate -= np.dot(candidate, horizontal) * horizontal
+            norm = float(np.linalg.norm(candidate))
+            if norm > 1e-12:
+                transverse.append((norm, candidate / norm))
+        if not transverse:
+            raise ValueError("Cannot find a direction perpendicular to the build axis.")
+        vertical = max(transverse, key=lambda item: item[0])[1]
 
-            if candidates:
-                e2 = max(candidates, key=lambda item: item[0])[1]
-            elif atoms_obj is not None:
-                positions = np.asarray(atoms_obj.get_positions(), dtype=float)
-                centered = positions - positions.mean(axis=0, keepdims=True)
-                _, _, vh = np.linalg.svd(centered, full_matrices=False)
-                candidate = np.asarray(vh[0], dtype=float)
-                candidate = candidate - np.dot(candidate, e1) * e1
-                cand_norm = float(np.linalg.norm(candidate))
-                if cand_norm <= 1e-12:
-                    return
-                e2 = candidate / cand_norm
-            else:
-                return
-
-            e3 = np.cross(e1, e2)
-            e3_norm = float(np.linalg.norm(e3))
-            if e3_norm <= 1e-12:
-                return
-            e3 = e3 / e3_norm
-
-            azim = float(np.degrees(np.arctan2(e3[1], e3[0])))
-            elev = float(np.degrees(np.arctan2(e3[2], np.linalg.norm(e3[:2]))))
-
-            forward = -e3
-            right = np.cross(e2, forward)
-            right_norm = float(np.linalg.norm(right))
-            if right_norm <= 1e-12:
-                roll = 0.0
-            else:
-                right = right / right_norm
-                up_screen = np.cross(forward, right)
-                h_comp = float(np.dot(e1, right))
-                v_comp = float(np.dot(e1, up_screen))
-                roll = -float(np.degrees(np.arctan2(v_comp, h_comp)))
-
-            try:
-                axis_obj.view_init(elev=elev, azim=azim, roll=roll)
-            except TypeError:
-                axis_obj.view_init(elev=elev, azim=azim)
-
-            try:
-                axis_obj.set_proj_type('ortho')
-            except Exception:
-                pass
-
-        plot_atoms_preview(
-            ax,
-            atoms,
-            canvas=canvas,
-            extra_draw=_extra_draw,
-            fit_to_cell=True,
+        corners = np.asarray([
+            i * lattice[0] + j * lattice[1] + k * lattice[2]
+            for i in (0, 1)
+            for j in (0, 1)
+            for k in (0, 1)
+        ])
+        projected_corners = np.column_stack((corners @ horizontal, corners @ vertical))
+        edge_indices = (
+            (0, 1), (0, 2), (0, 4), (7, 6), (7, 5), (7, 3),
+            (1, 3), (1, 5), (2, 3), (2, 6), (4, 5), (4, 6),
         )
+        for start, end in edge_indices:
+            edge = projected_corners[[start, end]]
+            ax.plot(edge[:, 0], edge[:, 1], color='black', linewidth=0.8, zorder=1)
+
+        positions = np.asarray(atoms.get_positions(), dtype=float)
+        projected = np.column_stack((positions @ horizontal, positions @ vertical))
+        symbols = np.asarray(atoms.get_chemical_symbols())
+        for symbol in dict.fromkeys(symbols.tolist()):
+            selected = symbols == symbol
+            ax.scatter(
+                projected[selected, 0],
+                projected[selected, 1],
+                s=40,
+                edgecolors='black',
+                linewidths=0.9,
+                label=symbol,
+                zorder=2,
+            )
+
+        all_points = np.vstack((projected_corners, projected))
+        mins = all_points.min(axis=0)
+        maxs = all_points.max(axis=0)
+        spans = maxs - mins
+        padding = np.maximum(spans * 0.03, 0.05)
+        ax.set_xlim(mins[0] - padding[0], maxs[0] + padding[0])
+        ax.set_ylim(mins[1] - padding[1], maxs[1] + padding[1])
+        ax.set_aspect('auto')
+        ax.set_axis_off()
+        ax.set_in_layout(False)
+        ax.set_position([0.01, 0.03, 0.98, 0.94])
+        self._result_canvas.draw_idle()
 
     def _set_lattice_labels(self, labels: list[list[QLabel]], atoms: Optional[Any]) -> None:
         if atoms is None:
@@ -481,6 +486,9 @@ class Build2DStructureDialog(QDialog):
         except Exception as e:
             self._set_status(f"Match axis (right) failed: {str(e)}", error=True)
 
+    def _schedule_result_preview(self, _value: Any = None) -> None:
+        self._preview_timer.start()
+
     def _update_result_preview(self) -> None:
         self._result_ax.clear()
         self._semiinfinite_atoms = None
@@ -496,7 +504,7 @@ class Build2DStructureDialog(QDialog):
             atoms2 = self._right_atoms.copy() if self._right_atoms is not None else None
             semi = semiinfinite_system(self._left_atoms.copy(), repeat=repeat, atoms2=atoms2, axis=axis)
             self._semiinfinite_atoms = semi
-            self._plot_structure(self._result_ax, self._result_canvas, semi, view_axis=axis)
+            self._plot_result_structure(semi, axis)
             self._set_status("Preview ready.")
             if self._ok_button is not None:
                 self._ok_button.setEnabled(True)
@@ -527,8 +535,13 @@ class Build2DStructureDialog(QDialog):
             return None
         return self._semiinfinite_atoms.copy()
 
-def select_build_2d_structure(atoms: Any, parent: Optional[QWidget] = None) -> Optional[Any]:
-    dialog = Build2DStructureDialog(atoms, parent=parent)
+def select_build_2d_structure(
+    atoms: Any,
+    parent: Optional[QWidget] = None,
+    *,
+    surface_mode: bool = False,
+) -> Optional[Any]:
+    dialog = Build2DStructureDialog(atoms, parent=parent, surface_mode=surface_mode)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.result_atoms()
