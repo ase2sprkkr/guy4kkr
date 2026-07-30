@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from .input_parameters_dialog import edit_input_parameters
+from .parameter_tooltips import parameter_tooltip
 
 
 def number(section, option, label, minimum, maximum, step, default=None):
@@ -144,8 +145,11 @@ class GuidedTaskParametersDialog(QDialog):
             for section, option, label, kind, settings in fields:
                 opt = getattr(getattr(params, section), option)
                 editor = self._create_editor(kind, settings, opt())
-                editor.setToolTip(opt.info or "")
-                form.addRow(label, editor); self._editors.append((section, option, editor))
+                tooltip = parameter_tooltip(opt, section, option, label)
+                editor.setToolTip(tooltip)
+                field_label = QLabel(label)
+                field_label.setToolTip(tooltip)
+                form.addRow(field_label, editor); self._editors.append((section, option, editor))
             if task == "bsf" and title == "K-space path":
                 path_row = QHBoxLayout()
                 self._predefined_path = QComboBox()
@@ -158,8 +162,22 @@ class GuidedTaskParametersDialog(QDialog):
                 self._path_label = QLabel(); self._update_path_label()
                 edit_path = QPushButton("Edit K-path…")
                 edit_path.clicked.connect(self._edit_k_path)
+                path_tooltip = parameter_tooltip(
+                    self.params.TASK.KPATH,
+                    "TASK",
+                    "KPATH",
+                    "Path:",
+                )
+                path_title = QLabel("Path:")
+                for widget in (
+                    path_title,
+                    self._predefined_path,
+                    self._path_label,
+                    edit_path,
+                ):
+                    widget.setToolTip(path_tooltip)
                 path_row.addWidget(self._predefined_path); path_row.addWidget(self._path_label, 1); path_row.addWidget(edit_path)
-                form.addRow("Path:", path_row)
+                form.addRow(path_title, path_row)
             contents_layout.addWidget(box)
         contents_layout.addStretch(1)
         scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setWidget(contents)

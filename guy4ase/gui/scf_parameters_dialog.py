@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from .input_parameters_dialog import edit_input_parameters
+from .parameter_tooltips import parameter_tooltip
 
 
 class GuidedScfParametersDialog(QDialog):
@@ -125,10 +126,13 @@ class GuidedScfParametersDialog(QDialog):
     def _option(self, section: str, option: str) -> Any:
         return getattr(getattr(self._params, section), option)
 
-    def _label(self, text: str, section: str, option: str) -> QLabel:
+    def _label(
+        self,
+        text: str,
+        tooltip: str,
+    ) -> QLabel:
         label = QLabel(text)
-        info = self._option(section, option).info or ""
-        label.setToolTip(info)
+        label.setToolTip(tooltip)
         return label
 
     def _add_row(
@@ -139,9 +143,14 @@ class GuidedScfParametersDialog(QDialog):
         option: str,
         editor: QWidget,
     ) -> QWidget:
-        info = self._option(section, option).info or ""
-        editor.setToolTip(info)
-        form.addRow(self._label(text, section, option), editor)
+        tooltip = parameter_tooltip(
+            self._option(section, option),
+            section,
+            option,
+            text,
+        )
+        editor.setToolTip(tooltip)
+        form.addRow(self._label(text, tooltip), editor)
         self._rows.append(((section, option), editor))
         return editor
 
