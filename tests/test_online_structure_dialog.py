@@ -5,9 +5,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem
 
-from guy4ase.gui.online_structure_dialog import OnlineStructureDialog
+from guy4ase.gui.online_structure_dialog import (
+    _DOWNLOADED_ROLE,
+    OnlineStructureDialog,
+)
 from guy4ase.online_databases import (
     DownloadedStructure,
     ProviderCapabilities,
@@ -96,6 +100,82 @@ def test_search_fetch_and_open_use_one_provider_flow():
     assert dialog.selected_atoms.get_chemical_formula() == "FeO"
     assert dialog.selected_atoms.info["online_database"]["entry_id"] == "test-1"
     dialog.close()
+
+
+def test_downloaded_structure_is_cached_when_selection_changes():
+    application = QApplication.instance() or QApplication([])
+    provider = _FakeProvider()
+    second_summary = StructureSummary(
+        provider_id=provider.id,
+        entry_id="test-2",
+        formula="Cu",
+        name="second structure",
+        site_count=1,
+    )
+    dialog = OnlineStructureDialog(providers=(provider,))
+    dialog._fill_table(SearchPage((provider.summary, second_summary)))
+
+    dialog._table.selectRow(0)
+    _process_until(application, dialog._open_button.isEnabled)
+    downloaded = dialog._downloaded
+    assert len(provider.fetch_calls) == 1
+    assert dialog._table.item(0, 0).data(_DOWNLOADED_ROLE)
+
+    dialog._table.selectRow(1)
+    _process_until(application, lambda: len(provider.fetch_calls) == 2)
+    dialog._table.selectRow(0)
+    application.processEvents()
+
+    assert dialog._open_button.isEnabled()
+    assert dialog._downloaded is downloaded
+    assert len(provider.fetch_calls) == 2
+    dialog.close()
+    application.processEvents()
+
+
+def test_download_state_color_adapts_to_dark_and_light_palettes():
+    application = QApplication.instance() or QApplication([])
+    provider = _FakeProvider()
+    dialog = OnlineStructureDialog(providers=(provider,))
+    dialog._fill_table(SearchPage((provider.summary,)))
+    item = dialog._table.item(0, 0)
+    delegate = dialog._table.itemDelegate()
+
+    for text, base, expected_range in (
+        (QColor("#ffffff"), QColor("#202020"), range(195, 205)),
+        (QColor("#000000"), QColor("#ffffff"), range(60, 70)),
+    ):
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Text, text)
+        palette.setColor(QPalette.ColorRole.Base, base)
+        option = QStyleOptionViewItem()
+        option.palette = palette
+        delegate.initStyleOption(
+            option,
+            dialog._table.indexFromItem(item),
+        )
+        muted = option.palette.color(QPalette.ColorRole.Text)
+
+        assert muted.red() in expected_range
+        assert muted.green() in expected_range
+        assert muted.blue() in expected_range
+
+    item.setData(_DOWNLOADED_ROLE, True)
+    option = QStyleOptionViewItem()
+    option.palette.setColor(
+        QPalette.ColorRole.Text,
+        QColor("#123456"),
+    )
+    delegate.initStyleOption(
+        option,
+        dialog._table.indexFromItem(item),
+    )
+    assert (
+        option.palette.color(QPalette.ColorRole.Text)
+        == QColor("#123456")
+    )
+    dialog.close()
+    application.processEvents()
 
 
 def test_advanced_controls_build_one_normalized_query():

@@ -7,6 +7,7 @@ from ase.data import atomic_numbers
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -60,6 +62,48 @@ _QUERY_MODE_LABELS = {
     "anonymous": "Anonymous formula (A₂B)",
     "descriptive": "Descriptive formula",
 }
+
+_DOWNLOADED_ROLE = Qt.ItemDataRole.UserRole.value + 1
+_NOT_DOWNLOADED_TEXT_WEIGHT = 0.75
+
+
+def _mixed_color(
+    foreground: QColor,
+    background: QColor,
+    foreground_weight: float,
+) -> QColor:
+    background_weight = 1.0 - foreground_weight
+    return QColor(
+        round(
+            foreground.red() * foreground_weight
+            + background.red() * background_weight
+        ),
+        round(
+            foreground.green() * foreground_weight
+            + background.green() * background_weight
+        ),
+        round(
+            foreground.blue() * foreground_weight
+            + background.blue() * background_weight
+        ),
+    )
+
+
+class _DownloadStatusDelegate(QStyledItemDelegate):
+    """Render entries not present in the download cache slightly muted."""
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        if index.data(_DOWNLOADED_ROLE):
+            return
+        option.palette.setColor(
+            QPalette.ColorRole.Text,
+            _mixed_color(
+                option.palette.color(QPalette.ColorRole.Text),
+                option.palette.color(QPalette.ColorRole.Base),
+                _NOT_DOWNLOADED_TEXT_WEIGHT,
+            ),
+        )
 
 
 class _WorkerSignals(QObject):
@@ -111,6 +155,9 @@ class OnlineStructureDialog(QDialog):
         self._current_page: Optional[SearchPage] = None
         self._selected_summary: Optional[StructureSummary] = None
         self._downloaded: Optional[DownloadedStructure] = None
+        self._download_cache: dict[
+            tuple[str, str], DownloadedStructure
+        ] = {}
 
         self._build_ui(available)
         self._update_provider_capabilities()
@@ -307,6 +354,7 @@ class OnlineStructureDialog(QDialog):
         )
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
+        self._table.setItemDelegate(_DownloadStatusDelegate(self._table))
         self._table.verticalHeader().setVisible(False)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -604,9 +652,13 @@ class OnlineStructureDialog(QDialog):
                 summary.entry_id,
                 "; ".join(summary.warnings),
             )
+            is_downloaded = (
+                self._summary_key(summary) in self._download_cache
+            )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
+                item.setData(_DOWNLOADED_ROLE, is_downloaded)
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, summary)
                 self._table.setItem(row, column, item)
@@ -626,10 +678,17 @@ class OnlineStructureDialog(QDialog):
         if not isinstance(summary, StructureSummary):
             return
         self._selected_summary = summary
-        self._downloaded = None
-        self._open_button.setEnabled(False)
-        self._show_summary(summary)
-        self._start_fetch(summary)
+        cached = self._download_cache.get(self._summary_key(summary))
+        if cached is not None:
+            self._fetch_token += 1
+            self._downloaded = cached
+            self._open_button.setEnabled(True)
+            self._show_downloaded(cached)
+        else:
+            self._downloaded = None
+            self._open_button.setEnabled(False)
+            self._show_summary(summary)
+            self._start_fetch(summary)
 
     def _start_fetch(self, summary: StructureSummary) -> None:
         provider = self._providers[summary.provider_id]
@@ -642,17 +701,21 @@ class OnlineStructureDialog(QDialog):
         self._thread_pool.start(worker)
 
     def _fetch_succeeded(self, token: int, result: object) -> None:
+        if not isinstance(result, DownloadedStructure):
+            if token == self._fetch_token:
+                self._fetch_failed(
+                    token, "The provider returned an invalid structure."
+                )
+            return
+        result_key = self._summary_key(result.summary)
+        self._download_cache[result_key] = result
+        self._set_downloaded_state(result_key, True)
         if token != self._fetch_token:
             return
-        if not isinstance(result, DownloadedStructure):
-            self._fetch_failed(
-                token, "The provider returned an invalid structure."
-            )
+        if self._selected_summary is None:
             return
-        if (
-            self._selected_summary is None
-            or result.summary.entry_id != self._selected_summary.entry_id
-        ):
+        selected_key = self._summary_key(self._selected_summary)
+        if result_key != selected_key:
             return
         self._downloaded = result
         self._open_button.setEnabled(True)
@@ -690,6 +753,28 @@ class OnlineStructureDialog(QDialog):
         self._metadata.setPlainText("\n".join(lines))
         self._axes.clear()
         self._canvas.draw_idle()
+
+    @staticmethod
+    def _summary_key(summary: StructureSummary) -> tuple[str, str]:
+        return summary.provider_id, summary.entry_id
+
+    def _set_downloaded_state(
+        self,
+        key: tuple[str, str],
+        downloaded: bool,
+    ) -> None:
+        for row in range(self._table.rowCount()):
+            summary_item = self._table.item(row, 0)
+            summary = summary_item.data(Qt.ItemDataRole.UserRole)
+            if (
+                isinstance(summary, StructureSummary)
+                and self._summary_key(summary) == key
+            ):
+                for column in range(self._table.columnCount()):
+                    self._table.item(row, column).setData(
+                        _DOWNLOADED_ROLE,
+                        downloaded,
+                    )
 
     def _show_downloaded(self, result: DownloadedStructure) -> None:
         plot_atoms_preview(
