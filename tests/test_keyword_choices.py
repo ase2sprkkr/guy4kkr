@@ -176,7 +176,7 @@ def test_unsupported_lattice_switches_to_custom_path(application):
     atoms = Atoms("Fe", cell=[2.8, 3.1, 3.7, 70, 80, 75], pbc=True)
     dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsf"), atoms=atoms)
     mode = dialog.editors_for(("ENERGY", "NE"))[0]
-    mode.mode_combo.setCurrentIndex(mode.mode_combo.findData("EK"))
+    mode.control.mode_combo.setCurrentIndex(mode.control.mode_combo.findData("EK"))
     assert not mode._error
     assert dialog.session.value(("TASK", "KPATH")) is None
     path = dialog.editors_for(("TASK", "KPATH"))[0]

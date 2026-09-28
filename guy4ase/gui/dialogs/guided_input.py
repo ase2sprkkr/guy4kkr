@@ -314,7 +314,7 @@ class GuidedInputParametersDialog(QDialog):
             label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(label, row, column)
             grid.addWidget(editor, row + 1, column, alignment=Qt.AlignmentFlag.AlignTop)
-        elif placement.kind == "bsf_vectors":
+        elif editor.full_width:
             block = QWidget()
             layout = QVBoxLayout(block)
             layout.setContentsMargins(0, 0, 0, 0)
@@ -378,14 +378,7 @@ class GuidedInputParametersDialog(QDialog):
             scroll = self.pages.currentWidget()
             scroll.widget().layout().activate()
             scroll.ensureWidgetVisible(editor, 20, 30)
-            if editor.placement.kind == "kpath":
-                editor.path_combo.setFocus(Qt.FocusReason.OtherFocusReason)
-            elif editor.placement.kind == "bsf_mesh":
-                editor.mode_combo.setFocus(Qt.FocusReason.OtherFocusReason)
-            elif editor.placement.kind == "bsf_vectors":
-                editor.control.focus_value(path, field_indices.get(path))
-            else:
-                editor.control.setFocus(Qt.FocusReason.OtherFocusReason)
+            editor.focus_for_history(path, field_indices.get(path))
             return
 
     def _parameters_replaced(self) -> None:

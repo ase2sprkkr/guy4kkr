@@ -184,7 +184,7 @@ def test_bsf_relative_kk_import_can_switch_to_ek_and_edit_both_references(applic
     parameters.ENERGY.EMINEV.set(0.)
     dialog = GuidedInputParametersDialog('bsf', parameters)
     mode = dialog.editors_for(('ENERGY', 'NE'))[0]
-    mode.mode_combo.setCurrentIndex(mode.mode_combo.findData('EK'))
+    mode.control.mode_combo.setCurrentIndex(mode.control.mode_combo.findData('EK'))
     for name in ('EMIN', 'EMAX'):
         editor = dialog.editors_for(('ENERGY', name))[-1].control
         assert editor.relative.isEnabled()

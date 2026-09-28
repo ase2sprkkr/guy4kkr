@@ -45,12 +45,14 @@ class FieldPlacement:
     """Describe a view of an option, not an additional stored parameter value.
 
     ``index`` selects one array element; ``related_paths`` belong to the same
-    composite editor. Defaults come exclusively from InputParameters and are
-    shown as placeholders, not duplicated in layout specifications.
+    composite editor. ``editor`` names an optional registered compound control;
+    it is unrelated to the field's page or group. Defaults come exclusively
+    from InputParameters and are shown as placeholders, not duplicated here.
     """
     path: InputParameterPath
     label: str
     kind: str = "auto"
+    editor: str | None = None
     role: FieldRole = FieldRole.PRIMARY
     minimum: float | int | None = None
     maximum: float | int | None = None

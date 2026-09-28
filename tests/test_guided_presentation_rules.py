@@ -28,9 +28,9 @@ def kk_parameters():
 def switch_mode(dialog, mode):
     editor = next(
         item for item in dialog.editors_for(("ENERGY", "NE"))
-        if item.placement.kind == "bsf_mesh"
+        if item.placement.editor == "bsf_mesh"
     )
-    editor.mode_combo.setCurrentIndex(editor.mode_combo.findData(mode))
+    editor.control.mode_combo.setCurrentIndex(editor.control.mode_combo.findData(mode))
 
 
 def test_bsf_rules_update_mirrors_labels_and_conditional_errors(application):

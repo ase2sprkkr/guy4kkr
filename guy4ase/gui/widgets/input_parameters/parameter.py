@@ -26,12 +26,7 @@ from guy4ase.gui.input_parameters.bindings import (
     resolve_option,
     values_equal,
 )
-from guy4ase.gui.input_parameters.bsf import (
-    EK,
-    bsf_mode,
-    select_path,
-    set_energy_points,
-)
+from guy4ase.gui.input_parameters.bsf import select_path
 from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import (
     EnergyState,
@@ -48,7 +43,8 @@ from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.specs.schema import Choice, FieldPlacement
 from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
-from guy4ase.gui.widgets.input_parameters.kpath import KPathTable, VectorEditor
+from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
+from guy4ase.gui.widgets.input_parameters.registry import create_compound_editor
 from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
     RelativisticScalingEditor,
 )
@@ -118,11 +114,12 @@ class ParameterEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.control = self._create_control()
-        if placement.kind != "bsf_vectors":
+        self.full_width = bool(getattr(self.control, "full_width", False))
+        if not self.full_width:
             self.control.setFixedWidth(EDITOR_WIDTH)
         layout.addWidget(self.control, 1)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        if placement.kind != "bsf_vectors":
+        if not self.full_width:
             self.setFixedWidth(EDITOR_WIDTH)
 
         option = self.session.option(self.path)
@@ -132,12 +129,13 @@ class ParameterEditor(QWidget):
             self.path[-1],
             placement.label,
         )
-        if placement.kind == "bsf_mesh":
-            self._base_tooltip += "\nNE = 1: k–k map at fixed energy; NE > 1: E–k path. Switching resets mode-specific settings (undoable)."
-            self.mode_combo.setToolTip(self._base_tooltip)
-            self.energy_count.setToolTip(self._base_tooltip)
+        extra_help = getattr(self.control, "help_text", "")
+        if extra_help:
+            self._base_tooltip += f"\n{extra_help}"
         self.setToolTip(self._base_tooltip)
         self.control.setToolTip(self._base_tooltip)
+        if hasattr(self.control, "set_editor_tooltip"):
+            self.control.set_editor_tooltip(self._base_tooltip)
         self._connect_control()
         self.session.editApplied.connect(self._session_changed)
         self.refresh()
@@ -145,13 +143,23 @@ class ParameterEditor(QWidget):
     def _session_changed(self, paths, reset):
         """Preserve unrelated drafts; replacements and history explicitly discard them."""
         dependencies = set(self.placement.paths)
-        if self.placement.kind in {'kpath', 'bsf_vectors', 'bsf_mesh', 'vector', 'energy_bound'}:
+        dependencies.update(getattr(self.control, "dependencies", ()))
+        if self.placement.kind in {'kpath', 'vector', 'energy_bound'}:
             dependencies.update({('ENERGY', 'NE'), ('TASK', 'KPATH')})
         if reset or dependencies.intersection(paths):
             self.refresh()
 
     def _create_control(self) -> QWidget:
         spec = self.placement
+        if spec.editor:
+            return create_compound_editor(
+                spec.editor,
+                self.session,
+                spec,
+                self.page_id,
+                atoms=self.atoms,
+                parent=self,
+            )
         if spec.kind == "energy_bound":
             name = self.path[-1]
             def apply(value, unit, relative):
@@ -173,28 +181,10 @@ class ParameterEditor(QWidget):
                                        source_page=self.page_id, text=f"Change {spec.label.rstrip(':')}")
             return EnergyEditor(state, apply, self, with_reference=False,
                                 minimum=spec.minimum if spec.minimum is not None else -1e9)
-        if spec.kind == "bsf_vectors":
-            return KPathTable(self.session, self.page_id, self)
         if spec.kind == "vector":
             return VectorEditor(self.session, self.path, self.page_id, self)
         if spec.kind == "scaling":
             return RelativisticScalingEditor(self.session, self.path, self.page_id, self)
-        if spec.kind == "bsf_mesh":
-            container = QWidget(self)
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            self.mode_combo = QComboBox(container)
-            self.mode_combo.addItem("E–k: energy range along a path", "EK")
-            self.mode_combo.addItem("k–k: plane at fixed energy", "KK")
-            self.energy_count = QSpinBox(container)
-            self.energy_count.setRange(1, 100000)
-            self.energy_count.setPrefix("Energy points: ")
-            self.energy_count.setKeyboardTracking(False)
-            layout.addWidget(self.mode_combo)
-            layout.addWidget(self.energy_count)
-            container.setMinimumHeight(self.mode_combo.sizeHint().height()
-                                       + self.energy_count.sizeHint().height() + layout.spacing())
-            return container
         if spec.kind == "integer":
             editor = NullableSpinBox(self)
             minimum = int(spec.minimum if spec.minimum is not None else -2147483647)
@@ -280,29 +270,10 @@ class ParameterEditor(QWidget):
         elif self.placement.kind == "kpath":
             self.path_combo.currentIndexChanged.connect(self._select_predefined_path)
             self.path_edit.clicked.connect(self.pathEditRequested)
-        elif self.placement.kind == "bsf_mesh":
-            self.mode_combo.currentIndexChanged.connect(self._select_bsf_mode)
-            self.energy_count.editingFinished.connect(self.commit)
-        elif isinstance(control, (KPathTable, VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+        elif self.placement.editor:
             control.validationChanged.connect(self._set_error)
-
-    def _select_bsf_mode(self) -> None:
-        if self._refreshing:
-            return
-        points = 200 if self.mode_combo.currentData() == EK else 1
-        self._commit_bsf_points(points)
-
-    def _commit_bsf_points(self, points) -> bool:
-        """Change BSF sampling/mode in one command, choosing an atom-valid path."""
-        try:
-            self.session.mutate(lambda parameters: set_energy_points(parameters, points, atoms=self.atoms),
-                                source_page=self.page_id, path=self.path, field_index=0,
-                                text="Change BSF mode / energy points")
-        except Exception as exc:
-            self._set_error(str(exc))
-            return False
-        self._set_error("")
-        return True
+        elif isinstance(control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+            control.validationChanged.connect(self._set_error)
 
     def _read_value(self) -> Any:
         """Decode the widget draft, including unset sentinels, without storing it."""
@@ -332,10 +303,8 @@ class ParameterEditor(QWidget):
             return control.currentData()
         if isinstance(control, QLineEdit):
             text = control.text().strip()
-            if spec.kind in {"literal", "bsf_ka"}:
+            if spec.kind == "literal":
                 value = None if not text else ast.literal_eval(text)
-                if spec.kind == "bsf_ka" and value is not None and bsf_mode(self.session.working_parameters) != EK:
-                    value = [value]
                 return value
             return text or None
         return None
@@ -346,10 +315,10 @@ class ParameterEditor(QWidget):
         Return success, not whether a value changed. Indexed fields replace
         only their array component; compound widgets implement their own commit.
         """
-        if self._refreshing or not self.control.isEnabled() or self.placement.kind in {"kpath", "bsf_vectors"}:
+        if self._refreshing or not self.control.isEnabled() or self.placement.kind == "kpath":
             return True
-        if self.placement.kind == "bsf_mesh":
-            return self._commit_bsf_points(self.energy_count.value())
+        if self.placement.editor:
+            return self.control.commit()
         if isinstance(self.control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
             return self.control.commit()
         try:
@@ -359,16 +328,6 @@ class ParameterEditor(QWidget):
                 return True
             def update(parameters):
                 option = resolve_option(parameters, self.path)
-                if parameters.task_name.lower() == "bsf" and self.path in (
-                    ("ENERGY", "EMIN"), ("ENERGY", "EMAX"),
-                    ("ENERGY", "EMINEV"), ("ENERGY", "EMAXEV"),
-                ):
-                    name = self.path[1]
-                    updates = {name: value}
-                    if value is not None:
-                        updates[name[:-2] if name.endswith("EV") else name + "EV"] = None
-                    parameters.ENERGY.set(updates)
-                    return
                 if self.placement.index is not None:
                     values = list(option())
                     index = self.placement.index
@@ -411,7 +370,9 @@ class ParameterEditor(QWidget):
                 if value is None and spec.index == 1 and self.path in (("ENERGY", "GRID"), ("ENERGY", "NE")):
                     value = self.session.single_site_value(self.path)
             control = self.control
-            if isinstance(control, (KPathTable, VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+            if spec.editor:
+                control.refresh()
+            elif isinstance(control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
                 control.refresh()
             elif isinstance(control, QSpinBox):
                 fallback = self._null_sentinel if value is None and self._nullable else 0
@@ -435,20 +396,13 @@ class ParameterEditor(QWidget):
             elif isinstance(control, QLineEdit):
                 if implicit:
                     value = None
-                if spec.kind in {"literal", "bsf_ka"}:
-                    if spec.kind == "bsf_ka" and value is not None and bsf_mode(self.session.working_parameters) != EK:
-                        value = value[0]
+                if spec.kind == "literal":
                     control.setText(_render_literal(value, None))
                 else:
                     control.setText('' if value is None else str(value))
                 control.setPlaceholderText(default_text(default))
             elif spec.kind == "kpath":
                 self._refresh_kpath(value)
-            elif spec.kind == "bsf_mesh":
-                points = int(value)
-                self._set_combo_value(self.mode_combo, EK if points > 1 else "KK")
-                self.energy_count.setValue(points)
-                self.energy_count.setEnabled(points > 1)
         finally:
             self._refreshing = False
         self._shown = self._read_value()
@@ -475,7 +429,7 @@ class ParameterEditor(QWidget):
 
     def _refresh_kpath(self, value: Any) -> None:
         self._set_combo_value(self.path_combo, value, unavailable=True)
-        self.path_edit.setEnabled(value is None and bsf_mode(self.session.working_parameters) == EK)
+        self.path_edit.setEnabled(value is None)
         if value is not None:
             summary = f"Predefined path {value}"
         else:
@@ -527,6 +481,8 @@ class ParameterEditor(QWidget):
             tooltip += f"\n\nInvalid value: {self._error}"
         self.setToolTip(tooltip)
         self.control.setToolTip(tooltip)
+        if hasattr(self.control, "set_editor_tooltip"):
+            self.control.set_editor_tooltip(tooltip)
 
     def set_parameter_enabled(self, enabled: bool, reason: str | None = None) -> None:
         """Disable interaction with an explanation, retaining the underlying value."""
@@ -538,3 +494,14 @@ class ParameterEditor(QWidget):
         """Add rule-derived help without replacing validation or option help."""
         self._presentation_help = text or ""
         self._update_tooltip()
+
+    def focus_for_history(self, path: InputParameterPath, index: int | None) -> None:
+        """Focus the value restored by Undo/Redo without exposing editor internals."""
+        if self.placement.editor:
+            self.control.focus_for_history(path, index)
+        elif self.placement.kind == "kpath":
+            self.path_combo.setFocus(Qt.FocusReason.OtherFocusReason)
+        elif isinstance(self.control, VectorEditor):
+            self.control.table.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self.control.setFocus(Qt.FocusReason.OtherFocusReason)

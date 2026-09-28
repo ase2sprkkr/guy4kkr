@@ -7,7 +7,9 @@
   `guy4ase.main` remains the application entry point.
 - `widgets`: reusable controls. `widgets.input_parameters` contains editors for
   ase2sprkkr `InputParameters`; these are shared by guided and expert editing.
-  Structure-specific controls live in `widgets.structures`.
+  Task-only compound controls live in modules such as
+  `widgets.input_parameters.bsf`; structure-specific controls live in
+  `widgets.structures`.
 - `input_parameters`: editing state, backend bindings, energy/BSF operations,
   keyword choices and help text. It contains no finished dialogs or widgets.
 - `input_parameters.specs`: Qt-independent declarations of the guided layouts.
@@ -90,6 +92,20 @@ for stable programmatic identity; displayed titles are not identifiers. Rules
 must only inspect the context. They must not mutate `InputParameters` or invoke
 Qt code—the renderer reapplies them after every session replacement, including
 Undo/Redo, loaded input and accepted expert edits.
+
+Compound task-specific controls are selected by `FieldPlacement.editor`, never
+by a page or group ID:
+
+```python
+field("TASK", "KA", "Path segments:", editor="bsf_vectors",
+      related_paths=(("TASK", "KE"),))
+```
+
+Factories are collected in `widgets.input_parameters.registry`. Such a control
+implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
+`validationChanged(str)`, and may declare `dependencies` and `full_width`.
+`ParameterEditor` remains the session/tooltip/presentation adapter and does not
+know the internals of the registered control.
 
 The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
 absolute/relative option mapping lives in `input_parameters.energy`.

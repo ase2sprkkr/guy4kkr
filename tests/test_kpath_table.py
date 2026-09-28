@@ -122,7 +122,7 @@ def test_mode_switch_and_default_origin(dialog):
     widget = geometry(dialog)
     mode = dialog.editors_for(("ENERGY", "NE"))[0]
     original = widget._rows()
-    mode.mode_combo.setCurrentIndex(mode.mode_combo.findData("KK"))
+    mode.control.mode_combo.setCurrentIndex(mode.control.mode_combo.findData("KK"))
     assert widget.table.columnCount() == 3 and widget.table.rowCount() == 1
     widget.clear_origin()
     assert dialog.session.value(("TASK", "KA")) is None

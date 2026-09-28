@@ -92,7 +92,7 @@ def _bsf_output_page() -> PageSpec:
 def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     bsf_emin = replace(energy_bound("EMIN", "Minimum / fixed energy:"), label_when=energy_minimum_label)
     bsf_emax = replace(energy_bound("EMAX", "Maximum energy:"), visible_when=ek_mode)
-    bsf_ne = main_energy_mesh_field("NE", "BSF mode / energy points:", "bsf_mesh")
+    bsf_ne = main_energy_mesh_field("NE", "BSF mode / energy points:", editor="bsf_mesh")
     bsf_im = field("ENERGY", "ImE", "Imaginary broadening:", "energy", minimum=0.)
     kpath = field("TASK", "KPATH", "Path:", "kpath", visible_when=ek_mode)
     nk = field("TASK", "NK", "Total points along path:", "integer", minimum=2, maximum=100000,
@@ -117,7 +117,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
                 nk,
             ), id="ek_path", visible_when=ek_mode),
             GroupSpec("Explicit k-vectors", (
-                field("TASK", "KA", "Path segments / plane origin:", "bsf_vectors",
+                field("TASK", "KA", "Path segments / plane origin:", editor="bsf_vectors",
                       related_paths=(("TASK", "KE"),), label_when=vectors_label,
                       enabled_when=vectors_visible, required_when=custom_ek_path),
                 field("TASK", "K1", "First spanning vector (2π/a):", "vector",

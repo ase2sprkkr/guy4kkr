@@ -73,7 +73,7 @@ def test_kpath_editor_parent_and_atomic_history(application, monkeypatch, select
 
 def switch(dialog, mode):
     editor = dialog.editors_for(("ENERGY", "NE"))[0]
-    editor.mode_combo.setCurrentIndex(editor.mode_combo.findData(mode))
+    editor.control.mode_combo.setCurrentIndex(editor.control.mode_combo.findData(mode))
     assert not editor._error
     return editor
 
@@ -157,20 +157,21 @@ def test_mode_controls_visibility_and_mirrors_follow_undo(application):
     dialog = GuidedInputParametersDialog("bsf", ek_parameters())
     dialog.show()
     application.processEvents()
-    quick, detail = [e for e in dialog.editors_for(("ENERGY", "NE")) if e.placement.kind == "bsf_mesh"]
+    quick, detail = [e for e in dialog.editors_for(("ENERGY", "NE"))
+                     if e.placement.editor == "bsf_mesh"]
     assert not dialog.editors_for(("TASK", "KPATH"))[0].isHidden()
     assert dialog.editors_for(("TASK", "NK1"))[0].isHidden()
     switch(dialog, "KK")
-    assert detail.mode_combo.currentData() == "KK"
-    assert not quick.energy_count.isEnabled()
+    assert detail.control.mode_combo.currentData() == "KK"
+    assert not quick.control.energy_count.isEnabled()
     assert dialog.editors_for(("TASK", "KPATH"))[0].isHidden()
     assert not dialog.editors_for(("TASK", "NK1"))[0].isHidden()
     assert dialog.editors_for(("ENERGY", "EMAX"))[0].isHidden()
     dialog.select_page("output")
     dialog.undo_button.click()
     application.processEvents()
-    assert quick.mode_combo.currentData() == detail.mode_combo.currentData() == "EK"
-    assert quick.mode_combo.hasFocus()
+    assert quick.control.mode_combo.currentData() == detail.control.mode_combo.currentData() == "EK"
+    assert quick.control.mode_combo.hasFocus()
     assert not dialog.editors_for(("ENERGY", "EMAX"))[0].isHidden()
     dialog.close()
 
@@ -223,7 +224,7 @@ def test_bsf_bulk_and_layered_integration_fields(application):
 
 
 def test_kpath_choices_use_type_metadata_without_probing_values(application, monkeypatch):
-    import guy4ase.gui.widgets.input_parameters.parameter as editors
+    import guy4ase.gui.widgets.input_parameters.bsf as editors
 
     def unexpected_mode_switch(*args):
         pytest.fail("Building the KPATH menu must not probe choices by changing BSF mode")
