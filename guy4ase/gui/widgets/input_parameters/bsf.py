@@ -16,7 +16,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.input_parameters.bsf import EK, bsf_mode, set_energy_points
+from guy4ase.gui.input_parameters.bsf import (
+    EK,
+    bsf_mode,
+    select_path,
+    set_energy_points,
+)
+from guy4ase.gui.input_parameters.keyword_choices import keyword_items
 from guy4ase.gui.misc.tables import fit_table_height
 from guy4ase.gui.widgets.numeric_table import (
     CoordinateDelegate,
@@ -109,6 +115,128 @@ class BsfMeshEditor(QWidget):
         self.energy_count.setToolTip(text)
 
 
+class BsfKPathEditor(QWidget):
+    """Select an atom-dependent predefined path or request custom path editing."""
+
+    validationChanged = pyqtSignal(str)
+    externalActionRequested = pyqtSignal()
+    # Additional input beyond placement.paths: KA determines the custom-path
+    # summary. Mode transitions that replace KPATH already touch its own path.
+    dependencies = (("TASK", "KA"),)
+
+    def __init__(self, session, placement, page_id, atoms=None, parent=None):
+        super().__init__(parent)
+        self.session = session
+        self.placement = placement
+        self.page_id = page_id
+        self._refreshing = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        self.path_combo = QComboBox(self)
+        for value, description in keyword_items(
+            session.option(placement.path), atoms=atoms
+        ):
+            if value is None:
+                label = description
+            elif description:
+                label = f"{value}: {description}"
+            else:
+                label = f"Predefined {value}"
+            self.path_combo.addItem(label, value)
+            if description:
+                self.path_combo.setItemData(
+                    self.path_combo.count() - 1,
+                    description,
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+        self.path_combo.view().setMinimumWidth(600)
+        self.path_summary = QLabel(self)
+        self.path_edit = QPushButton("Custom k-path…", self)
+        row.addWidget(self.path_combo, 1)
+        row.addWidget(self.path_edit)
+        layout.addLayout(row)
+        layout.addWidget(self.path_summary)
+        self.setMinimumHeight(
+            max(self.path_combo.sizeHint().height(), self.path_edit.sizeHint().height())
+            + self.path_summary.sizeHint().height()
+            + layout.spacing()
+        )
+        self.setFocusProxy(self.path_combo)
+
+        self.path_combo.currentIndexChanged.connect(self._select_predefined_path)
+        self.path_edit.clicked.connect(
+            lambda _checked=False: self.externalActionRequested.emit()
+        )
+
+    def _select_predefined_path(self) -> None:
+        if self._refreshing:
+            return
+        value = self.path_combo.currentData()
+        try:
+            self.session.mutate(
+                lambda parameters: select_path(parameters, value),
+                path=self.placement.path,
+                source_page=self.page_id,
+                text=(
+                    "Select custom K-path"
+                    if value is None
+                    else "Select predefined K-path"
+                ),
+            )
+        except Exception as exc:
+            self.validationChanged.emit(str(exc))
+            return
+        self.validationChanged.emit("")
+
+    def refresh(self) -> None:
+        self._refreshing = True
+        try:
+            value = self.session.value(self.placement.path)
+            self._set_combo_value(value)
+            self.path_edit.setEnabled(value is None)
+            if value is not None:
+                summary = self.path_combo.currentText()
+            else:
+                try:
+                    count = len(self.session.value(("TASK", "KA")))
+                    summary = f"Custom path, {count} segment(s)"
+                except (KeyError, TypeError):
+                    summary = "No path selected"
+            self.path_summary.setText(summary)
+            self.path_summary.setWordWrap(True)
+        finally:
+            self._refreshing = False
+
+    def _set_combo_value(self, value) -> None:
+        """Display imported unavailable values without offering them as choices."""
+        for index in range(self.path_combo.count()):
+            if self.path_combo.itemData(index) == value:
+                self.path_combo.setCurrentIndex(index)
+                return
+        if value is None:
+            self.path_combo.setCurrentIndex(-1)
+            self.path_combo.setPlaceholderText("Not set")
+            return
+        self.path_combo.addItem(f"{value} (current value, unavailable)", value)
+        self.path_combo.model().item(self.path_combo.count() - 1).setEnabled(False)
+        self.path_combo.setCurrentIndex(self.path_combo.count() - 1)
+
+    def commit(self) -> bool:
+        # The combo commits immediately; the modal custom editor is applied by
+        # the owning dialog as one session mutation.
+        return True
+
+    def focus_for_history(self, _path, _index) -> None:
+        self.path_combo.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def set_editor_tooltip(self, text: str) -> None:
+        self.setToolTip(text)
+        for widget in (self.path_combo, self.path_summary, self.path_edit):
+            widget.setToolTip(text)
+
+
 class BsfVectorsEditor(QWidget):
     """Edit BSF path segments or the plane origin as one atomic control.
 
@@ -118,7 +246,8 @@ class BsfVectorsEditor(QWidget):
     """
 
     validationChanged = pyqtSignal(str)
-    dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"), ("TASK", "KA"), ("TASK", "KE"))
+    # Additional inputs beyond placement.paths (KA and related KE).
+    dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"))
     full_width = True
 
     def __init__(self, session, placement, page_id, atoms=None, parent=None):
@@ -356,5 +485,6 @@ class BsfVectorsEditor(QWidget):
 
 EDITORS: dict[str, type[QWidget]] = {
     "bsf_mesh": BsfMeshEditor,
+    "bsf_kpath": BsfKPathEditor,
     "bsf_vectors": BsfVectorsEditor,
 }

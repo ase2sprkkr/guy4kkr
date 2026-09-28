@@ -12,12 +12,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QPushButton,
     QSizePolicy,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -26,14 +23,10 @@ from guy4ase.gui.input_parameters.bindings import (
     resolve_option,
     values_equal,
 )
-from guy4ase.gui.input_parameters.bsf import select_path
 from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import (
     EnergyState,
-    bound_energy_state,
     convert_energy,
-    reference_selectable,
-    set_bound_energy,
 )
 from guy4ase.gui.input_parameters.keyword_choices import (
     keyword_current_value,
@@ -45,9 +38,6 @@ from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
 from guy4ase.gui.widgets.input_parameters.registry import create_compound_editor
-from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
-    RelativisticScalingEditor,
-)
 from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox, NullableSpinBox
 
 EDITOR_WIDTH = 280
@@ -82,7 +72,7 @@ class ParameterEditor(QWidget):
     """A presentation widget that commits one path through the session."""
 
     validationChanged = pyqtSignal(object, str, str)
-    pathEditRequested = pyqtSignal()
+    externalActionRequested = pyqtSignal()
 
     def __init__(
         self,
@@ -108,7 +98,7 @@ class ParameterEditor(QWidget):
         self._nullable = True  # Clearing resets to the backend default, or unsets.
         if placement.index is not None:
             self._value_type = self._value_type.type
-        self._uses_keyword_choices = isinstance(self._value_type, Keyword) and placement.kind != "kpath"
+        self._uses_keyword_choices = isinstance(self._value_type, Keyword) and not placement.editor
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -144,8 +134,6 @@ class ParameterEditor(QWidget):
         """Preserve unrelated drafts; replacements and history explicitly discard them."""
         dependencies = set(self.placement.paths)
         dependencies.update(getattr(self.control, "dependencies", ()))
-        if self.placement.kind in {'kpath', 'vector', 'energy_bound'}:
-            dependencies.update({('ENERGY', 'NE'), ('TASK', 'KPATH')})
         if reset or dependencies.intersection(paths):
             self.refresh()
 
@@ -160,20 +148,19 @@ class ParameterEditor(QWidget):
                 atoms=self.atoms,
                 parent=self,
             )
-        if spec.kind == "energy_bound":
-            name = self.path[-1]
-            def apply(value, unit, relative):
-                self.session.mutate(lambda parameters: set_bound_energy(parameters, name, value, unit, relative),
-                                    source_page=self.page_id, path=self.path,
-                                    text=f"Change {spec.label.rstrip(':')}")
-            return EnergyEditor(
-                lambda: bound_energy_state(self.session.working_parameters, name), apply, self,
-                reference_selectable=lambda: reference_selectable(self.session.working_parameters, name))
         if spec.kind == "energy":
             def state():
                 value = self.session.value(self.path)
-                return EnergyState(None if value is None else float(value.to_value('Ry') if hasattr(value, 'to_value') else value),
-                                   'Ry', explicit=self.session.option(self.path).is_set())
+                number = (
+                    None
+                    if value is None
+                    else float(value.to_value("Ry") if hasattr(value, "to_value") else value)
+                )
+                return EnergyState(
+                    number,
+                    "Ry",
+                    explicit=self.session.option(self.path).is_set(),
+                )
             def apply(value, unit, _relative):
                 value = (None if value is None else (value, unit) if isinstance(self._value_type, Energy)
                          else convert_energy(value, unit, 'Ry'))
@@ -183,8 +170,6 @@ class ParameterEditor(QWidget):
                                 minimum=spec.minimum if spec.minimum is not None else -1e9)
         if spec.kind == "vector":
             return VectorEditor(self.session, self.path, self.page_id, self)
-        if spec.kind == "scaling":
-            return RelativisticScalingEditor(self.session, self.path, self.page_id, self)
         if spec.kind == "integer":
             editor = NullableSpinBox(self)
             minimum = int(spec.minimum if spec.minimum is not None else -2147483647)
@@ -231,33 +216,8 @@ class ParameterEditor(QWidget):
             if spec.descriptions:
                 combo.view().setMinimumWidth(560)
             return combo
-        if spec.kind == "kpath":
-            return self._create_kpath_control()
         editor = QLineEdit(self)
         return editor
-
-    def _create_kpath_control(self) -> QWidget:
-        container = QWidget(self)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        row = QHBoxLayout()
-        self.path_combo = QComboBox(container)
-        for value, description in keyword_items(self.session.option(self.path), atoms=self.atoms):
-            label = description if value is None else f"{value}: {description}" if description else f"Predefined {value}"
-            self.path_combo.addItem(label, value)
-            if description:
-                self.path_combo.setItemData(self.path_combo.count() - 1, description,
-                                           Qt.ItemDataRole.ToolTipRole)
-        self.path_combo.view().setMinimumWidth(600)
-        self.path_summary = QLabel(container)
-        self.path_edit = QPushButton("Custom k-path…", container)
-        row.addWidget(self.path_combo, 1)
-        row.addWidget(self.path_edit)
-        layout.addLayout(row)
-        layout.addWidget(self.path_summary)
-        container.setMinimumHeight(max(self.path_combo.sizeHint().height(), self.path_edit.sizeHint().height())
-                                   + self.path_summary.sizeHint().height() + layout.spacing())
-        return container
 
     def _connect_control(self) -> None:
         control = self.control
@@ -267,12 +227,12 @@ class ParameterEditor(QWidget):
             control.toggled.connect(lambda _checked: self.commit())
         elif isinstance(control, QComboBox):
             control.currentIndexChanged.connect(lambda _index: self.commit())
-        elif self.placement.kind == "kpath":
-            self.path_combo.currentIndexChanged.connect(self._select_predefined_path)
-            self.path_edit.clicked.connect(self.pathEditRequested)
         elif self.placement.editor:
             control.validationChanged.connect(self._set_error)
-        elif isinstance(control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+            action = getattr(control, "externalActionRequested", None)
+            if action is not None:
+                action.connect(self.externalActionRequested)
+        elif isinstance(control, (VectorEditor, EnergyEditor)):
             control.validationChanged.connect(self._set_error)
 
     def _read_value(self) -> Any:
@@ -315,11 +275,11 @@ class ParameterEditor(QWidget):
         Return success, not whether a value changed. Indexed fields replace
         only their array component; compound widgets implement their own commit.
         """
-        if self._refreshing or not self.control.isEnabled() or self.placement.kind == "kpath":
+        if self._refreshing or not self.control.isEnabled():
             return True
         if self.placement.editor:
             return self.control.commit()
-        if isinstance(self.control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+        if isinstance(self.control, (VectorEditor, EnergyEditor)):
             return self.control.commit()
         try:
             value = self._read_value()
@@ -372,7 +332,7 @@ class ParameterEditor(QWidget):
             control = self.control
             if spec.editor:
                 control.refresh()
-            elif isinstance(control, (VectorEditor, RelativisticScalingEditor, EnergyEditor)):
+            elif isinstance(control, (VectorEditor, EnergyEditor)):
                 control.refresh()
             elif isinstance(control, QSpinBox):
                 fallback = self._null_sentinel if value is None and self._nullable else 0
@@ -401,8 +361,6 @@ class ParameterEditor(QWidget):
                 else:
                     control.setText('' if value is None else str(value))
                 control.setPlaceholderText(default_text(default))
-            elif spec.kind == "kpath":
-                self._refresh_kpath(value)
         finally:
             self._refreshing = False
         self._shown = self._read_value()
@@ -426,39 +384,6 @@ class ParameterEditor(QWidget):
             if unavailable:
                 combo.model().item(combo.count() - 1).setEnabled(False)
             combo.setCurrentIndex(combo.count() - 1)
-
-    def _refresh_kpath(self, value: Any) -> None:
-        self._set_combo_value(self.path_combo, value, unavailable=True)
-        self.path_edit.setEnabled(value is None)
-        if value is not None:
-            summary = f"Predefined path {value}"
-        else:
-            try:
-                count = len(self.session.value(("TASK", "KA")))
-                summary = f"Custom path, {count} segment(s)"
-            except Exception:
-                summary = "No path selected"
-        self.path_summary.setText(summary)
-        if value is not None:
-            # Keep the full atom-specific route readable after closing the popup.
-            self.path_summary.setText(self.path_combo.currentText())
-        self.path_summary.setWordWrap(True)
-        for widget in (self.path_combo, self.path_summary, self.path_edit):
-            widget.setToolTip(self._base_tooltip)
-
-    def _select_predefined_path(self) -> None:
-        if self._refreshing:
-            return
-        value = self.path_combo.currentData()
-        try:
-            self.session.mutate(
-                lambda parameters: select_path(parameters, value),
-                path=self.path,
-                source_page=self.page_id,
-                text="Select custom K-path" if value is None else "Select predefined K-path",
-            )
-        except Exception as exc:
-            self._set_error(str(exc))
 
     def _set_error(self, message: str) -> None:
         if message == self._error:
@@ -499,8 +424,6 @@ class ParameterEditor(QWidget):
         """Focus the value restored by Undo/Redo without exposing editor internals."""
         if self.placement.editor:
             self.control.focus_for_history(path, index)
-        elif self.placement.kind == "kpath":
-            self.path_combo.setFocus(Qt.FocusReason.OtherFocusReason)
         elif isinstance(self.control, VectorEditor):
             self.control.table.setFocus(Qt.FocusReason.OtherFocusReason)
         else:

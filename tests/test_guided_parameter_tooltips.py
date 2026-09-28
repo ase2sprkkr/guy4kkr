@@ -74,9 +74,9 @@ def test_bsf_path_controls_share_kpath_tooltip():
     dialog = _dialog("bsf")
 
     for editor in dialog.editors_for(("TASK", "KPATH")):
-        assert "TASK.KPATH" in editor.path_combo.toolTip()
-        assert "Predefined path in k-space" in editor.path_combo.toolTip()
-        assert "TASK.KPATH" in editor.path_summary.toolTip()
+        assert "TASK.KPATH" in editor.control.path_combo.toolTip()
+        assert "Predefined path in k-space" in editor.control.path_combo.toolTip()
+        assert "TASK.KPATH" in editor.control.path_summary.toolTip()
 
     dialog.close()
     application.processEvents()

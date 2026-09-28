@@ -296,7 +296,7 @@ class GuidedInputParametersDialog(QDialog):
             lambda path, page_id, message, source=editor:
             self._editor_validation_changed(source, path, page_id, message)
         )
-        editor.pathEditRequested.connect(lambda: self._edit_kpath(editor))
+        editor.externalActionRequested.connect(lambda: self._edit_kpath(editor))
         self._editors.append(editor)
         for path in placement.paths:
             self._editors_by_path[path].append(editor)

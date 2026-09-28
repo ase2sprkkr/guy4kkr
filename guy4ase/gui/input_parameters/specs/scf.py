@@ -108,8 +108,8 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
                 field("MODE", "JEFF", "J values:", "literal", enabled_when=lda_u_enabled),
             ), collapsed=True, id="beyond_dft"),
             GroupSpec("Relativistic scaling", (
-                field("MODE", "C", "Speed-of-light scale:", "scaling"),
-                field("MODE", "SOC", "Spin-orbit scale:", "scaling"),
+                field("MODE", "C", "Speed-of-light scale:", editor="scaling"),
+                field("MODE", "SOC", "Spin-orbit scale:", editor="scaling"),
             ), collapsed=True, id="scaling"),
         ), MODEL_COLOR),
         PageSpec("initial", "Initial state", (

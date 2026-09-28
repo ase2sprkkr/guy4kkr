@@ -53,7 +53,7 @@ def test_kpath_editor_parent_and_atomic_history(application, monkeypatch, select
         return result if selected else None
 
     monkeypatch.setattr(k_path_module, "k_path_gui", select_path)
-    editor.path_edit.click()
+    editor.control.path_edit.click()
     assert len(calls) == 1 and calls[0][0] is atoms and calls[0][1] is dialog
     assert dialog.session.undo_stack.count() == int(selected)
     if selected:
@@ -142,10 +142,11 @@ def test_custom_path_and_plane_origin_editors(application):
     np.testing.assert_array_equal(dialog.session.value(origin.path), [[.4, .5, .6]])
     switch(dialog, "EK")
     path = dialog.editors_for(("TASK", "KPATH"))[-1]
-    assert {path.path_combo.itemData(i) for i in range(path.path_combo.count())} == {
+    combo = path.control.path_combo
+    assert {combo.itemData(i) for i in range(combo.count())} == {
         None, "0", "1", "2", "3", "4", "5", "6", "7", "10",
     }
-    path.path_combo.setCurrentIndex(path.path_combo.findData(None))
+    combo.setCurrentIndex(combo.findData(None))
     assert not path._error
     assert dialog.session.value(path.path) is None
     assert origin.control._rows()[0][:3] == [0., 0., 0.]
@@ -234,7 +235,8 @@ def test_kpath_choices_use_type_metadata_without_probing_values(application, mon
     option = dialog.session.option(("TASK", "KPATH"))
     expected = {option._definition.type.convert(value) for value, _ in option._definition.type.items()}
     for editor in dialog.editors_for(("TASK", "KPATH")):
-        assert {editor.path_combo.itemData(i) for i in range(1, editor.path_combo.count())} == expected
+        combo = editor.control.path_combo
+        assert {combo.itemData(i) for i in range(1, combo.count())} == expected
     assert not dialog.session.is_modified()
     assert bsf_mode(dialog.session.working_parameters) == "KK"
     dialog.close()
@@ -244,9 +246,9 @@ def test_kpath_choices_use_type_metadata_without_probing_values(application, mon
 def test_keyword_path_selection_roundtrip_and_undo(application, path, tmp_path):
     dialog = GuidedInputParametersDialog("bsf", ek_parameters())
     quick, primary = dialog.editors_for(("TASK", "KPATH"))
-    quick.path_combo.setCurrentIndex(quick.path_combo.findData(path))
+    quick.control.path_combo.setCurrentIndex(quick.control.path_combo.findData(path))
     assert not quick._error
-    assert primary.path_combo.currentData() == path
+    assert primary.control.path_combo.currentData() == path
     result = dialog.session.result()
     result.CONTROL.POTFIL.set("Fe.pot")
     filename = tmp_path / "Fe_BSF.inp"
@@ -254,11 +256,11 @@ def test_keyword_path_selection_roundtrip_and_undo(application, path, tmp_path):
     assert InputParameters.from_file(str(filename)).TASK.KPATH() == path
     dialog.session.undo_stack.undo()
     application.processEvents()
-    assert quick.path_combo.currentData() is None
+    assert quick.control.path_combo.currentData() is None
     assert not dialog.session.is_modified()
     dialog.session.undo_stack.redo()
     application.processEvents()
-    assert primary.path_combo.currentData() == path
+    assert primary.control.path_combo.currentData() == path
     dialog.close()
 
 

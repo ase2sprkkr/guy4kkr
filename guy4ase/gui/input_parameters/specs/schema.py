@@ -168,4 +168,10 @@ def mirror(value: FieldPlacement) -> FieldPlacement:
 
 
 def energy_bound(name: str, label: str) -> FieldPlacement:
-    return field("ENERGY", name, label, "energy_bound", related_paths=(("ENERGY", name + "EV"),))
+    return field(
+        "ENERGY",
+        name,
+        label,
+        editor="energy_bound",
+        related_paths=(("ENERGY", name + "EV"),),
+    )

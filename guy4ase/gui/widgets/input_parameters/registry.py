@@ -4,8 +4,10 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QWidget
 
 from .bsf import EDITORS as BSF_EDITORS
+from .common import EDITORS as COMMON_EDITORS
 
 EDITOR_FACTORIES = {
+    **COMMON_EDITORS,
     **BSF_EDITORS,
 }
 

@@ -88,15 +88,26 @@ def test_guided_renderer_has_no_task_specific_presentation_branches():
     assert "SPLIT_SWITCHES" not in source
 
 
-def test_generic_parameter_adapter_has_no_bsf_compound_editor_branches():
+def test_generic_parameter_adapter_has_no_registered_editor_implementations():
     source = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
-    assert "bsf_mesh" not in source
-    assert "bsf_vectors" not in source
-    assert "set_energy_points" not in source
+    for implementation in (
+        "bsf_mesh",
+        "bsf_kpath",
+        "bsf_vectors",
+        "set_energy_points",
+        "select_path",
+        "set_bound_energy",
+        "bound_energy_state",
+        "RelativisticScalingEditor",
+    ):
+        assert implementation not in source
 
     vector_source = (GUI / "widgets" / "input_parameters" / "kpath.py").read_text()
     assert "input_parameters.bsf" not in vector_source
     assert "BsfVectorsEditor" not in vector_source
+
+    common_source = (GUI / "widgets" / "input_parameters" / "common.py").read_text()
+    assert "input_parameters.bsf" not in common_source
 
 
 def test_packages_and_specs_do_not_load_dialogs_or_qt():

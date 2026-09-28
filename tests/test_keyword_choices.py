@@ -143,12 +143,13 @@ def test_real_kpath_atom_choices(application, symbol, lattice, expected):
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 1}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=atoms)
     for editor in dialog.editors_for(("TASK", "KPATH")):
-        assert choices(editor.path_combo) == expected
-        assert editor.path_combo.itemText(editor.path_combo.findData(None)) == "Custom path"
-        assert "Γ" in editor.path_combo.itemText(editor.path_combo.findData("1"))
-        assert editor.path_combo.itemText(editor.path_combo.findData("1")).startswith("1: ")
-        assert all(" — " not in editor.path_combo.itemText(i) for i in range(editor.path_combo.count()))
-        assert not editor.path_edit.isEnabled()
+        control = editor.control
+        assert choices(control.path_combo) == expected
+        assert control.path_combo.itemText(control.path_combo.findData(None)) == "Custom path"
+        assert "Γ" in control.path_combo.itemText(control.path_combo.findData("1"))
+        assert control.path_combo.itemText(control.path_combo.findData("1")).startswith("1: ")
+        assert all(" — " not in control.path_combo.itemText(i) for i in range(control.path_combo.count()))
+        assert not control.path_edit.isEnabled()
     dialog.close()
 
 
@@ -157,18 +158,18 @@ def test_custom_path_enablement_follows_unset_zero_and_undo(application):
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 0}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=bulk("Fe", "bcc", a=2.8))
     quick, primary = dialog.editors_for(("TASK", "KPATH"))
-    assert not quick.path_edit.isEnabled()  # Zero is a predefined path, not unset.
-    quick.path_combo.setCurrentIndex(quick.path_combo.findData(None))
-    assert quick.path_edit.isEnabled() and primary.path_edit.isEnabled()
+    assert not quick.control.path_edit.isEnabled()  # Zero is a predefined path, not unset.
+    quick.control.path_combo.setCurrentIndex(quick.control.path_combo.findData(None))
+    assert quick.control.path_edit.isEnabled() and primary.control.path_edit.isEnabled()
     assert dialog.editors_for(("TASK", "KA"))[0].control.isEnabled()
     dialog.session.undo_stack.undo()
     application.processEvents()
-    assert quick.path_combo.currentData() == "0"
-    assert not quick.path_edit.isEnabled() and not primary.path_edit.isEnabled()
+    assert quick.control.path_combo.currentData() == "0"
+    assert not quick.control.path_edit.isEnabled() and not primary.control.path_edit.isEnabled()
     assert not dialog.editors_for(("TASK", "KA"))[0].control.isEnabled()
     dialog.session.undo_stack.redo()
     application.processEvents()
-    assert quick.path_edit.isEnabled() and primary.path_edit.isEnabled()
+    assert quick.control.path_edit.isEnabled() and primary.control.path_edit.isEnabled()
     dialog.close()
 
 
@@ -180,8 +181,8 @@ def test_unsupported_lattice_switches_to_custom_path(application):
     assert not mode._error
     assert dialog.session.value(("TASK", "KPATH")) is None
     path = dialog.editors_for(("TASK", "KPATH"))[0]
-    assert choices(path.path_combo) == {None}
-    assert path.path_edit.isEnabled()
+    assert choices(path.control.path_combo) == {None}
+    assert path.control.path_edit.isEnabled()
     assert dialog._commit_pending()
     dialog.close()
 
@@ -226,7 +227,7 @@ def test_unavailable_imported_path_is_preserved_but_not_offered(application):
     parameters = InputParameters.create("bsf")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 10}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=bulk("Fe", "sc", a=2.8))
-    combo = dialog.editors_for(("TASK", "KPATH"))[0].path_combo
+    combo = dialog.editors_for(("TASK", "KPATH"))[0].control.path_combo
     assert combo.currentData() == "10"
     assert not combo.model().item(combo.currentIndex()).isEnabled()
     assert "unavailable" in combo.currentText()

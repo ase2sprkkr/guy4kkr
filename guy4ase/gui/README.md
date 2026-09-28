@@ -101,11 +101,16 @@ field("TASK", "KA", "Path segments:", editor="bsf_vectors",
       related_paths=(("TASK", "KE"),))
 ```
 
-Factories are collected in `widgets.input_parameters.registry`. Such a control
+Factories are collected in `widgets.input_parameters.registry`. Task-specific
+implementations such as BSF mode, path selection and path vectors live in
+`widgets.input_parameters.bsf`; shared session adapters for energy bounds and
+relativistic scaling live in `widgets.input_parameters.common`. Such a control
 implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
-`validationChanged(str)`, and may declare `dependencies` and `full_width`.
+`validationChanged(str)`, and may declare `dependencies`, `full_width` and an
+`externalActionRequested` signal. The last signal lets the owning dialog open a
+modal editor without giving the widget a dependency on that dialog.
 `ParameterEditor` remains the session/tooltip/presentation adapter and does not
-know the internals of the registered control.
+know the internals of registered controls.
 
 The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
 absolute/relative option mapping lives in `input_parameters.energy`.

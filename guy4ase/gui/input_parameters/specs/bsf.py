@@ -94,7 +94,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     bsf_emax = replace(energy_bound("EMAX", "Maximum energy:"), visible_when=ek_mode)
     bsf_ne = main_energy_mesh_field("NE", "BSF mode / energy points:", editor="bsf_mesh")
     bsf_im = field("ENERGY", "ImE", "Imaginary broadening:", "energy", minimum=0.)
-    kpath = field("TASK", "KPATH", "Path:", "kpath", visible_when=ek_mode)
+    kpath = field("TASK", "KPATH", "Path:", editor="bsf_kpath", visible_when=ek_mode)
     nk = field("TASK", "NK", "Total points along path:", "integer", minimum=2, maximum=100000,
                step=10, visible_when=ek_mode)
     nk1 = field("TASK", "NK1", "Points along K1:", "integer", minimum=1, maximum=100000,
