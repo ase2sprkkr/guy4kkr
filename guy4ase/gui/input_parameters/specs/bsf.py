@@ -8,7 +8,6 @@ from .schema import (
     TaskDialogSpec,
     energy_bound,
     field,
-    main_energy_mesh_field,
     mirror,
 )
 from .shared import (
@@ -21,34 +20,55 @@ from .shared import (
 )
 
 
+def _scf_pages(is_2d: bool) -> tuple[PageSpec, PageSpec]:
+    """Reuse the common physical and KKR controls, plus CPA convergence."""
+    pages = {page.id: page for page in _scf_spec(is_2d).pages}
+    physical = pages["physical"]
+    physical_groups = {group.title: group for group in physical.groups}
+    physical = replace(physical, groups=(
+        GroupSpec("Relativity", (MODE,)),
+        *(physical_groups[name] for name in (
+            "Magnetism and symmetry",
+            "Magnetisation orientation",
+            "Beyond DFT",
+            "Relativistic scaling",
+        )),
+    ))
+    cpa = next(group for group in pages["convergence"].groups
+               if group.title == "CPA convergence")
+    kkr = pages["kkr"]
+    return physical, replace(kkr, groups=(*kkr.groups, cpa))
+
+
+def _bsf_output_page() -> PageSpec:
+    """Keep common diagnostics while moving BSF's file names to this page."""
+    output = _output_page()
+    groups = tuple(
+        replace(group,
+                fields=tuple(item for item in group.fields if item.path not in {
+                    ("CONTROL", "NOSYM"), ("CONTROL", "SPLITSS"),
+                }),
+                collapsed=group.title == "Hyperfine field")
+        for group in output.groups
+    )
+    files = GroupSpec("File names", (
+        field("CONTROL", "DATASET", "Dataset / output prefix:", "text"),
+        field("CONTROL", "POTFIL", "Input potential file:", "text"),
+    ), collapsed=True, note="Leave the potential file empty to let the calculator supply it.")
+    return replace(output, title="Output & advanced", groups=(*groups, files))
+
+
 def build_spec(is_2d: bool = False) -> TaskDialogSpec:
-    """Declare both BSF modes; the dialog adapts visible fields to ENERGY.NE[0]."""
     bsf_emin = energy_bound("EMIN", "Minimum / fixed energy:")
     bsf_emax = energy_bound("EMAX", "Maximum energy:")
-    bsf_ne = main_energy_mesh_field("NE", "BSF mode / energy points:", "bsf_mesh")
+    bsf_ne = field("ENERGY", "NE", "BSF mode / energy points:", "bsf_mesh")
     bsf_im = field("ENERGY", "ImE", "Imaginary broadening:", "energy", minimum=0.)
     kpath = field("TASK", "KPATH", "Path:", "kpath")
     nk = field("TASK", "NK", "Total points along path:", "integer", minimum=2, maximum=100000, step=10)
     nk1 = field("TASK", "NK1", "Points along K1:", "integer", minimum=1, maximum=100000, nullable=True)
     nk2 = field("TASK", "NK2", "Points along K2:", "integer", minimum=1, maximum=100000, nullable=True)
-    # Reuse shared SCF groups, excluding SCF-only potential/initial-state fields.
-    common = {page.id: page for page in _scf_spec(is_2d).pages}
-    physical = replace(common["physical"], groups=(
-        GroupSpec("Relativity", (MODE,)),
-    ) + tuple(group for group in common["physical"].groups
-              if group.id in {"magnetism", "orientation", "beyond_dft", "scaling"}))
-    kkr = replace(common["kkr"], groups=common["kkr"].groups + tuple(
-        group for group in common["convergence"].groups if group.id == "cpa"))
-    output = replace(_output_page(), title="Output & advanced", groups=tuple(
-        replace(group, fields=tuple(f for f in group.fields if f.path not in {
-            ("CONTROL", "NOSYM"), ("CONTROL", "SPLITSS")}),
-            collapsed=group.id == "hff")
-        for group in _output_page().groups
-    ) + (GroupSpec("File names", (
-        field("CONTROL", "DATASET", "Dataset / output prefix:", "text"),
-        field("CONTROL", "POTFIL", "Input potential file:", "text"),
-    ), collapsed=True, note="Leave the potential file empty to let the calculator supply it."),))
-    bsf = TaskDialogSpec("bsf", "bsf", "BSF Calculation Setup", (
+    physical, kkr = _scf_pages(is_2d)
+    return TaskDialogSpec("bsf", "bsf", "BSF Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common BSF settings", (
             mirror(bsf_ne), mirror(bsf_emin), mirror(bsf_emax), mirror(bsf_im),
             mirror(kpath), mirror(nk), mirror(nk1), mirror(nk2),
@@ -71,7 +91,5 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
         ), SPECIAL_COLOR),
         physical,
         kkr,
-        output,
+        _bsf_output_page(),
     ))
-
-    return bsf
