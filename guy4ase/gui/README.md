@@ -18,6 +18,10 @@
   `guy4ase.physics.lattice`, not in the GUI.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.
+- `workspace.WorkspaceState`: the Qt-independent current document: structure,
+  input parameters, working directory, potential and calculation result.
+  `MainWindow` renders and mutates it through public operations; guided
+  `WorkflowWindow` shares the same instance rather than accessing its internals.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat

@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
+from guy4ase.gui.workspace import WorkspaceState
 
 
 def _action_title(widget):
@@ -69,6 +70,18 @@ def test_load_output_is_only_available_on_the_start_screen():
     application.processEvents()
 
     assert "Load SPR-KKR Output" not in _action_titles(window)
+    window.close()
+
+
+def test_workflow_and_expert_share_one_workspace():
+    application = QApplication.instance() or QApplication([])
+    workspace = WorkspaceState()
+    window = WorkflowWindow(workspace)
+
+    assert window.expert_window.workspace is workspace
+    window.expert_window.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
+    application.processEvents()
+    assert workspace.atoms is not None
     window.close()
 
 

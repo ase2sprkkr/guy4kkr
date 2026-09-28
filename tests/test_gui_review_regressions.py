@@ -8,6 +8,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from ase import Atoms
 from ase2sprkkr.common.warnings import DataValidityError
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import Qt
@@ -269,8 +270,43 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept):
         return result if accept else None
     monkeypatch.setattr(main_window, 'edit_input_parameters', edit)
     window._on_input_preview_double_click(None)
-    assert window._input_parameters is (result if accept else p)
-    assert window._input_parameters.task_name.lower() == 'dos'
+    assert window.workspace.input_parameters is (result if accept else p)
+    assert window.workspace.input_parameters.task_name.lower() == 'dos'
+    window.close()
+
+
+def test_corrupt_recent_history_is_ignored(app, monkeypatch, tmp_path):
+    window = main_window.MainWindow()
+    history = tmp_path / 'recent_files.json'
+    history.write_text('{not valid JSON', encoding='utf-8')
+    monkeypatch.setattr(window, '_recent_files_path', lambda: history)
+    window._recent_files = {'structure': [], 'input': [], 'output': []}
+    window._last_recent_kind = None
+
+    window._load_recent_files()
+
+    assert window.recent_files == {
+        'structure': (), 'input': (), 'output': (),
+    }
+    assert window.last_recent_kind is None
+    window.close()
+
+
+def test_reset_workspace_clears_the_document_and_views(app):
+    window = main_window.MainWindow()
+    window.workspace.atoms = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
+    window.workspace.input_parameters = InputParameters.create('scf')
+    window.workspace.directory = '/tmp/calculation'
+    window.workspace.potential_path = '/tmp/potential'
+    window.workspace.result = object()
+
+    window.reset_workspace()
+
+    assert window.workspace.atoms is None
+    assert window.workspace.input_parameters is None
+    assert window.workspace.directory is None
+    assert window.workspace.potential_path is None
+    assert window.workspace.result is None
     window.close()
 
 

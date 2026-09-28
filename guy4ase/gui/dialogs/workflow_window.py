@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.dialogs.main_window import MainWindow
+from guy4ase.gui.workspace import WorkspaceState
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -81,11 +82,12 @@ class WorkflowWindow(QMainWindow):
         _GROUP_DIFFERENT,
     )
 
-    def __init__(self):
+    def __init__(self, workspace: WorkspaceState | None = None):
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
         self.resize(980, 680)
-        self._expert = MainWindow()
+        self.workspace = workspace or WorkspaceState()
+        self._expert = MainWindow(self.workspace)
         self._structure_kind: Optional[str] = None
 
         self._expert.structureChanged.connect(self._on_structure_changed)
@@ -148,7 +150,7 @@ class WorkflowWindow(QMainWindow):
         result_actions_title.setStyleSheet("font-weight: 600;")
         result_actions_layout.addWidget(result_actions_title)
         self._result_actions_widget = ResultActionsWidget(
-            lambda value, action: self._expert._execute_output_value_action(
+            lambda value, action: self._expert.execute_output_value_action(
                 value, action, parent=self
             ),
             show_values_without_actions=False,
@@ -195,7 +197,7 @@ class WorkflowWindow(QMainWindow):
         display_title = (
             "Create derived structure"
             if title == self._GROUP_CREATE
-            and self._expert.atoms is not None
+            and self.workspace.atoms is not None
             else title
         )
         label = QLabel(display_title, group)
@@ -217,7 +219,7 @@ class WorkflowWindow(QMainWindow):
         return layout
 
     def _refresh_result_actions(self) -> None:
-        result = self._expert._last_sprkkr_result
+        result = self.workspace.result
         self._result_actions_widget.set_result(result)
         self._result_actions.setVisible(self._result_actions_widget.has_rows)
 
@@ -285,12 +287,13 @@ class WorkflowWindow(QMainWindow):
         self._action_group(group).addWidget(button)
 
     def _add_recent_load_action(self) -> None:
-        recent_structures = self._expert._recent_files['structure']
-        recent_outputs = self._expert._recent_files['output']
+        recent_files = self._expert.recent_files
+        recent_structures = recent_files['structure']
+        recent_outputs = recent_files['output']
         if not recent_structures and not recent_outputs:
             return
 
-        default_kind = self._expert._last_recent_kind
+        default_kind = self._expert.last_recent_kind
         if default_kind == 'structure' and not recent_structures:
             default_kind = None
         if default_kind == 'output' and not recent_outputs:
@@ -349,7 +352,7 @@ class WorkflowWindow(QMainWindow):
     def _refresh(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
-        atoms = self._expert.atoms
+        atoms = self.workspace.atoms
         if atoms is None:
             self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
             self._add_action("Create a 3D Structure", "Build a periodic bulk crystal", self._create_3d)
@@ -480,47 +483,47 @@ class WorkflowWindow(QMainWindow):
 
     def _create_3d(self) -> None:
         self._structure_kind = "3d"
-        self._expert._on_create_structure()
+        self._expert.create_structure()
 
     def _create_from_database(self) -> None:
         self._structure_kind = "3d"
-        self._expert._on_create_structure_from_database()
+        self._expert.create_structure_from_database()
 
     def _download_structure(self) -> None:
         self._structure_kind = None
-        self._expert._on_download_structure()
+        self._expert.download_structure()
 
     def _create_surface(self) -> None:
         self._structure_kind = "3d"
-        self._expert._on_create_structure()
-        if self._expert.atoms is not None:
+        self._expert.create_structure()
+        if self.workspace.atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
         self._structure_kind = "3d"
-        self._expert._on_create_structure()
-        if self._expert.atoms is not None:
+        self._expert.create_structure()
+        if self.workspace.atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
         self._structure_kind = None
-        self._expert._on_load_structure()
+        self._expert.load_structure()
 
     def _load_output(self) -> None:
         self._structure_kind = None
-        self._expert._on_load_sprkkr_output()
+        self._expert.load_sprkkr_output()
         self._refresh()
 
     def _load_recent(self, kind: str, file_path: str) -> None:
         self._structure_kind = None
-        self._expert._open_recent_file(kind, file_path)
-        if self._expert.atoms is None:
+        self._expert.open_recent_file(kind, file_path)
+        if self.workspace.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        original_atoms = self._expert.atoms
-        self._expert._on_build_2d_structure(surface_mode=surface_mode)
-        if self._expert.atoms is not None and self._expert.atoms is not original_atoms:
+        original_atoms = self.workspace.atoms
+        self._expert.build_2d_structure(surface_mode=surface_mode)
+        if self.workspace.atoms is not None and self.workspace.atoms is not original_atoms:
             self._structure_kind = "2d"
         else:
             self._structure_kind = "3d"
@@ -528,7 +531,7 @@ class WorkflowWindow(QMainWindow):
 
     def _prepare_task(self, task: str) -> None:
         try:
-            self._expert._on_create_guided_input(task)
+            self._expert.prepare_guided_task(task)
         except (ImportError, ModuleNotFoundError) as exc:
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return
@@ -544,7 +547,7 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self._expert.atoms.potential.SCF_INFO.SCFSTATUS = "START"
+            self._expert.restart_scf()
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
             return
@@ -561,17 +564,8 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._expert.atoms = None
-        self._expert._input_parameters = None
-        self._expert._last_sprkkr_result = None
-        self._expert.directory = None
-        self._expert._potential_path = None
         self._structure_kind = None
-        self._expert._update_directory_label()
-        self._expert._update_potential_path_label()
-        self._expert._update_structure_view()
-        self._expert._enable_actions(False)
-        self._expert._refresh_result_panel()
+        self._expert.reset_workspace()
         self._refresh()
 
     def _open_expert_mode(self) -> None:

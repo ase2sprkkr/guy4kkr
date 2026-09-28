@@ -74,6 +74,12 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
         visit(module, ())
 
 
+def test_workflow_uses_the_expert_window_public_interface_only():
+    """Workflow may share state, but must not reach into expert internals."""
+    source = (GUI / "dialogs" / "workflow_window.py").read_text()
+    assert "self._expert._" not in source
+
+
 def test_packages_and_specs_do_not_load_dialogs_or_qt():
     subprocess.run([sys.executable, "-c", """
 import sys

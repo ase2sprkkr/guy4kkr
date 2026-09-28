@@ -58,6 +58,7 @@ from guy4ase.gui.dialogs.structures.transforms import (
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.gui.workspace import WorkspaceState
 
 
 class MainWindow(QMainWindow):
@@ -66,24 +67,20 @@ class MainWindow(QMainWindow):
     structureChanged = pyqtSignal(object)
     calculationResultChanged = pyqtSignal(object)
 
-    def __init__(self):
+    def __init__(self, workspace: WorkspaceState | None = None):
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
         self.resize(1400, 800)
 
-        self.atoms: Optional[Any] = None  # ASE Atoms object
+        self.workspace = workspace or WorkspaceState()
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
-        self._input_parameters = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
         self.save_input_btn: Optional[QPushButton] = None
-        self.directory: Optional[str] = None
-        self._potential_path: Optional[str] = None
         self._directory_label: Optional[QLabel] = None
         self._potential_path_label: Optional[QLabel] = None
         self._directory_choose_btn: Optional[QToolButton] = None
         self._sprkkr_run_window: Optional[QWidget] = None
-        self._last_sprkkr_result: Optional[Any] = None
         self._result_group: Optional[QGroupBox] = None
         self._result_actions_widget: Optional[ResultActionsWidget] = None
         self._open_result_dialogs: list[QDialog] = []
@@ -114,15 +111,15 @@ class MainWindow(QMainWindow):
     def _update_input_params_preview(self) -> None:
         if self.input_params_preview is None:
             return
-        if self._input_parameters is None:
+        if self.workspace.input_parameters is None:
             self.input_params_preview.setPlainText("")
             if self.save_input_btn is not None:
                 self.save_input_btn.setEnabled(False)
             return
         try:
-            txt = self._input_parameters.to_string(validate=False)
+            txt = self.workspace.input_parameters.to_string(validate=False)
         except Exception:
-            txt = str(self._input_parameters)
+            txt = str(self.workspace.input_parameters)
         self.input_params_preview.setPlainText(txt)
         if self.save_input_btn is not None:
             self.save_input_btn.setEnabled(True)
@@ -130,26 +127,26 @@ class MainWindow(QMainWindow):
     def _update_directory_label(self) -> None:
         if self._directory_label is None:
             return
-        if not self.directory:
+        if not self.workspace.directory:
             self._directory_label.setText("—")
             self._directory_label.setToolTip("")
             return
-        self._directory_label.setText(self.directory)
-        self._directory_label.setToolTip(self.directory)
+        self._directory_label.setText(self.workspace.directory)
+        self._directory_label.setToolTip(self.workspace.directory)
 
     def _update_potential_path_label(self) -> None:
         if self._potential_path_label is None:
             return
-        value = self._potential_path or "—"
+        value = self.workspace.potential_path or "—"
         self._potential_path_label.setText(value)
-        self._potential_path_label.setToolTip(self._potential_path or "")
+        self._potential_path_label.setToolTip(self.workspace.potential_path or "")
 
     def _choose_directory(self) -> None:
-        start_dir = self.directory or str(Path.home())
+        start_dir = self.workspace.directory or str(Path.home())
         chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
         if not chosen:
             return
-        self.directory = str(chosen)
+        self.workspace.directory = str(chosen)
         self._update_directory_label()
         self.enable_run_calculation()
 
@@ -161,6 +158,16 @@ class MainWindow(QMainWindow):
 
     def _recent_files_path(self) -> Path:
         return self._config_dir() / "recent_files.json"
+
+    @property
+    def recent_files(self) -> dict[str, tuple[str, ...]]:
+        """Recent-file history as a read-only snapshot for other windows."""
+        return {kind: tuple(paths) for kind, paths in self._recent_files.items()}
+
+    @property
+    def last_recent_kind(self) -> str | None:
+        """Kind used for the most recently opened history item."""
+        return self._last_recent_kind
 
     def _load_recent_files(self) -> None:
         path = self._recent_files_path()
@@ -185,9 +192,9 @@ class MainWindow(QMainWindow):
             last_kind = data.get('last_recent_kind')
             if last_kind in {'structure', 'output'}:
                 self._last_recent_kind = last_kind
-        except Exception:
-            if not self._recent_files[self._last_kind]:
-                    self._last_kind = None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            # The initialized empty history remains usable if its cache is bad.
+            self._last_recent_kind = None
 
     def _save_recent_files(self) -> None:
         path = self._recent_files_path()
@@ -217,9 +224,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_recent_menu(self, what: str) -> None:
         handlers = {
-            'structure': lambda path: self._open_recent_file('structure', path),
-            'input': lambda path: self._open_recent_file('input', path),
-            'output': lambda path: self._open_recent_file('output', path),
+            'structure': lambda path: self.open_recent_file('structure', path),
+            'input': lambda path: self.open_recent_file('input', path),
+            'output': lambda path: self.open_recent_file('output', path),
         }
         menu = self._recent_menus[what]
         if menu is None:
@@ -242,7 +249,8 @@ class MainWindow(QMainWindow):
             self._refresh_recent_menu(what)
         self._refresh_recent_start_button()
 
-    def _open_recent_file(self, kind: str, file_path: str) -> None:
+    def open_recent_file(self, kind: str, file_path: str) -> None:
+        """Open one persisted recent file through the appropriate loader."""
         path = Path(file_path)
         if not path.exists():
             QMessageBox.warning(self, "Missing File", f"File not found:\n{file_path}")
@@ -293,7 +301,7 @@ class MainWindow(QMainWindow):
         if self._recent_files['structure']:
             for file_path in self._recent_files['structure']:
                 action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file('structure', p))
+                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('structure', p))
                 structures_menu.addAction(action)
         else:
             empty_action = QAction("(No recent files)", self)
@@ -304,7 +312,7 @@ class MainWindow(QMainWindow):
         if self._recent_files['output']:
             for file_path in self._recent_files['output']:
                 action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self._open_recent_file('output', p))
+                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('output', p))
                 outputs_menu.addAction(action)
         else:
             empty_action = QAction("(No recent files)", self)
@@ -317,16 +325,16 @@ class MainWindow(QMainWindow):
         except TypeError:
             pass
         if default_kind == 'output':
-            btn.clicked.connect(lambda _checked=False, p=default_path: self._open_recent_file('output', p))
+            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('output', p))
         else:
-            btn.clicked.connect(lambda _checked=False, p=default_path: self._open_recent_file('structure', p))
+            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('structure', p))
 
     def _load_structure_from_path(self, file_path: str) -> None:
         try:
             atoms = ase_read(file_path)
             resolved = Path(file_path).resolve()
             is_potential = resolved.suffix.lower() in {'.pot', '.pot_new'}
-            self.directory = str(resolved.parent)
+            self.workspace.directory = str(resolved.parent)
             self.set_structure(atoms, potential_path=str(resolved) if is_potential else None)
             self._update_directory_label()
             self._remember_recent('structure', file_path)
@@ -343,26 +351,26 @@ class MainWindow(QMainWindow):
 
         create_action = QAction("&Create New...", self)
         create_action.setShortcut("Ctrl+N")
-        create_action.triggered.connect(self._on_create_structure)
+        create_action.triggered.connect(self.create_structure)
         structure_menu.addAction(create_action)
 
         create_database_action = QAction(
             "Create from &Prototype Database...", self
         )
         create_database_action.triggered.connect(
-            self._on_create_structure_from_database
+            self.create_structure_from_database
         )
         structure_menu.addAction(create_database_action)
 
         download_action = QAction(
             "&Download from Online Database...", self
         )
-        download_action.triggered.connect(self._on_download_structure)
+        download_action.triggered.connect(self.download_structure)
         structure_menu.addAction(download_action)
 
         load_action = QAction("&Load from File...", self)
         load_action.setShortcut("Ctrl+O")
-        load_action.triggered.connect(self._on_load_structure)
+        load_action.triggered.connect(self.load_structure)
         structure_menu.addAction(load_action)
 
         self._recent_menus['structure'] = structure_menu.addMenu("Open &Recent")
@@ -378,7 +386,7 @@ class MainWindow(QMainWindow):
 
         output_menu = menubar.addMenu("&Output")
         load_output_action = QAction("&Load Output File...", self)
-        load_output_action.triggered.connect(self._on_load_sprkkr_output)
+        load_output_action.triggered.connect(self.load_sprkkr_output)
         output_menu.addAction(load_output_action)
         self._recent_menus['output'] = output_menu.addMenu("Open &Recent")
 
@@ -402,7 +410,7 @@ class MainWindow(QMainWindow):
         structure_menu.addAction(rotate_action)
 
         build_2d_action = QAction("Build &2D Structure...", self)
-        build_2d_action.triggered.connect(self._on_build_2d_structure)
+        build_2d_action.triggered.connect(self.build_2d_structure)
         structure_menu.addAction(build_2d_action)
 
         structure_menu.addSeparator()
@@ -460,7 +468,7 @@ class MainWindow(QMainWindow):
         create_btn.setMinimumWidth(btn_width)
         create_btn.setMinimumHeight(45)
         create_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
-        create_btn.clicked.connect(self._on_create_structure)
+        create_btn.clicked.connect(self.create_structure)
         welcome_layout.addWidget(create_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         welcome_layout.addSpacing(15)
@@ -472,7 +480,7 @@ class MainWindow(QMainWindow):
         create_database_btn.setMinimumHeight(45)
         create_database_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
         create_database_btn.clicked.connect(
-            self._on_create_structure_from_database
+            self.create_structure_from_database
         )
         welcome_layout.addWidget(
             create_database_btn, 0, Qt.AlignmentFlag.AlignCenter
@@ -484,7 +492,7 @@ class MainWindow(QMainWindow):
         download_btn.setMinimumWidth(btn_width)
         download_btn.setMinimumHeight(45)
         download_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
-        download_btn.clicked.connect(self._on_download_structure)
+        download_btn.clicked.connect(self.download_structure)
         welcome_layout.addWidget(download_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         welcome_layout.addSpacing(15)
@@ -493,7 +501,7 @@ class MainWindow(QMainWindow):
         load_btn.setMinimumWidth(btn_width)
         load_btn.setMinimumHeight(45)
         load_btn.setStyleSheet("font-size: 11pt; padding: 8px;")
-        load_btn.clicked.connect(self._on_load_structure)
+        load_btn.clicked.connect(self.load_structure)
         welcome_layout.addWidget(load_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         welcome_layout.addSpacing(15)
@@ -505,7 +513,7 @@ class MainWindow(QMainWindow):
         load_output_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
         )
-        load_output_btn.clicked.connect(self._on_load_sprkkr_output)
+        load_output_btn.clicked.connect(self.load_sprkkr_output)
         welcome_layout.addWidget(load_output_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         # Recent start button (shown only when there are recent files)
@@ -700,7 +708,7 @@ class MainWindow(QMainWindow):
         actions_group_layout.addWidget(self.run_calc_btn)
 
         self.load_output_btn = QPushButton("Load SPRKKR Output File...")
-        self.load_output_btn.clicked.connect(self._on_load_sprkkr_output)
+        self.load_output_btn.clicked.connect(self.load_sprkkr_output)
         actions_group_layout.addWidget(self.load_output_btn)
 
         actions_layout.addWidget(actions_group)
@@ -708,7 +716,7 @@ class MainWindow(QMainWindow):
         self._result_group = QGroupBox("Calculation Result")
         result_layout = QVBoxLayout(self._result_group)
         self._result_actions_widget = ResultActionsWidget(
-            self._execute_output_value_action,
+            self.execute_output_value_action,
             show_values_without_actions=True,
             parent=self._result_group,
         )
@@ -727,7 +735,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _on_create_structure(self) -> None:
+    def create_structure(self) -> None:
         """Create a new structure using the dialog chain."""
         result = chain_dialogs(
             select_spacegroup,
@@ -740,7 +748,7 @@ class MainWindow(QMainWindow):
         if result is not None:
             self.set_structure(result)
 
-    def _on_create_structure_from_database(self) -> None:
+    def create_structure_from_database(self) -> None:
         """Create a structure from a database prototype using shared editors."""
         result = chain_dialogs(
             select_structure_prototype,
@@ -752,7 +760,7 @@ class MainWindow(QMainWindow):
         if result is not None:
             self.set_structure(result)
 
-    def _on_load_structure(self) -> None:
+    def load_structure(self) -> None:
         """Load structure from file."""
         from ase.io.formats import ioformats
 
@@ -773,7 +781,7 @@ class MainWindow(QMainWindow):
         if file_path:
             self._load_structure_from_path(file_path)
 
-    def _on_download_structure(self) -> None:
+    def download_structure(self) -> None:
         """Download a structure from a configured online provider."""
         result = select_online_structure(parent=self)
         if result is not None:
@@ -781,7 +789,7 @@ class MainWindow(QMainWindow):
 
     def _on_save_structure(self) -> None:
         """Save current structure to file."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
 
         from ase.io.formats import ioformats
@@ -807,7 +815,7 @@ class MainWindow(QMainWindow):
                 if not file_path.lower().endswith("." + ext):
                     file_path += "." + ext
             try:
-                ase_write(file_path, self.atoms)
+                ase_write(file_path, self.workspace.atoms)
                 self._remember_recent('structure', file_path)
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{str(e)}")
@@ -816,24 +824,25 @@ class MainWindow(QMainWindow):
         # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
         if not isinstance(task, str):
             task = "scf"
-        params = select_input_parameters(self.atoms, parent=self, task=task)
+        params = select_input_parameters(self.workspace.atoms, parent=self, task=task)
         if params is None:
             return
         self.set_input_parameters(params)
 
-    def _on_create_guided_input(self, task: str) -> None:
-        if self.atoms is None:
+    def prepare_guided_task(self, task: str) -> None:
+        """Configure and start the guided setup flow for ``task``."""
+        if self.workspace.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
         selection = select_guided_input_parameters(
             task,
             parent=self,
-            directory=self.directory,
-            atoms=self.atoms,
+            directory=self.workspace.directory,
+            atoms=self.workspace.atoms,
         )
         if selection is not None:
             params, directory = selection
-            self.directory = directory
+            self.workspace.directory = directory
             self._update_directory_label()
             self.set_input_parameters(params)
             self._on_run_sprkkr_calculation()
@@ -845,10 +854,10 @@ class MainWindow(QMainWindow):
 
     def _on_edit_sprkkr_input(self, _checked=False) -> None:
         """Edit current input without changing task; create SCF only if none exists."""
-        if self._input_parameters is None:
+        if self.workspace.input_parameters is None:
             self._on_create_sprkkr_input()
             return
-        result = edit_input_parameters(self._input_parameters, parent=self, atoms=self.atoms)
+        result = edit_input_parameters(self.workspace.input_parameters, parent=self, atoms=self.workspace.atoms)
         if result is not None:
             self.set_input_parameters(result)
 
@@ -860,9 +869,9 @@ class MainWindow(QMainWindow):
             "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
         )
         if file_path:
-            if self._load_sprkkr_input_from_path(file_path) and self._input_parameters is not None:
-                candidate = self._input_parameters.copy(copy_values=True)
-                edited = edit_input_parameters(candidate, parent=self, show_changed_only=True, atoms=self.atoms)
+            if self._load_sprkkr_input_from_path(file_path) and self.workspace.input_parameters is not None:
+                candidate = self.workspace.input_parameters.copy(copy_values=True)
+                edited = edit_input_parameters(candidate, parent=self, show_changed_only=True, atoms=self.workspace.atoms)
                 if edited is not None:
                     self.set_input_parameters(edited)
 
@@ -879,7 +888,8 @@ class MainWindow(QMainWindow):
         self._remember_recent('input', file_path)
         return True
 
-    def _on_load_sprkkr_output(self) -> None:
+    def load_sprkkr_output(self) -> None:
+        """Choose and load an existing SPR-KKR output file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Load SPRKKR Output File",
@@ -894,11 +904,10 @@ class MainWindow(QMainWindow):
     def _load_sprkkr_output_from_path(self, file_path: str) -> None:
         try:
             result = TaskResult.from_file(file_path)
-            self._last_sprkkr_result = result
+            self.workspace.result = result
             self._remember_recent('output', file_path)
             self._refresh_result_panel()
         except Exception as e:
-            breakpoint()  # For debugging purposes; can be removed in production
             QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{str(e)}")
             return
 
@@ -914,12 +923,12 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Potential Load Warning", f"Failed to load structure from potential:\n{str(e)}")
 
-        self.directory = str(Path(file_path).resolve().parent)
+        self.workspace.directory = str(Path(file_path).resolve().parent)
         self._update_directory_label()
         self.enable_run_calculation()
 
     def _on_save_sprkkr_input(self) -> None:
-        if self._input_parameters is None:
+        if self.workspace.input_parameters is None:
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -932,41 +941,61 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self._input_parameters.to_file(file_path)
+            self.workspace.input_parameters.to_file(file_path)
             self._remember_recent('input', file_path)
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save input parameters:\n{str(e)}")
 
     def set_input_parameters(self, params: Any) -> None:
-        self._input_parameters = params
+        self.workspace.input_parameters = params
         self._update_input_params_preview()
         if self.save_input_btn is not None:
-            self.save_input_btn.setEnabled(bool(self._input_parameters))
+            self.save_input_btn.setEnabled(bool(self.workspace.input_parameters))
         self.enable_run_calculation()
         self.create_input_btn.setText("Edit SPRKKR Input File...")
 
+    def reset_workspace(self) -> None:
+        """Clear the current document and update every expert-window view."""
+        self.workspace.reset()
+        self._update_directory_label()
+        self._update_potential_path_label()
+        self._update_input_params_preview()
+        self.create_input_btn.setText("Create SPRKKR Input File...")
+        self._update_structure_view()
+        self._enable_actions(False)
+        self._refresh_result_panel()
+        self.structureChanged.emit(None)
+        self.calculationResultChanged.emit(None)
+
+    def restart_scf(self) -> None:
+        """Mark the attached potential for a fresh SCF cycle."""
+        if self.workspace.atoms is None:
+            raise ValueError("No structure is loaded.")
+        self.workspace.atoms.potential.SCF_INFO.SCFSTATUS = "START"
+
     def _on_run_sprkkr_calculation(self) -> None:
         """Run SPRKKR calculation."""
-        if self.atoms is None or self._input_parameters is None or not self.directory:
+        if self.workspace.atoms is None or self.workspace.input_parameters is None or not self.workspace.directory:
             return
 
         from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 
         self._sprkkr_run_window = SprkkrRunWindow(
-            atoms=self.atoms,
-            input_parameters=self._input_parameters,
-            directory=self.directory,
+            atoms=self.workspace.atoms,
+            input_parameters=self.workspace.input_parameters,
+            directory=self.workspace.directory,
             parent=self,
         )
         self._sprkkr_run_window.show()
 
-    def _execute_output_value_action(
+    def execute_output_value_action(
         self,
         value: Any,
         action: str,
         *,
         parent: Optional[QWidget] = None,
     ) -> None:
+        """Run an action advertised by an output-value object."""
         parent = parent or self
         try:
             if action in {'edit', 'data'}:
@@ -986,10 +1015,10 @@ class MainWindow(QMainWindow):
         self._open_result_dialogs = [item for item in self._open_result_dialogs if item is not dialog]
 
     def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_result(self._last_sprkkr_result)
+        self._result_actions_widget.set_result(self.workspace.result)
 
     def handle_sprkkr_finished_result(self, result: Any) -> None:
-        self._last_sprkkr_result = result
+        self.workspace.result = result
         output_file = None
         try:
             if hasattr(result, 'files') and 'output' in result.files:
@@ -1002,7 +1031,7 @@ class MainWindow(QMainWindow):
                 output_file = str(Path(result.directory) / output_file)
         if output_file:
             self._remember_recent('output', output_file)
-            self.directory = str(Path(output_file).resolve().parent)
+            self.workspace.directory = str(Path(output_file).resolve().parent)
             self._update_directory_label()
 
         converged_path = None
@@ -1019,7 +1048,7 @@ class MainWindow(QMainWindow):
         if converged_path:
             potential_file = Path(converged_path)
             if not potential_file.is_absolute():
-                result_directory = getattr(result, 'directory', None) or self.directory
+                result_directory = getattr(result, 'directory', None) or self.workspace.directory
                 if result_directory:
                     potential_file = Path(result_directory) / potential_file
         else:
@@ -1052,8 +1081,8 @@ class MainWindow(QMainWindow):
 
     def set_structure(self, atoms: Any, *, potential_path: Optional[str] = None) -> None:  # atoms is ASE Atoms object
         """Set the current structure and update all views."""
-        self.atoms = atoms
-        self._potential_path = potential_path
+        self.workspace.atoms = atoms
+        self.workspace.potential_path = potential_path
         self._update_potential_path_label()
         self._update_structure_view()
         self._enable_actions(True)
@@ -1067,12 +1096,12 @@ class MainWindow(QMainWindow):
         self.enable_run_calculation()
 
     def enable_run_calculation(self) -> None:
-        enabled = bool(self.atoms is not None and self._input_parameters and self.directory)
+        enabled = bool(self.workspace.atoms is not None and self.workspace.input_parameters and self.workspace.directory)
         self.run_calc_btn.setEnabled(enabled)
 
     def _update_structure_view(self) -> None:
         """Update all structure visualization and information panels."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             self._clear_view()
             return
 
@@ -1103,9 +1132,9 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
-        if row < 0 or row >= len(self.atoms):
+        if row < 0 or row >= len(self.workspace.atoms):
             return
         if self._hovered_atom_index == row:
             return
@@ -1113,10 +1142,10 @@ class MainWindow(QMainWindow):
         self._update_visualization()
 
     def _on_assign_elements(self) -> None:
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
 
-        result = select_site_elements(self.atoms, parent=self, back=False)
+        result = select_site_elements(self.workspace.atoms, parent=self, back=False)
         if isinstance(result, str):
             return
         if result is None:
@@ -1124,12 +1153,12 @@ class MainWindow(QMainWindow):
         self.set_structure(result)
 
     def _on_scale_structure(self) -> None:
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            atoms = scale_atoms(self.atoms, parent=self)
+            atoms = scale_atoms(self.workspace.atoms, parent=self)
             if atoms is None:
                 return
             self.set_structure(atoms)
@@ -1137,12 +1166,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Scale Error", f"Failed to scale structure:\n{str(e)}")
 
     def _on_repeat_structure(self) -> None:
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            atoms = repeat_atoms(self.atoms, parent=self)
+            atoms = repeat_atoms(self.workspace.atoms, parent=self)
             if atoms is None:
                 return
             self.set_structure(atoms)
@@ -1150,25 +1179,25 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Repeat Error", f"Failed to repeat structure:\n{str(e)}")
 
     def _on_rotate_structure(self) -> None:
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            atoms = rotate_atoms(self.atoms, parent=self)
+            atoms = rotate_atoms(self.workspace.atoms, parent=self)
             if atoms is None:
                 return
             self.set_structure(atoms)
         except Exception as e:
             QMessageBox.critical(self, "Rotate Error", f"Failed to rotate structure:\n{str(e)}")
 
-    def _on_build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        if self.atoms is None:
+    def build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
+        if self.workspace.atoms is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            result = select_build_2d_structure(self.atoms, parent=self, surface_mode=surface_mode)
+            result = select_build_2d_structure(self.workspace.atoms, parent=self, surface_mode=surface_mode)
             if result is None:
                 return
             self.set_structure(result)
@@ -1185,22 +1214,22 @@ class MainWindow(QMainWindow):
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
         self._site_colors = plot_atoms_preview(
             self.ax,
-            self.atoms,
+            self.workspace.atoms,
             canvas=self.canvas,
             hovered_atom_indices=self._hovered_atom_index,
         )
 
     def _update_lattice_params(self) -> None:
         """Update lattice parameters display."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
 
         try:
-            cell = self.atoms.get_cell()
+            cell = self.workspace.atoms.get_cell()
             lengths = cell.lengths()
             angles = cell.angles()
 
@@ -1220,20 +1249,20 @@ class MainWindow(QMainWindow):
 
     def _update_positions_table(self) -> None:
         """Update atomic positions table."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             self.positions_table.setRowCount(0)
             return
 
-        positions = self.atoms.get_positions()
-        symbols = self.atoms.get_chemical_symbols()
-        arrays = getattr(self.atoms, 'arrays', {})
+        positions = self.workspace.atoms.get_positions()
+        symbols = self.workspace.atoms.get_chemical_symbols()
+        arrays = getattr(self.workspace.atoms, 'arrays', {})
         empty = [None] * len(symbols)
         kinds = arrays.get('spacegroup_kinds', empty)
-        occs = self.atoms.info.get('occupancy', {})
+        occs = self.workspace.atoms.info.get('occupancy', {})
         labels = arrays.get('labels', empty)
         color_lookup = self._site_colors
         self.positions_table.setRowCount(len(positions))
-        scaled_positions = self.atoms.get_scaled_positions()
+        scaled_positions = self.workspace.atoms.get_scaled_positions()
         counter = {}
 
         for i, (sym, pos, scaled_pos, kind, label) in enumerate(zip(symbols, positions, scaled_positions, kinds, labels)):
@@ -1276,18 +1305,18 @@ class MainWindow(QMainWindow):
 
     def _update_info_label(self) -> None:
         """Update structure information label."""
-        if self.atoms is None:
+        if self.workspace.atoms is None:
             return
-        if self.atoms and hasattr(self.atoms, 'has_potential') and \
-            self.atoms.has_potential():
-                status = self.atoms.potential.SCF_INFO.SCFSTATUS()
+        if self.workspace.atoms and hasattr(self.workspace.atoms, 'has_potential') and \
+            self.workspace.atoms.has_potential():
+                status = self.workspace.atoms.potential.SCF_INFO.SCFSTATUS()
                 if status != 'START':
                     self.converged_label.setText(f"SCF Status: {status}")
         else:
             self.converged_label.setText("")
 
-        n_atoms = len(self.atoms)
-        formula_raw = self.atoms.get_chemical_formula()
+        n_atoms = len(self.workspace.atoms)
+        formula_raw = self.workspace.atoms.get_chemical_formula()
         assigned_counts = self._collect_assigned_counts()
 
         if assigned_counts:
@@ -1304,7 +1333,7 @@ class MainWindow(QMainWindow):
                 info_text += f"  {element}: {count:.2f}\n"
         else:
             from collections import Counter
-            symbols = self.atoms.get_chemical_symbols()
+            symbols = self.workspace.atoms.get_chemical_symbols()
             species_count = Counter(symbols)
             for element, count in sorted(species_count.items()):
                 info_text += f"  {element}: {count}\n"
@@ -1327,7 +1356,7 @@ class MainWindow(QMainWindow):
         return ", ".join(parts) if parts else None
 
     def _collect_assigned_counts(self) -> Dict[str, float]:
-        arrays = getattr(self.atoms, 'arrays', {}) if self.atoms is not None else {}
+        arrays = getattr(self.workspace.atoms, 'arrays', {}) if self.workspace.atoms is not None else {}
         occs = arrays.get('occupancy') if 'occupancy' in arrays else None
         counts: Dict[str, float] = {}
         if occs is None or len(occs) == 0:

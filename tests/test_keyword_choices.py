@@ -12,7 +12,7 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
-from guy4ase.gui.input_parameters.specs.schema import field
+from guy4ase.gui.input_parameters.specs.schema import field, main_energy_mesh_field
 from guy4ase.gui.widgets.input_parameters.scalar import create_scalar_editor
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
@@ -72,7 +72,10 @@ def test_required_keyword_and_array_elements_have_no_unset_choice(application, m
     parameters = InputParameters.create("scf")
     monkeypatch.setattr(parameters.SCF.VXC._definition, "is_optional", False)
     session = InputParametersSession(parameters)
-    for placement in (field("SCF", "VXC", "XC", "keyword"), field("ENERGY", "GRID", "Grid", "keyword")):
+    for placement in (
+        field("SCF", "VXC", "XC", "keyword"),
+        main_energy_mesh_field("GRID", "Grid", "keyword"),
+    ):
         editor = ParameterEditor(session, placement, "test")
         assert None not in choices(editor.control)
         editor.close()
