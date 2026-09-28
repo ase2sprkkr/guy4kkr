@@ -1,7 +1,7 @@
 """Shared fields, colors and page groups for task definitions."""
 from dataclasses import replace
 
-from .schema import Choice, FieldPlacement, GroupSpec, PageSpec, field
+from .schema import Choice, FieldPlacement, GroupSpec, PageSpec, field, main_energy_mesh_field
 
 QUICK_COLOR = "#2878b8"
 MODEL_COLOR = "#27836b"
@@ -42,7 +42,7 @@ KKRMODE = field(
     "TAU", "KKRMODE", "KKR representation:", "keyword",
     choices=(Choice("Default", None),),
 )
-GRID = field("ENERGY", "GRID", "Energy grid (contour):", "keyword", index=0, descriptions=True)
+GRID = main_energy_mesh_field("GRID", "Energy grid (contour):", "keyword", descriptions=True)
 
 
 def _energy_grid_groups(ne: FieldPlacement) -> tuple[GroupSpec, ...]:

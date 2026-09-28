@@ -6,6 +6,7 @@ from .schema import (
     TaskDialogSpec,
     energy_bound,
     field,
+    main_energy_mesh_field,
     mirror,
 )
 from .shared import (
@@ -41,7 +42,7 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
     ) if is_2d else (
         field("TAU", "NKTAB", "Special k-points:", "integer", minimum=1, maximum=100000, step=10),
     )
-    ne = field("ENERGY", "NE", "Energy-mesh points:", "integer", minimum=1, maximum=100000, index=0)
+    ne = main_energy_mesh_field("NE", "Energy-mesh points:", "integer", minimum=1, maximum=100000)
     return TaskDialogSpec("scf", "scf", "SCF Calculation Setup", (
         PageSpec("quick", "Quick setup", (
             GroupSpec("Common SCF settings", (

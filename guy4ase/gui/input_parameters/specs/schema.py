@@ -119,10 +119,15 @@ class TaskDialogSpec:
 
 
 def field(section: str, option: str, label: str, kind: str = "auto", **kwargs: Any) -> FieldPlacement:
-    """Declare a field; ENERGY.GRID/NE default to the main mesh at index zero."""
-    if section == "ENERGY" and option in {"GRID", "NE"}:
-        kwargs.setdefault("index", 0)
+    """Declare one view of an input-parameter option."""
     return FieldPlacement((section, option), label, kind, **kwargs)
+
+
+def main_energy_mesh_field(option: str, label: str, kind: str = "auto", **kwargs: Any) -> FieldPlacement:
+    """Declare the main (index-zero) component of ``ENERGY.GRID`` or ``NE``."""
+    if option not in {"GRID", "NE"}:
+        raise ValueError(f"{option} is not an energy-mesh option")
+    return field("ENERGY", option, label, kind, index=0, **kwargs)
 
 
 def mirror(value: FieldPlacement) -> FieldPlacement:

@@ -1,5 +1,5 @@
 """XAS guided setup pages."""
-from .schema import GroupSpec, PageSpec, TaskDialogSpec, field, mirror
+from .schema import GroupSpec, PageSpec, TaskDialogSpec, field, main_energy_mesh_field, mirror
 from .shared import (
     CONVERGENCE_COLOR,
     ENERGY_COLOR,
@@ -17,7 +17,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     xas_it = field("TASK", "IT", "Atomic type:", "integer", minimum=1, maximum=999)
     xas_cl = field("TASK", "CL", "Core level:", "text")
     xas_emax = field("ENERGY", "EMAX", "Maximum energy:", "energy")
-    xas_ne = field("ENERGY", "NE", "Energy points:", "integer", minimum=1, maximum=10000)
+    xas_ne = main_energy_mesh_field("NE", "Energy points:", "integer", minimum=1, maximum=10000)
     xas = TaskDialogSpec("xas", "xas", "XAS Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common XAS settings", (
             mirror(xas_it), mirror(xas_cl), mirror(xas_emax), mirror(xas_ne),

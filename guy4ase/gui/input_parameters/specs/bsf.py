@@ -8,6 +8,7 @@ from .schema import (
     TaskDialogSpec,
     energy_bound,
     field,
+    main_energy_mesh_field,
     mirror,
 )
 from .shared import (
@@ -24,7 +25,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     """Declare both BSF modes; the dialog adapts visible fields to ENERGY.NE[0]."""
     bsf_emin = energy_bound("EMIN", "Minimum / fixed energy:")
     bsf_emax = energy_bound("EMAX", "Maximum energy:")
-    bsf_ne = field("ENERGY", "NE", "BSF mode / energy points:", "bsf_mesh")
+    bsf_ne = main_energy_mesh_field("NE", "BSF mode / energy points:", "bsf_mesh")
     bsf_im = field("ENERGY", "ImE", "Imaginary broadening:", "energy", minimum=0.)
     kpath = field("TASK", "KPATH", "Path:", "kpath")
     nk = field("TASK", "NK", "Total points along path:", "integer", minimum=2, maximum=100000, step=10)
