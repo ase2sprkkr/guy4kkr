@@ -21,7 +21,7 @@ from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
     _prepare_parameters,
 )
-from guy4ase.gui.input_parameters.specs import bsf
+from guy4ase.gui.input_parameters.specs import bsf, scf
 from guy4ase.gui.input_parameters.validation import validate_setup
 
 
@@ -332,13 +332,11 @@ def test_unrelated_edit_preserves_invalid_kpath_draft_but_undo_discards_it(app):
     d.close()
 
 
-def test_bsf_group_selection_does_not_depend_on_scf_titles(monkeypatch):
-    original = bsf._scf_spec
-    def renamed(is_2d):
-        spec = original(is_2d)
-        return replace(spec, pages=tuple(replace(page, groups=tuple(
-            replace(group, title='Translated title') for group in page.groups)) for page in spec.pages))
-    monkeypatch.setattr(bsf, '_scf_spec', renamed)
+def test_bsf_group_builders_do_not_depend_on_scf_spec(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("BSF must not build the SCF spec")
+
+    monkeypatch.setattr(scf, 'build_spec', fail_if_called)
     spec = bsf.build_spec()
     ids = {group.id for page in spec.pages for group in page.groups}
     assert {'magnetism', 'orientation', 'beyond_dft', 'scaling', 'cpa'} <= ids

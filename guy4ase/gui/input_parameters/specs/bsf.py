@@ -3,7 +3,6 @@ from dataclasses import replace
 
 from guy4ase.gui.input_parameters.bsf import EK, bsf_mode
 
-from .scf import build_spec as _scf_spec
 from .schema import (
     GroupSpec,
     PageSpec,
@@ -15,12 +14,20 @@ from .schema import (
     mirror,
 )
 from .shared import (
+    GEOMETRY_COLOR,
     ENERGY_COLOR,
+    MODEL_COLOR,
     MODE,
     QUICK_COLOR,
     SPECIAL_COLOR,
     _energy_grid_groups,
     _output_page,
+    beyond_dft_group,
+    cpa_group,
+    kkr_groups,
+    magnetism_group,
+    orientation_group,
+    relativistic_scaling_group,
 )
 
 
@@ -52,23 +59,17 @@ def energy_minimum_label(context: PresentationContext) -> str:
     return "Minimum energy:" if ek_mode(context) else "Fixed energy:"
 
 
-def _scf_pages(is_2d: bool) -> tuple[PageSpec, PageSpec]:
-    """Reuse the common physical and KKR controls, plus CPA convergence."""
-    pages = {page.id: page for page in _scf_spec(is_2d).pages}
-    physical = pages["physical"]
-    physical_groups = {group.id: group for group in physical.groups}
-    physical = replace(physical, groups=(
+def _bsf_pages(is_2d: bool) -> tuple[PageSpec, PageSpec]:
+    """Build BSF's reusable physical and KKR controls."""
+    physical = PageSpec("physical", "Physical model", (
         GroupSpec("Relativity", (MODE,)),
-        *(physical_groups[group_id] for group_id in (
-            "magnetism",
-            "orientation",
-            "beyond_dft",
-            "scaling",
-        )),
-    ))
-    cpa = next(group for group in pages["convergence"].groups if group.id == "cpa")
-    kkr = pages["kkr"]
-    return physical, replace(kkr, groups=(*kkr.groups, cpa))
+        magnetism_group(),
+        orientation_group(),
+        beyond_dft_group(),
+        relativistic_scaling_group(),
+    ), MODEL_COLOR)
+    kkr = PageSpec("kkr", "KKR & integration", kkr_groups(is_2d) + (cpa_group(),), GEOMETRY_COLOR)
+    return physical, kkr
 
 
 def _bsf_output_page() -> PageSpec:
@@ -101,7 +102,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
                 nullable=True, visible_when=kk_mode, required_when=kk_mode)
     nk2 = field("TASK", "NK2", "Points along K2:", "integer", minimum=1, maximum=100000,
                 nullable=True, visible_when=kk_mode, required_when=kk_mode)
-    physical, kkr = _scf_pages(is_2d)
+    physical, kkr = _bsf_pages(is_2d)
     return TaskDialogSpec("bsf", "bsf", "BSF Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common BSF settings", (
             mirror(bsf_ne), mirror(bsf_emin), mirror(bsf_emax), mirror(bsf_im),
