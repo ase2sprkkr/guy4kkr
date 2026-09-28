@@ -35,9 +35,32 @@ remain in a widget's draft until committed or discarded.
 
 `InputParametersBinding` is a direct read/write adapter, not another session. It
 accepts a parameter getter and a change callback. The expert dialog supplies its
-current parameter object and updates its tree presentation after a commit.
+isolated parameter copy and updates its tree presentation after a commit.
 The guided dialog uses the session's corresponding access methods, preserving
 Undo/Redo. The getter follows replacement of the object after loading text input.
+
+The expert dialog also edits a copy: Cancel never modifies its caller's input.
+Ordinary expert controls use `widgets.input_parameters.commit.EditorCommit` to
+contain validation exceptions and avoid writing unchanged, rounded display
+values back into the model. Both dialogs use `input_parameters.validation` for
+completion checks, without requiring calculator-supplied files such as POTFIL.
+
+Implicit backend defaults appear as placeholders (`Default: …`) in text and
+numeric inputs. They are not presets and are not stored by focusing a control.
+Spin controls retain the effective default for stepping; clearing an explicit
+value restores the backend default where one exists. The layout schema does
+not duplicate defaults. Energy widgets convert placeholder values with display
+units and use the shared ase2sprkkr absolute/relative default rules.
+
+`InputParametersSession.editApplied` distinguishes changed option paths from
+full replacement/history restoration. Unrelated commits preserve local drafts;
+undo/redo and explicit replacement discard them. A change to a draft's own
+option or a mode on which it depends refreshes it from the model.
+
+Task preparation and atomic BSF mode changes live in `input_parameters.tasks`
+and `input_parameters.bsf`. A widget requests modal K-path editing via a signal;
+the guided dialog owns the modal operation and its parent window. Shared group
+selection uses stable IDs, never translated/user-facing titles.
 
 The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
 absolute/relative option mapping lives in `input_parameters.energy`.

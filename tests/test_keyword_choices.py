@@ -215,7 +215,7 @@ def test_expert_dialog_passes_structure_to_keyword_editor(application):
     assert combo.itemText(combo.findData("1")).startswith("1: ")
     assert " — " not in combo.itemText(combo.findData("1"))
     combo.setCurrentIndex(combo.findData(None))
-    assert parameters.TASK.KPATH() is None
+    assert dialog.result().TASK.KPATH() is None
     dialog.close()
 
 

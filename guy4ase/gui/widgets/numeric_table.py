@@ -18,6 +18,7 @@ def coordinate_value(value):
 
 
 def coordinate_text(value):
+    """Shorten display text only; callers must keep the original numeric edit value."""
     if value is None:
         return ""
     try:
@@ -30,6 +31,7 @@ def coordinate_text(value):
 
 
 class CoordinateDelegate(QStyledItemDelegate):
+    """Display compact numbers but edit raw values, retaining invalid text as a draft."""
     invalid = pyqtSignal(str)
 
     def displayText(self, value, locale):

@@ -4,6 +4,7 @@ from ase2sprkkr.common.grammar_types import Energy
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QWidget
 
+from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import convert_energy
 from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox
 
@@ -65,8 +66,8 @@ class EnergyEditor(QWidget):
             self.relative.setEnabled(selectable)
             self.relative.setToolTip(
                 'Checked: relative to Fermi energy. Unchecked: absolute energy. '
-                'Changing this reinterprets the entered value; it does not subtract or add a stored Fermi energy.'
-                if selectable else 'This task or mode defines this energy relative to Fermi energy.')
+                'Changing this reinterprets both range bounds; it does not subtract or add a stored Fermi energy.'
+                if selectable else 'This task supports absolute energy only; SPRKKR requires both bounds for a relative range.')
             if not self._initialised:
                 self.units.setCurrentIndex(self.units.findData(state.unit))
                 self._initialised = True
@@ -74,6 +75,8 @@ class EnergyEditor(QWidget):
             number = self.number.minimum() if state.value is None else convert_energy(
                 state.value, state.unit, self.units.currentData())
             self.number.setValue(number)
+            if state.value is not None and not state.explicit:
+                self.number.show_default(number, default_text(number))
             self._shown = (self.number.value(), state.relative)
         finally:
             self._refreshing = False
@@ -95,7 +98,7 @@ class EnergyEditor(QWidget):
         relative = self.relative.isChecked()
         if (value, relative) == self._shown:
             return True
-        if value == self.number.minimum() or not self.number.cleanText().strip():
+        if value == self.number.minimum() or (not self.number.cleanText().strip() and not self.number.is_default_display()):
             value = None
         try:
             self._apply_value(value, self.units.currentData(), relative)

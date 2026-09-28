@@ -126,11 +126,12 @@ class _ReplaceParametersCommand(QUndoCommand):
         self._session.historyApplied.emit(paths, self.source_page, indices)
 
     def undo(self) -> None:
-        self._session._install(self._before, self.path, self._before_single_site)
+        self._session._install(self._before, self.path, self._before_single_site, reset=True)
         self._notify_navigation()
 
     def redo(self) -> None:
-        self._session._install(self._after, self.path, self._after_single_site)
+        self._session._install(self._after, self.path, self._after_single_site,
+                               reset=not self._first_redo or self.path is None)
         # QUndoStack.push() calls redo too. Ordinary edits must not navigate.
         if not self._first_redo:
             self._notify_navigation()
@@ -142,6 +143,7 @@ class InputParametersSession(QObject):
 
     valueChanged = pyqtSignal(object)
     parametersReplaced = pyqtSignal()
+    editApplied = pyqtSignal(object, bool)  # changed paths, discard all drafts
     modifiedChanged = pyqtSignal(bool)
     historyApplied = pyqtSignal(object, object, object)
 
@@ -309,12 +311,14 @@ class InputParametersSession(QObject):
         self.undo_stack.push(command)
         return True
 
-    def _install(self, parameters: InputParameters, path: InputParameterPath | None, single_site: dict) -> None:
+    def _install(self, parameters: InputParameters, path: InputParameterPath | None, single_site: dict, *, reset=False) -> None:
         """Install an immutable-by-convention snapshot and notify all editors."""
         # Snapshots placed on the undo stack are never mutated: every user edit
         # starts from a fresh copy.  Reusing the snapshot here is therefore safe.
+        changes = tuple(_changed_values(self._working, parameters))
         self._working = parameters
         self._single_site = single_site
+        self.editApplied.emit(changes, reset)
         if path is not None:
             self.valueChanged.emit(path)
         self.parametersReplaced.emit()

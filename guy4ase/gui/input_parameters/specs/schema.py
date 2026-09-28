@@ -25,9 +25,8 @@ class FieldPlacement:
     """Describe a view of an option, not an additional stored parameter value.
 
     ``index`` selects one array element; ``related_paths`` belong to the same
-    composite editor. ``default`` is a display fallback only: constructing an
-    editor does not write it into InputParameters. ``nullable`` controls the
-    widget's unset representation, independently of backend validation.
+    composite editor. Defaults come exclusively from InputParameters and are
+    shown as placeholders, not duplicated in layout specifications.
     """
     path: InputParameterPath
     label: str
@@ -37,7 +36,6 @@ class FieldPlacement:
     maximum: float | int | None = None
     step: float | int | None = None
     decimals: int = 6
-    default: Any = None
     choices: tuple[Choice, ...] = ()
     special_value_text: str | None = None
     nullable: bool = False
@@ -58,6 +56,7 @@ class GroupSpec:
     special: str | None = None
     collapsed: bool = False
     note: str | None = None
+    id: str | None = None
 
 
 @dataclass(frozen=True)

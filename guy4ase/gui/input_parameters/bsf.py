@@ -3,9 +3,13 @@ from ase2sprkkr.common.configuration_transaction import ConfigurationTransaction
 from ase2sprkkr.input_parameters.definitions.bsf import EK, KK, KK_TASK_ITEMS, bsf_mode
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
+from guy4ase.gui.input_parameters.keyword_choices import keyword_items
+
 
 def prepare_bsf(parameters):
     """Copy BSF input to its canonical definition while retaining alias-specific NE."""
+    if parameters.task_name.lower() not in {'bsf', 'bsfek', 'bsfkk'}:
+        raise ValueError(f'Expected BSF input parameters, got {parameters.task_name.upper()}.')
     # Legacy aliases have a default NE based on _requested_task_name, which
     # copy() does not preserve. Materialise NE and use the canonical task.
     values = parameters.as_dict(only_changed=True, generated=False, copy=True) or {}
@@ -15,7 +19,7 @@ def prepare_bsf(parameters):
     return result
 
 
-def set_energy_points(parameters, points):
+def set_energy_points(parameters, points, *, atoms=None):
     """Set NE[0], atomically replacing incompatible settings if EK/KK changes.
 
     NE > 1 selects an E-k path; NE == 1 selects a fixed-energy k-k plane.
@@ -51,6 +55,11 @@ def set_energy_points(parameters, points):
         for name in ("KA",) + incompatible:
             parameters.TASK[name].stage_clear(transaction)
         parameters.set({"ENERGY": energy, "TASK": task})
+        if new_mode == EK:
+            option = parameters.TASK['KPATH']
+            available = [value for value, _ in keyword_items(option, atoms=atoms) if value is not None]
+            if option() not in available:
+                select_path(parameters, available[0] if available else None)
 
 
 def select_path(parameters, value):

@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -22,18 +21,24 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
+from guy4ase.gui.input_parameters.bindings import (
+    InputParameterPath,
+    resolve_option,
+    values_equal,
+)
 from guy4ase.gui.input_parameters.bsf import (
     EK,
     bsf_mode,
     select_path,
     set_energy_points,
 )
+from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import (
     EnergyState,
     bound_energy_state,
-    bound_energy_updates,
     convert_energy,
+    reference_selectable,
+    set_bound_energy,
 )
 from guy4ase.gui.input_parameters.keyword_choices import (
     keyword_current_value,
@@ -81,6 +86,7 @@ class ParameterEditor(QWidget):
     """A presentation widget that commits one path through the session."""
 
     validationChanged = pyqtSignal(object, str, str)
+    pathEditRequested = pyqtSignal()
 
     def __init__(
         self,
@@ -102,6 +108,7 @@ class ParameterEditor(QWidget):
         self._disabled_reason = ""
         self._null_sentinel: float | int | None = None
         self._value_type = self.session.option(self.path)._definition.type
+        self._nullable = True  # Clearing resets to the backend default, or unsets.
         if placement.index is not None:
             self._value_type = self._value_type.type
         self._uses_keyword_choices = isinstance(self._value_type, Keyword) and placement.kind != "kpath"
@@ -131,24 +138,33 @@ class ParameterEditor(QWidget):
         self.setToolTip(self._base_tooltip)
         self.control.setToolTip(self._base_tooltip)
         self._connect_control()
-        self.session.parametersReplaced.connect(self.refresh)
+        self.session.editApplied.connect(self._session_changed)
         self.refresh()
+
+    def _session_changed(self, paths, reset):
+        """Preserve unrelated drafts; replacements and history explicitly discard them."""
+        dependencies = set(self.placement.paths)
+        if self.placement.kind in {'kpath', 'bsf_vectors', 'bsf_mesh', 'vector', 'energy_bound'}:
+            dependencies.update({('ENERGY', 'NE'), ('TASK', 'KPATH')})
+        if reset or dependencies.intersection(paths):
+            self.refresh()
 
     def _create_control(self) -> QWidget:
         spec = self.placement
         if spec.kind == "energy_bound":
             name = self.path[-1]
             def apply(value, unit, relative):
-                updates = bound_energy_updates(name, value, unit, relative)
-                self.session.mutate(lambda parameters: parameters.ENERGY.set(updates),
+                self.session.mutate(lambda parameters: set_bound_energy(parameters, name, value, unit, relative),
                                     source_page=self.page_id, path=self.path,
                                     text=f"Change {spec.label.rstrip(':')}")
             return EnergyEditor(
-                lambda: bound_energy_state(self.session.working_parameters, name), apply, self)
+                lambda: bound_energy_state(self.session.working_parameters, name), apply, self,
+                reference_selectable=lambda: reference_selectable(self.session.working_parameters, name))
         if spec.kind == "energy":
             def state():
                 value = self.session.value(self.path)
-                return EnergyState(None if value is None else float(value.to_value('Ry') if hasattr(value, 'to_value') else value), 'Ry')
+                return EnergyState(None if value is None else float(value.to_value('Ry') if hasattr(value, 'to_value') else value),
+                                   'Ry', explicit=self.session.option(self.path).is_set())
             def apply(value, unit, _relative):
                 value = (None if value is None else (value, unit) if isinstance(self._value_type, Energy)
                          else convert_energy(value, unit, 'Ry'))
@@ -181,7 +197,7 @@ class ParameterEditor(QWidget):
         if spec.kind == "integer":
             editor = NullableSpinBox(self)
             minimum = int(spec.minimum if spec.minimum is not None else -2147483647)
-            if spec.nullable:
+            if self._nullable:
                 self._null_sentinel = minimum - int(spec.step or 1)
                 minimum = int(self._null_sentinel)
                 editor.set_unset_value(minimum)
@@ -196,7 +212,7 @@ class ParameterEditor(QWidget):
             editor = NullableDoubleSpinBox(self)
             editor.setDecimals(spec.decimals)
             minimum = float(spec.minimum if spec.minimum is not None else -1e16)
-            if spec.nullable:
+            if self._nullable:
                 self._null_sentinel = minimum - float(spec.step or .1)
                 minimum = float(self._null_sentinel)
                 editor.set_unset_value(minimum)
@@ -262,7 +278,7 @@ class ParameterEditor(QWidget):
             control.currentIndexChanged.connect(lambda _index: self.commit())
         elif self.placement.kind == "kpath":
             self.path_combo.currentIndexChanged.connect(self._select_predefined_path)
-            self.path_edit.clicked.connect(self._edit_kpath)
+            self.path_edit.clicked.connect(self.pathEditRequested)
         elif self.placement.kind == "bsf_mesh":
             self.mode_combo.currentIndexChanged.connect(self._select_bsf_mode)
             self.energy_count.editingFinished.connect(self.commit)
@@ -278,15 +294,7 @@ class ParameterEditor(QWidget):
     def _commit_bsf_points(self, points) -> bool:
         """Change BSF sampling/mode in one command, choosing an atom-valid path."""
         try:
-            def update(parameters):
-                previous_mode = bsf_mode(parameters)
-                set_energy_points(parameters, points)
-                if previous_mode != EK and points > 1:
-                    option = parameters.TASK["KPATH"]
-                    available = [value for value, _ in keyword_items(option, atoms=self.atoms) if value is not None]
-                    if option() not in available:
-                        select_path(parameters, available[0] if available else None)
-            self.session.mutate(update,
+            self.session.mutate(lambda parameters: set_energy_points(parameters, points, atoms=self.atoms),
                                 source_page=self.page_id, path=self.path, field_index=0,
                                 text="Change BSF mode / energy points")
         except Exception as exc:
@@ -300,19 +308,19 @@ class ParameterEditor(QWidget):
         spec = self.placement
         control = self.control
         if isinstance(control, QSpinBox):
-            if spec.nullable and not control.cleanText().strip():
+            if self._nullable and not control.cleanText().strip() and not control.is_default_display():
                 return None
             value: Any = int(control.value())
-            if spec.nullable and value == self._null_sentinel:
+            if self._nullable and value == control.minimum():
                 return None
             if spec.special_value_text and spec.minimum is not None and value == int(spec.minimum):
                 return None
             return value
         if isinstance(control, QDoubleSpinBox):
-            if spec.nullable and not control.cleanText().strip():
+            if self._nullable and not control.cleanText().strip() and not control.is_default_display():
                 return None
             value = float(control.value())
-            if spec.nullable and value == self._null_sentinel:
+            if self._nullable and value == control.minimum():
                 return None
             if spec.special_value_text and spec.minimum is not None and value == float(spec.minimum):
                 return None
@@ -345,6 +353,9 @@ class ParameterEditor(QWidget):
             return self.control.commit()
         try:
             value = self._read_value()
+            if values_equal(value, self._shown):
+                self._set_error('')
+                return True
             def update(parameters):
                 option = resolve_option(parameters, self.path)
                 if parameters.task_name.lower() == "bsf" and self.path in (
@@ -381,31 +392,38 @@ class ParameterEditor(QWidget):
     def refresh(self) -> None:
         """Replace the draft from session state without creating an edit.
 
-        Missing values may use display-only fallbacks. This also clears local
-        validation errors; refresh does not preserve an invalid widget draft.
+        Implicit backend defaults are placeholders, never GUI-invented values.
+        A deliberate refresh also clears local validation errors.
         """
         self._refreshing = True
         try:
             value = self.session.value(self.path)
+            option = self.session.option(self.path)
+            default = option.default_value
+            implicit = not option.is_set() and value is not None
             spec = self.placement
             if spec.index is not None:
                 values = list(value) if value is not None else []
                 value = values[spec.index] if len(values) > spec.index else None
+                if default is not None:
+                    default = default[spec.index] if len(default) > spec.index else None
                 if value is None and spec.index == 1 and self.path in (("ENERGY", "GRID"), ("ENERGY", "NE")):
                     value = self.session.single_site_value(self.path)
             control = self.control
             if isinstance(control, (KPathTable, VectorEditor, RelativisticScalingEditor, EnergyEditor)):
                 control.refresh()
             elif isinstance(control, QSpinBox):
-                fallback = self._null_sentinel if value is None and spec.nullable else (
-                    spec.default if spec.default is not None else spec.minimum or 0
-                )
+                fallback = self._null_sentinel if value is None and self._nullable else 0
                 control.setValue(int(_first(value, fallback)))
+                control.lineEdit().setPlaceholderText(default_text(default))
+                if implicit and value is not None:
+                    control.show_default(int(_first(value)), default_text(default))
             elif isinstance(control, QDoubleSpinBox):
-                fallback = self._null_sentinel if value is None and spec.nullable else (
-                    spec.default if spec.default is not None else spec.minimum or 0.
-                )
+                fallback = self._null_sentinel if value is None and self._nullable else 0.
                 control.setValue(float(_first(value, fallback)))
+                control.lineEdit().setPlaceholderText(default_text(default))
+                if implicit and value is not None:
+                    control.show_default(float(_first(value)), default_text(default))
             elif isinstance(control, QCheckBox):
                 control.setChecked(bool(value))
             elif isinstance(control, QComboBox):
@@ -414,12 +432,15 @@ class ParameterEditor(QWidget):
                     value = keyword_current_value(option, self._value_type, value)
                 self._set_combo_value(control, value, unavailable=self._uses_keyword_choices)
             elif isinstance(control, QLineEdit):
+                if implicit:
+                    value = None
                 if spec.kind in {"literal", "bsf_ka"}:
                     if spec.kind == "bsf_ka" and value is not None and bsf_mode(self.session.working_parameters) != EK:
                         value = value[0]
-                    control.setText(_render_literal(value, spec.default))
+                    control.setText(_render_literal(value, None))
                 else:
-                    control.setText(str(spec.default if value is None and spec.default is not None else value or ""))
+                    control.setText('' if value is None else str(value))
+                control.setPlaceholderText(default_text(default))
             elif spec.kind == "kpath":
                 self._refresh_kpath(value)
             elif spec.kind == "bsf_mesh":
@@ -429,6 +450,7 @@ class ParameterEditor(QWidget):
                 self.energy_count.setEnabled(points > 1)
         finally:
             self._refreshing = False
+        self._shown = self._read_value()
         self._set_error("")
 
     @staticmethod
@@ -482,21 +504,6 @@ class ParameterEditor(QWidget):
             )
         except Exception as exc:
             self._set_error(str(exc))
-
-    def _edit_kpath(self) -> None:
-        """Run the modal path editor on a candidate, installing accepted edits atomically."""
-        if self.atoms is None:
-            QMessageBox.warning(self, "K-path", "A structure is required to edit the Brillouin-zone path.")
-            return
-        try:
-            self.session.mutate(
-                lambda parameters: parameters.TASK.k_path_gui(self.atoms, parent=self.window()),
-                text="Edit custom K-path",
-                source_page=self.page_id,
-                path=self.path,
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "K-path Error", str(exc))
 
     def _set_error(self, message: str) -> None:
         if message == self._error:

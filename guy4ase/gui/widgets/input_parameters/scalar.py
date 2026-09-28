@@ -16,7 +16,7 @@ from ase2sprkkr.common.grammar_types import (
     String,
     Table,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,10 +26,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.keyword_choices import (
     keyword_current_value,
     keyword_items,
 )
+from guy4ase.gui.widgets.input_parameters.commit import EditorCommit
 from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox, NullableSpinBox
 
 
@@ -38,16 +40,6 @@ def coalesce(*args):
         if a is not None:
             return a
     return None
-
-
-def _mark_editor_invalid(editor: QWidget, message: str) -> None:
-    editor.setStyleSheet("border: 2px solid red;")
-    editor.setToolTip(message)
-
-
-def _mark_editor_valid(editor: QWidget) -> None:
-    editor.setStyleSheet("")
-    editor.setToolTip("")
 
 
 def _stringify_value(grammar_type: Any, value: Any, fallback: str = "") -> str:
@@ -74,13 +66,33 @@ def create_scalar_editor(
     option: Any = None,
     atoms: Any = None,
 ) -> QWidget:
+    """Build a grammar-driven scalar control and report edits via ``on_value``.
+
+    ``option`` supplies optional/default and atom-dependent Keyword metadata;
+    an array element's grammar alone does not inherit its parent's optionality.
+    ``allow_empty`` makes blank fallback text a no-op, rather than an unset edit.
+    The caller owns storage. ``widget.input_commit`` provides the common safe
+    commit/validation boundary for every control returned by this factory.
+    """
     if grammar_type is None:
         grammar_type = String()
 
+    whole_option = option is not None and option._definition.type is grammar_type
     nullable = False
-    if option is not None and option._definition.type is grammar_type:
+    if whole_option:
         optional = option._definition.is_optional
-        nullable = bool(optional(option) if callable(optional) else optional) and option.default_value is None
+        nullable = bool(optional(option) if callable(optional) else optional) or option.default_value is not None
+
+    def show_numeric_default(editor):
+        if whole_option:
+            editor.lineEdit().setPlaceholderText(default_text(option.default_value))
+            if not option.is_set() and option() is not None:
+                with QSignalBlocker(editor):
+                    editor.show_default(option(), default_text(option.default_value))
+
+    def apply_number(editor, value):
+        on_value(value)
+        show_numeric_default(editor)
 
     if isinstance(grammar_type, Integer):
         editor = NullableSpinBox()
@@ -95,7 +107,11 @@ def create_scalar_editor(
         except Exception:
             pass
         editor.setReadOnly(read_only)
-        editor.valueChanged.connect(lambda value: on_value(None if nullable and value == editor.minimum() else int(value)))
+        show_numeric_default(editor)
+        commit = EditorCommit(editor, lambda: None if nullable and editor.value() == editor.minimum() else int(editor.value()),
+                              lambda value: apply_number(editor, value))
+        editor.setKeyboardTracking(False)
+        editor.valueChanged.connect(commit.commit)
         return editor
 
     if isinstance(grammar_type, Real):
@@ -114,7 +130,11 @@ def create_scalar_editor(
         except Exception:
             pass
         editor.setReadOnly(read_only)
-        editor.valueChanged.connect(lambda value: on_value(None if nullable and value == editor.minimum() else float(value)))
+        show_numeric_default(editor)
+        commit = EditorCommit(editor, lambda: None if nullable and editor.value() == editor.minimum() else float(editor.value()),
+                              lambda value: apply_number(editor, value))
+        editor.setKeyboardTracking(False)
+        editor.valueChanged.connect(commit.commit)
         return editor
 
     if isinstance(grammar_type, Energy):
@@ -142,14 +162,13 @@ def create_scalar_editor(
         except Exception:
             pass
 
-        def emit_value(*_args) -> None:
-            on_value((value_box.value(), unit_box.currentText()))
+        commit = EditorCommit(container, lambda: (value_box.value(), unit_box.currentText()), on_value)
 
         value_box.setReadOnly(read_only)
         if read_only:
             unit_box.setEnabled(False)
-        value_box.valueChanged.connect(emit_value)
-        unit_box.currentTextChanged.connect(emit_value)
+        value_box.valueChanged.connect(commit.commit)
+        unit_box.currentTextChanged.connect(commit.commit)
         layout.addWidget(value_box, 3)
         layout.addWidget(unit_box, 1)
         return container
@@ -162,7 +181,8 @@ def create_scalar_editor(
             pass
         if read_only:
             editor.setEnabled(False)
-        editor.toggled.connect(lambda value: on_value(bool(value)))
+        commit = EditorCommit(editor, editor.isChecked, on_value)
+        editor.toggled.connect(commit.commit)
         return editor
 
     if isinstance(grammar_type, Keyword):
@@ -182,40 +202,30 @@ def create_scalar_editor(
         editor.setCurrentIndex(current_index)
         if read_only:
             editor.setEnabled(False)
-        editor.currentIndexChanged.connect(lambda _index: on_value(editor.currentData()))
+        commit = EditorCommit(editor, editor.currentData, on_value)
+        editor.currentIndexChanged.connect(commit.commit)
         return editor
 
     editor = QLineEdit()
-    if nullable:
-        editor.setPlaceholderText("Not set")
-    if current_value is not None:
+    editor.setPlaceholderText(default_text(option.default_value) if whole_option else 'Not set')
+    if current_value is not None and not (whole_option and not option.is_set()):
         editor.setText(_stringify_value(grammar_type, current_value, fallback=str(current_value)))
     editor.setReadOnly(read_only)
 
-    def commit() -> None:
-        text = editor.text().strip()
+    def apply(text):
         if allow_empty and not text:
-            _mark_editor_valid(editor)
             return
         try:
             value = grammar_type.parse(text) if text else None
         except Exception:
-            try:
-                value = grammar_type.convert(text)
-                grammar_type.validate(value)
-            except Exception as e:
-                _mark_editor_invalid(editor, str(e))
-                return
-        try:
-            on_value(value)
-        except Exception as e:
-            _mark_editor_invalid(editor, str(e))
-            return
-        _mark_editor_valid(editor)
-        try:
-            editor.setText(_stringify_value(grammar_type, value, fallback=text))
-        except Exception:
-            pass
+            value = grammar_type.convert(text)
+            grammar_type.validate(value)
+        on_value(value)
+        if whole_option:
+            editor.setPlaceholderText(default_text(option.default_value))
+            if not option.is_set():
+                editor.clear()
 
-    editor.editingFinished.connect(commit)
+    commit = EditorCommit(editor, lambda: editor.text().strip(), apply)
+    editor.editingFinished.connect(commit.commit)
     return editor

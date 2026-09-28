@@ -30,7 +30,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     arpes_emin = energy_bound("EMIN", "Minimum energy:")
     arpes_emax = energy_bound("EMAX", "Maximum energy:")
     arpes_ne = field("ENERGY", "NE", "Energy points:", "integer", minimum=1, maximum=10000)
-    miller = field("TASK", "MILLER_HKL", "Surface Miller indices [h, k, l]:", "literal", default=[0, 0, 1])
+    miller = field("TASK", "MILLER_HKL", "Surface Miller indices [h, k, l]:", "literal")
     arpes = TaskDialogSpec("arpes", "arpes", "ARPES Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common ARPES settings", (
             mirror(ephot), mirror(pol), mirror(arpes_emin), mirror(arpes_emax), mirror(arpes_ne), mirror(miller),
@@ -42,11 +42,11 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
             pol,
         )),), SPECIAL_COLOR),
         PageSpec("detector", "Electron detector", (GroupSpec("Angular scan", (
-            field("SPEC_EL", "THETA", "Theta scan [start, end] (deg):", "literal", default=[-20., 20.]),
-            field("SPEC_EL", "NT", "Theta samples:", "integer", minimum=1, maximum=100000, default=200),
-            field("SPEC_EL", "PHI", "Phi scan [start, end] (deg):", "literal", default=[0., 0.]),
-            field("SPEC_EL", "NP", "Phi samples:", "integer", minimum=1, maximum=100000, default=1),
-            field("SPEC_EL", "SPOL", "Spin-polarization mode:", "integer", minimum=0, maximum=10, default=4),
+            field("SPEC_EL", "THETA", "Theta scan [start, end] (deg):", "literal"),
+            field("SPEC_EL", "NT", "Theta samples:", "integer", minimum=1, maximum=100000),
+            field("SPEC_EL", "PHI", "Phi scan [start, end] (deg):", "literal"),
+            field("SPEC_EL", "NP", "Phi samples:", "integer", minimum=1, maximum=100000),
+            field("SPEC_EL", "SPOL", "Spin-polarization mode:", "integer", minimum=0, maximum=10),
         )),), GEOMETRY_COLOR),
         PageSpec("energy", "Energy mesh", (GroupSpec("Energy range and broadening", (
             arpes_emin, arpes_emax, arpes_ne,
@@ -57,7 +57,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
         PageSpec("surface", "Surface geometry", (GroupSpec("Surface", (
             miller,
             field("TASK", "IQ_AT_SURF", "Surface site:", "integer", minimum=1, maximum=999999),
-            field("SPEC_STR", "N_LAYDBL", "Principal layers [left, right]:", "literal", default=[10, 10]),
+            field("SPEC_STR", "N_LAYDBL", "Principal layers [left, right]:", "literal"),
             field("SPEC_STR", "N_LAYER", "Surface layers:", "integer", minimum=1, maximum=10000),
         )),), MODEL_COLOR),
         PageSpec("momentum", "Momentum map", (GroupSpec("Optional momentum map", tuple(

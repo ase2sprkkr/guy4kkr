@@ -21,6 +21,7 @@ from .shared import (
 
 
 def build_spec(is_2d: bool = False) -> TaskDialogSpec:
+    """Declare both BSF modes; the dialog adapts visible fields to ENERGY.NE[0]."""
     bsf_emin = energy_bound("EMIN", "Minimum / fixed energy:")
     bsf_emax = energy_bound("EMAX", "Maximum energy:")
     bsf_ne = field("ENERGY", "NE", "BSF mode / energy points:", "bsf_mesh")
@@ -34,14 +35,13 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     physical = replace(common["physical"], groups=(
         GroupSpec("Relativity", (MODE,)),
     ) + tuple(group for group in common["physical"].groups
-              if group.title in {"Magnetism and symmetry", "Magnetisation orientation",
-                                 "Beyond DFT", "Relativistic scaling"}))
+              if group.id in {"magnetism", "orientation", "beyond_dft", "scaling"}))
     kkr = replace(common["kkr"], groups=common["kkr"].groups + tuple(
-        group for group in common["convergence"].groups if group.title == "CPA convergence"))
+        group for group in common["convergence"].groups if group.id == "cpa"))
     output = replace(_output_page(), title="Output & advanced", groups=tuple(
         replace(group, fields=tuple(f for f in group.fields if f.path not in {
             ("CONTROL", "NOSYM"), ("CONTROL", "SPLITSS")}),
-            collapsed=group.title == "Hyperfine field")
+            collapsed=group.id == "hff")
         for group in _output_page().groups
     ) + (GroupSpec("File names", (
         field("CONTROL", "DATASET", "Dataset / output prefix:", "text"),

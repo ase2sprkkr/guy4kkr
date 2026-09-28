@@ -53,13 +53,13 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
             GroupSpec("Magnetism and symmetry", (
                 NONMAG,
                 field("CONTROL", "NOSYM", "Disable symmetry:", "boolean"),
-            )),
+            ), id="magnetism"),
             GroupSpec("Magnetisation orientation", (
                 field("MODE", "MDIR", "Direction vector [x, y, z]:", "literal"),
                 field("MODE", "MALF", "Alpha angle:", "real", minimum=-360., maximum=360., step=1., nullable=True),
                 field("MODE", "MBET", "Beta angle:", "real", minimum=-360., maximum=360., step=1., nullable=True),
                 field("MODE", "MGAM", "Gamma angle:", "real", minimum=-360., maximum=360., step=1., nullable=True),
-            ), collapsed=True),
+            ), collapsed=True, id="orientation"),
             GroupSpec("Potential shape and atomic radii", (
                 FULLPOT,
                 field(
@@ -76,11 +76,11 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
                 field("MODE", "UMODE", "LDA+U formulation:", "keyword"),
                 field("MODE", "UEFF", "U values:", "literal"),
                 field("MODE", "JEFF", "J values:", "literal"),
-            ), collapsed=True),
+            ), collapsed=True, id="beyond_dft"),
             GroupSpec("Relativistic scaling", (
                 field("MODE", "C", "Speed-of-light scale:", "scaling"),
                 field("MODE", "SOC", "Spin-orbit scale:", "scaling"),
-            ), collapsed=True),
+            ), collapsed=True, id="scaling"),
         ), MODEL_COLOR),
         PageSpec("initial", "Initial state", (
             GroupSpec("Starting potential", (USEVMATT,)),
@@ -108,7 +108,7 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
             GroupSpec("CPA convergence", (
                 field("CPA", "NITER", "Maximum CPA iterations:", "integer", minimum=1, maximum=2000),
                 field("CPA", "TOL", "CPA tolerance:", "real", minimum=1e-10, maximum=1., step=1e-5, decimals=10),
-            ), collapsed=True, note="Relevant for substitutionally disordered systems."),
+            ), collapsed=True, note="Relevant for substitutionally disordered systems.", id="cpa"),
         ), CONVERGENCE_COLOR),
         PageSpec("energy", "Energy grids", _energy_grid_groups(ne) + (
             GroupSpec("Energy range", (

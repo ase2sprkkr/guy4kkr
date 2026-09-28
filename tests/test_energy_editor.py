@@ -31,7 +31,7 @@ def test_open_energy_pair_does_not_change_parameters(application, task):
     assert not dialog.session.is_modified()
     assert dialog.session.undo_stack.count() == 0
     assert absolute[0].control.relative.isChecked() == (task == 'arpes')
-    assert absolute[0].control.relative.isEnabled()
+    assert absolute[0].control.relative.isEnabled() == (task != 'scf')
     dialog.close()
 
 
@@ -57,9 +57,9 @@ def test_unit_change_only_converts_display_with_full_precision(application, task
 @pytest.mark.parametrize('unit', ['Ry', 'eV'])
 @pytest.mark.parametrize('relative', [False, True])
 def test_all_unit_reference_combinations_roundtrip(application, unit, relative):
-    parameters = InputParameters.create('scf')
+    parameters = InputParameters.create('dos')
     parameters.CONTROL.POTFIL.set('Fe.pot')
-    dialog = GuidedInputParametersDialog('scf', parameters)
+    dialog = GuidedInputParametersDialog('dos', parameters)
     editor = dialog.editors_for(('ENERGY', 'EMIN'))[-1].control
     editor.units.setCurrentText(unit)
     editor.relative.setChecked(relative)
@@ -72,7 +72,7 @@ def test_all_unit_reference_combinations_roundtrip(application, unit, relative):
     assert current.ENERGY[target]() == pytest.approx(expected)
     assert current.ENERGY[other]() is None
     source = current.to_string(validate=False)
-    loaded = InputParameters.create('scf')
+    loaded = InputParameters.create('dos')
     loaded.read_from_file(StringIO(source))
     assert loaded.ENERGY[target]() == pytest.approx(expected)
     assert loaded.ENERGY[other]() is None
@@ -114,8 +114,9 @@ def test_imaginary_energy_has_units_without_relative_checkbox(application):
 
 
 def test_expert_combines_pair_and_uses_identical_control(application):
-    parameters = InputParameters.create('scf')
+    parameters = InputParameters.create('dos')
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
     item, = dialog._tree.findItems('EMIN / EMINEV', flags, 0)
     assert not dialog._tree.findItems('EMINEV', flags, 0)
@@ -140,6 +141,7 @@ def test_arpes_absolute_bounds_and_relative_defaults(application, expert):
     parameters.CONTROL.POTFIL.set('Fe.pot')
     if expert:
         dialog = InputParametersDialog(parameters)
+        parameters = dialog.result()  # Expert edits an isolated copy.
         flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
         def editor_for(name):
             item, = dialog._tree.findItems(f'{name} / {name}EV', flags, 0)

@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
-from guy4ase.gui.input_parameters.bsf import EK, bsf_mode, prepare_bsf
+from guy4ase.gui.input_parameters.bsf import EK, bsf_mode
 from guy4ase.gui.input_parameters.session import SPLIT_SWITCHES, InputParametersSession
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
@@ -41,6 +41,8 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
+from guy4ase.gui.input_parameters.tasks import prepare_parameters as _prepare_parameters
+from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.misc.colors import blend as _blend
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.widgets.input_parameters.parameter import EDITOR_WIDTH, ParameterEditor
@@ -53,16 +55,6 @@ def _is_2d(atoms: Any) -> bool:
         return not all(bool(value) for value in atoms.get_pbc())
     except Exception:
         return False
-
-
-def _prepare_parameters(parameters: InputParameters, task: str) -> InputParameters:
-    """Add extensible options used by the curated GUI before making snapshots."""
-    prepared = prepare_bsf(parameters) if task == "bsf" else parameters.copy(copy_values=True)
-    if task == "xas" and "EMAX" not in prepared.ENERGY:
-        prepared.ENERGY.add("EMAX", 4.0)
-    if task == "jxc" and "DMI" not in prepared.TASK:
-        prepared.TASK.add("DMI", False)
-    return prepared
 
 
 class GuidedInputParametersDialog(QDialog):
@@ -300,6 +292,7 @@ class GuidedInputParametersDialog(QDialog):
             parent=self,
         )
         editor.validationChanged.connect(self._editor_validation_changed)
+        editor.pathEditRequested.connect(lambda: self._edit_kpath(editor))
         self._editors.append(editor)
         for path in placement.paths:
             self._editors_by_path[path].append(editor)
@@ -392,7 +385,7 @@ class GuidedInputParametersDialog(QDialog):
             return
 
     def _parameters_replaced(self) -> None:
-        self._errors.clear()
+        self._errors = {editor.path: editor._error for editor in self._editors if editor._error}
         self._update_all_statuses()
         self._update_dynamic_state()
 
@@ -600,7 +593,7 @@ class GuidedInputParametersDialog(QDialog):
             QMessageBox.warning(self, "Invalid Settings", "Correct the highlighted value before calculating.")
             return
         try:
-            self.session.working_parameters.validate(why="set")
+            validate_setup(self.session.working_parameters)
         except Exception as exc:
             self._show_model_error(exc)
             return
@@ -645,6 +638,18 @@ class GuidedInputParametersDialog(QDialog):
                 )
         except Exception as exc:
             QMessageBox.critical(self, "Expert Settings Error", str(exc))
+
+    def _edit_kpath(self, editor) -> None:
+        """Own modal path editing; widgets only request this action."""
+        if self.atoms is None:
+            QMessageBox.warning(self, 'K-path', 'A structure is required to edit the Brillouin-zone path.')
+            return
+        try:
+            self.session.mutate(
+                lambda parameters: parameters.TASK.k_path_gui(self.atoms, parent=self),
+                text='Edit custom K-path', source_page=editor.page_id, path=editor.path)
+        except Exception as error:
+            QMessageBox.critical(self, 'K-path Error', str(error))
 
     def _load_input(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(

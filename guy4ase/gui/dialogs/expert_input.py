@@ -19,6 +19,7 @@ from ase2sprkkr.common.grammar_types import (
     Sequence as GrammarSequence,
 )
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
@@ -40,16 +41,15 @@ from guy4ase.gui.input_parameters.bindings import InputParametersBinding
 from guy4ase.gui.input_parameters.energy import (
     EnergyState,
     bound_energy_state,
-    bound_energy_updates,
+    reference_selectable,
+    set_bound_energy,
 )
+from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
     RelativisticScalingEditor,
 )
 from guy4ase.gui.widgets.input_parameters.scalar import (
-    _mark_editor_invalid,
-    _mark_editor_valid,
-    _stringify_value,
     create_scalar_editor,
 )
 
@@ -99,6 +99,7 @@ class _TreeEditorBinding(InputParametersBinding):
 
 
 class InputParametersDialog(_TreeDialogBase):
+    """Edit an isolated parameter copy; only the accepted result is published."""
     _CHANGED_ROLE = Qt.ItemDataRole.UserRole
 
     def __init__(
@@ -111,7 +112,7 @@ class InputParametersDialog(_TreeDialogBase):
         directory: Optional[str] = None,
         atoms: Any = None,
     ):
-        self._params = params
+        self._params = params.copy(copy_values=True)
         self._atoms = atoms
         self._calculate_mode = calculate_mode
         self._directory = directory or ''
@@ -237,7 +238,7 @@ class InputParametersDialog(_TreeDialogBase):
                 option=opt,
                 atoms=self._atoms,
             )
-            self._tree.setItemWidget(item, 2, editor)
+            self._set_editor(item, editor)
 
     def _build_energy_option(self, opt, item, path, paired=False):
         binding = _TreeEditorBinding(self, item)
@@ -248,21 +249,23 @@ class InputParametersDialog(_TreeDialogBase):
             item.setText(1, 'Energy')
             item.setToolTip(3, opt.info + '\n' + opt._container[name + 'EV'].info)
             def apply(value, unit, relative):
-                self._params.ENERGY.set(bound_energy_updates(name, value, unit, relative))
+                set_bound_energy(self._params, name, value, unit, relative)
                 self._update_changed_style(binding.option(path), item)
                 self._refresh_energy_editors()
-            editor = EnergyEditor(lambda: bound_energy_state(self._params, name), apply, self._tree)
+            editor = EnergyEditor(lambda: bound_energy_state(self._params, name), apply, self._tree,
+                                  reference_selectable=lambda: reference_selectable(self._params, name))
         else:
             def state():
                 value = binding.value(path)
-                return EnergyState(None if value is None else float(value.to_value('Ry')), 'Ry')
+                return EnergyState(None if value is None else float(value.to_value('Ry')), 'Ry',
+                                   explicit=binding.option(path).is_set())
             editor = EnergyEditor(state, lambda value, unit, _relative: binding.set_value(
                 path, None if value is None else (value, unit)), self._tree, with_reference=False)
         binding.editor = editor
         editor.setMinimumWidth(320)
         editor.validationChanged.connect(lambda message: self._special_validation_changed(path, item, message))
         self._special_editors[path] = (binding, item)
-        self._tree.setItemWidget(item, 2, editor)
+        self._set_editor(item, editor)
         self._tree.setColumnWidth(2, max(320, self._tree.columnWidth(2)))
         binding.refresh()
         self._update_changed_style(opt, item, refresh_filter=False)
@@ -279,7 +282,7 @@ class InputParametersDialog(_TreeDialogBase):
         editor.setMinimumWidth(280)
         editor.validationChanged.connect(lambda message: self._special_validation_changed(path, item, message))
         self._special_editors[path] = (binding, item)
-        self._tree.setItemWidget(item, 2, editor)
+        self._set_editor(item, editor)
         self._tree.setColumnWidth(2, max(280, self._tree.columnWidth(2)))
         binding.refresh()
 
@@ -335,29 +338,35 @@ class InputParametersDialog(_TreeDialogBase):
 
     def _build_summary_editor(self, opt: Any, item: QTreeWidgetItem, grammar_type: Any, *, editable: bool) -> None:
         """Show a compound value's grammar text alongside its structured child editors."""
-        value = _option_value(opt)
-        editor = QLineEdit()
-        editor.setText(_stringify_value(grammar_type, value))
-        editor.setReadOnly(not editable)
-
-        if editable:
-            def commit() -> None:
-                text = editor.text().strip()
-                try:
-                    value = grammar_type.parse(text) if text else None
-                    opt.set(value)
-                except Exception as e:
-                    _mark_editor_invalid(editor, str(e))
-                    return
-                _mark_editor_valid(editor)
-                self._update_changed_style(opt, item)
-                editor.setText(_stringify_value(grammar_type, _option_value(opt)))
-                self._rebuild_compound_option(opt, item)
-
-            editor.editingFinished.connect(commit)
-
-        self._tree.setItemWidget(item, 2, editor)
+        def apply(value):
+            opt.set(value)
+            self._update_changed_style(opt, item)
+            self._rebuild_compound_option(opt, item)
+        editor = create_scalar_editor(grammar_type, _option_value(opt), apply,
+                                      option=opt, atoms=self._atoms, read_only=not editable)
+        self._set_editor(item, editor)
         item.setToolTip(2, editor.text())
+
+    def _set_editor(self, item, editor):
+        """Install a control and surface ordinary and compound validation uniformly."""
+        self._tree.setItemWidget(item, 2, editor)
+        commit = getattr(editor, 'input_commit', None)
+        if commit is not None:
+            commit.validationChanged.connect(
+                lambda message: self._display_editor_error(item, message))
+
+    def _display_editor_error(self, item, message):
+        if message:
+            self._editor_error.setText(f'{item.text(0)}: {message}')
+            self._editor_error.show()
+
+    def _editor_widgets(self):
+        """Snapshot current tree controls; a commit may rebuild compound children."""
+        def walk(item):
+            yield item, self._tree.itemWidget(item, 2)
+            for index in range(item.childCount()):
+                yield from walk(item.child(index))
+        return list(walk(self._tree.invisibleRootItem()))
 
     def _build_array_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: Any) -> None:
         self._build_summary_editor(opt, item, grammar_type, editable=True)
@@ -372,7 +381,7 @@ class InputParametersDialog(_TreeDialogBase):
                 option=opt,
                 atoms=self._atoms,
             )
-            self._tree.setItemWidget(child, 2, editor)
+            self._set_editor(child, editor)
 
         max_length = getattr(grammar_type, 'max_length', None)
         if max_length is None or len(values) < max_length:
@@ -386,7 +395,7 @@ class InputParametersDialog(_TreeDialogBase):
                 option=opt,
                 atoms=self._atoms,
             )
-            self._tree.setItemWidget(append_item, 2, editor)
+            self._set_editor(append_item, editor)
 
     def _update_array_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
         values = _mutable_sequence(_option_value(opt))
@@ -412,7 +421,7 @@ class InputParametersDialog(_TreeDialogBase):
                 value,
                 lambda new_value, idx=index, o=opt, parent_item=item: self._update_sequence_value(o, parent_item, idx, new_value),
             )
-            self._tree.setItemWidget(child, 2, editor)
+            self._set_editor(child, editor)
 
     def _update_sequence_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
         current = _mutable_sequence(_option_value(opt))
@@ -461,7 +470,7 @@ class InputParametersDialog(_TreeDialogBase):
                         cell_value,
                         lambda new_value, r=row_index, c=column_name, o=opt, parent_item=item: self._update_table_field(o, parent_item, r, c, new_value),
                     )
-                    self._tree.setItemWidget(cell_item, 2, editor)
+                    self._set_editor(cell_item, editor)
             return
 
         array = np.asarray(value)
@@ -492,7 +501,7 @@ class InputParametersDialog(_TreeDialogBase):
                     cell_value,
                     lambda new_value, r=row_index, c=col_index, o=opt, parent_item=item: self._update_table_cell(o, parent_item, r, c, new_value),
                 )
-                self._tree.setItemWidget(cell_item, 2, editor)
+                self._set_editor(cell_item, editor)
 
     def _update_table_field(self, opt: Any, item: QTreeWidgetItem, row_index: int, column_name: str, value: Any) -> None:
         current = np.array(_option_value(opt), copy=True)
@@ -559,8 +568,13 @@ class InputParametersDialog(_TreeDialogBase):
         focus = QApplication.focusWidget()
         if focus is not None:
             focus.clearFocus()
-        for binding, item in self._special_editors.values():
-            if not binding.editor.commit():
+        self._editor_error.hide()
+        for item, editor in self._editor_widgets():
+            if editor is None or sip.isdeleted(editor) or sip.isdeleted(item):
+                continue
+            controller = getattr(editor, 'input_commit', editor)
+            commit = getattr(controller, 'commit', None)
+            if commit is not None and not commit():
                 self._filter_edit.clear()
                 self._changed_only_checkbox.setChecked(False)
                 parent = item.parent()
@@ -568,8 +582,14 @@ class InputParametersDialog(_TreeDialogBase):
                     parent.setExpanded(True)
                     parent = parent.parent()
                 self._tree.scrollToItem(item)
-                binding.editor.setFocus()
+                editor.setFocus()
                 return
+        try:
+            validate_setup(self._params)
+        except Exception as error:
+            self._editor_error.setText(str(error))
+            self._editor_error.show()
+            return
         if self._calculate_mode:
             self._directory = self._directory_edit.text().strip() if self._directory_edit is not None else ''
             if not self._directory and not self._choose_directory():
@@ -597,9 +617,8 @@ def edit_input_parameters(
 ) -> Any:
     """Open the expert editor, returning parameters (optionally directory) or None.
 
-    The dialog edits ``params`` directly; Cancel does not undo those mutations.
-    Callers requiring isolation must pass a copy, as the guided dialog does.
-    Loading a file may replace the object, so use the returned value on accept.
+    The supplied object is never modified. Cancel discards the isolated draft;
+    callers must use the returned object on acceptance.
     """
     dlg = InputParametersDialog(
         params,
@@ -622,7 +641,7 @@ def select_input_parameters(
     parent: Optional[QWidget] = None,
     task: str = "scf",
 ) -> Optional[InputParameters]:
-    """Open the input-parameters editor and return the resulting InputParameters."""
+    """Create fresh parameters for a task and edit them; do not load existing state."""
     from importlib import import_module
 
     task_module = import_module(f"ase2sprkkr.input_parameters.definitions.{task.lower()}")

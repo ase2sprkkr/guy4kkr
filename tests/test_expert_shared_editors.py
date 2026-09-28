@@ -32,6 +32,7 @@ def test_expert_uses_same_scaling_widget_and_preserves_type_values(application, 
     parameters.MODE[name].set({'def': .8, 2: .4})
     original = parameters.to_string(validate=False)
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     control, item = scaling(dialog, name)
     assert isinstance(control, RelativisticScalingEditor)
     assert parameters.to_string(validate=False) == original
@@ -112,6 +113,7 @@ def test_expert_array_scaling_uses_shared_orbital_table(application, monkeypatch
     monkeypatch.setattr(definition, 'default_value', np.array([1.]))
     parameters.MODE.SOC.set({'def': [1.], 2: [.8, .7, .6]})
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     control, item = scaling(dialog)
     assert control.orbital_resolved
     assert [control.table.horizontalHeaderItem(i).text() for i in range(4)] == ['s', 'p', 'd', 'f']

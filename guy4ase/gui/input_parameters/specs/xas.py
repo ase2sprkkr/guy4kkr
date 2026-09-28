@@ -15,7 +15,7 @@ from .shared import (
 
 def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     xas_it = field("TASK", "IT", "Atomic type:", "integer", minimum=1, maximum=999)
-    xas_cl = field("TASK", "CL", "Core level:", "text", default="2P")
+    xas_cl = field("TASK", "CL", "Core level:", "text")
     xas_emax = field("ENERGY", "EMAX", "Maximum energy:", "energy")
     xas_ne = field("ENERGY", "NE", "Energy points:", "integer", minimum=1, maximum=10000)
     xas = TaskDialogSpec("xas", "xas", "XAS Calculation Setup", (

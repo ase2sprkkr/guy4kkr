@@ -68,6 +68,7 @@ def test_expert_delete_number_unsets(application, task, section, name, value):
     parameters = InputParameters.create(task)
     parameters[section][name].set(value)
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     tree_name = 'EMIN / EMINEV' if name == 'EMINEV' else name
     item, = dialog._tree.findItems(tree_name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = dialog._tree.itemWidget(item, 2)
@@ -91,6 +92,7 @@ def test_expert_required_text_cannot_silently_become_unset(application):
     parameters = InputParameters.create('scf')
     parameters.CONTROL.POTFIL.set('Fe.pot')
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     item, = dialog._tree.findItems('POTFIL', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = dialog._tree.itemWidget(item, 2)
     control.clear()
@@ -106,6 +108,7 @@ def test_expert_empty_optional_array_unsets(application):
     parameters.MODE.OP.set('LDA+U')
     parameters.MODE.LOPT.set(['d'])
     dialog = InputParametersDialog(parameters)
+    parameters = dialog.result()  # Expert edits an isolated copy.
     item, = dialog._tree.findItems('LOPT', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = dialog._tree.itemWidget(item, 2)
     control.clear()

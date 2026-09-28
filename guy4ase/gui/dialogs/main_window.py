@@ -647,7 +647,7 @@ class MainWindow(QMainWindow):
         actions_group_layout.addWidget(sprkkr_label)
 
         self.create_input_btn = QPushButton("Create SPRKKR Input File...")
-        self.create_input_btn.clicked.connect(self._on_create_sprkkr_input)
+        self.create_input_btn.clicked.connect(self._on_edit_sprkkr_input)
         actions_group_layout.addWidget(self.create_input_btn)
 
         self.load_input_btn = QPushButton("Load SPRKKR Input File...")
@@ -839,9 +839,18 @@ class MainWindow(QMainWindow):
             self._on_run_sprkkr_calculation()
 
     def _on_input_preview_double_click(self, event) -> None:
-        self._on_create_sprkkr_input()
+        self._on_edit_sprkkr_input()
         if event is not None:
             event.accept()
+
+    def _on_edit_sprkkr_input(self, _checked=False) -> None:
+        """Edit current input without changing task; create SCF only if none exists."""
+        if self._input_parameters is None:
+            self._on_create_sprkkr_input()
+            return
+        result = edit_input_parameters(self._input_parameters, parent=self, atoms=self.atoms)
+        if result is not None:
+            self.set_input_parameters(result)
 
     def _on_load_sprkkr_input(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
