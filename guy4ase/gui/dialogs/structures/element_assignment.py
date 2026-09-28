@@ -1,0 +1,442 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+from weakref import WeakKeyDictionary
+
+import numpy as np
+from ase import Atoms
+from ase.data import chemical_symbols
+from ase2sprkkr import SPRKKRAtoms
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QDialog,
+    QDoubleSpinBox,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from guy4ase.gui.dialogs.structures.element_selector import select_element
+from guy4ase.gui.plots.lattice import plot_lattice, plot_sites_in_lattice
+from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
+
+
+class _GlobalSentinel:
+    pass
+
+_DEFAULT_KEY = _GlobalSentinel()
+_DIALOGS = WeakKeyDictionary()
+_VALID_SYMBOLS = set(s for s in chemical_symbols if isinstance(s, str))
+_VALID_SYMBOLS.add("Vc")
+
+
+class ElementAssignmentDialog(QDialog):
+    def __init__(self, parent: Optional[QWidget] = None, back: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("Assign Elements to Wyckoff Sites")
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+        )
+        # Wider default window to accommodate expanded left panel
+        self.resize(1400, 650)
+        self._allow_back = bool(back)
+        self._letter_widgets: list[QLetterRow] = []
+        self._cell: Optional[np.ndarray] = None
+        self._active_letter: tuple(Optional[str],Optional[int]) = (None, None)
+        self._site_errors: Dict[str, Optional[str]] = {}
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        root.addWidget(splitter, 1)
+
+        # Left: Scroll area for letters
+        left = QWidget()
+        left_v = QVBoxLayout(left)
+        self.scroll = QScrollArea(left)
+        self.scroll.setWidgetResizable(True)
+        self.container = QWidget()
+        self.scroll.setWidget(self.container)
+        self.container_layout = QVBoxLayout(self.container)
+        self.container_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        left_v.addWidget(self.scroll, 1)
+        # Keep left column wide enough and stable so headers and inputs fit
+        # Widen left panel for better readability of element rows
+        left.setMinimumWidth(750)
+        # Initial splitter sizing (favor left)
+        splitter.setSizes([850, 550])
+        splitter.addWidget(left)
+
+        # Right: 3D preview
+        right = QWidget()
+        right_v = QVBoxLayout(right)
+
+        # Lattice vectors table (editable)
+        lattice_vectors_group = QGroupBox("Lattice Vectors (Å)")
+        lattice_vectors_layout = QVBoxLayout(lattice_vectors_group)
+        self.lattice_vectors_table = QTableWidget(3, 3)
+        self.lattice_vectors_table.setHorizontalHeaderLabels(["x", "y", "z"])
+        self.lattice_vectors_table.setVerticalHeaderLabels(["a", "b", "c"])
+        self.lattice_vectors_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.lattice_vectors_table.verticalHeader().setMinimumWidth(40)
+        self.lattice_vectors_table.setMaximumHeight(120)
+
+        # Initialize with spinboxes
+        self.lattice_spinboxes = []
+        for i in range(3):
+            row_spinboxes = []
+            for j in range(3):
+                spinbox = QDoubleSpinBox()
+                spinbox.setRange(-1000.0, 1000.0)
+                spinbox.setDecimals(4)
+                spinbox.setSingleStep(0.1)
+                spinbox.setValue(0.0)
+                spinbox.setAlignment(Qt.AlignmentFlag.AlignRight)
+                spinbox.valueChanged.connect(self._on_lattice_vector_changed)
+                self.lattice_vectors_table.setCellWidget(i, j, spinbox)
+                row_spinboxes.append(spinbox)
+            self.lattice_spinboxes.append(row_spinboxes)
+
+        lattice_vectors_layout.addWidget(self.lattice_vectors_table)
+        right_v.addWidget(lattice_vectors_group, 0)
+
+        self.fig = Figure(figsize=(4, 4))
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        self.canvas = FigureCanvas(self.fig)
+        right_v.addWidget(self.canvas, 1)
+        # Error label at the bottom of right panel (larger, centered)
+        self.error_label = QLabel("")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.error_label.setStyleSheet(
+            "QLabel { color: #cc3333; font-size: 14px; font-weight: 600; padding: 4px 0; }"
+        )
+        right_v.addWidget(self.error_label)
+        splitter.addWidget(right)
+
+        # Buttons
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        if self._allow_back:
+            self.back_btn = QPushButton("Back")
+            self.back_btn.clicked.connect(self._on_back)
+            btns.addWidget(self.back_btn)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(self.cancel_btn)
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.clicked.connect(self._on_ok)
+        self.ok_btn.setEnabled(False)
+        btns.addWidget(self.ok_btn)
+        root.addLayout(btns)
+
+
+    def setup(self, atoms: Atoms, back: bool = False) -> None:
+        # reset state
+        self._allow_back = bool(back)
+        for child in list(self._letter_widgets):
+            child.setParent(None)
+        self._atoms = atoms
+        self._cell = atoms.cell.copy()
+
+        # Update lattice vector spinboxes
+        for i in range(3):
+            for j in range(3):
+                self.lattice_spinboxes[i][j].blockSignals(True)
+                self.lattice_spinboxes[i][j].setValue(self._cell[i, j])
+                self.lattice_spinboxes[i][j].blockSignals(False)
+
+        payload = QLetterRow.payload_from_atoms(atoms)
+        self._build_site_rows(payload)
+
+        self._update_ok_state()
+        self._draw_preview()
+
+    def _build_site_rows(self, payloads) -> None:
+        # Clear entire container layout (prevents duplicated spacers/headers across setups)
+        while self.container_layout.count():
+            item = self.container_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        self._letter_widgets.clear()
+
+        # Build site rows
+        for payload in payloads:
+            row = QLetterRow(
+                payload, self._atoms.cell, self.container,
+                on_activity=self._mark_active, on_break=self._break_site,
+                select_element=select_element, on_validation=self._site_validation_changed,
+            )
+            self.container_layout.addWidget(row)
+            self._letter_widgets.append(row)
+
+        # Global headers above all sites: left = Occupation, right = Positions
+        if self._letter_widgets:
+            first = self._letter_widgets[0]
+            header = QWidget(self.container)
+            header_grid = QGridLayout(header)
+            header_grid.setContentsMargins(0, 0, 0, 6)
+            header_grid.setHorizontalSpacing(10)
+            header_grid.setColumnStretch(0, 1)
+            header_grid.setColumnStretch(1, 0)
+
+            occ_lbl = QLabel("Occupation")
+            f = occ_lbl.font()
+            f.setBold(True)
+            occ_lbl.setFont(f)
+
+            pos_lbl = QLabel("Positions")
+            pos_lbl.setFont(f)
+            pos_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            try:
+                pm = first.positions_group.layout().contentsMargins()
+                pos_lbl.setContentsMargins(pm.left(), 0, 0, 0)
+            except Exception:
+                pass
+            pos_lbl.setFixedWidth(first.positions_group.sizeHint().width())
+
+            header_grid.addWidget(occ_lbl, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            header_grid.addWidget(pos_lbl, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            self.container_layout.insertWidget(0, header)
+
+        # Spacer to consume remaining space
+        spacer = QWidget(self.container)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.container_layout.addWidget(spacer)
+
+    def _capture_payloads(self) -> Dict[str, list[Dict[str, Any]]]:
+        return [ w.resulting_payload() for w in self._letter_widgets ]
+
+    def _break_site(self, payload) -> None:
+        # Split a multi-position letter into independent subsites letter.1, letter.2, ...
+
+        payloads = self._capture_payloads()
+        labels = {p['label'] for p in payloads}
+        out = []
+
+        for idx, p in enumerate(payloads):
+            if p is payload:
+                out = payloads[:idx]
+
+            for i,pos in enumerate(payload['positions']):
+                index = payload.pop('index', None)
+                add = payload.copy()
+                template = f"{payload['label']}.{i+1}"
+                label = template
+                j=1
+                while label in labels:
+                    label = f"{template}.{j}"
+                    j+=1
+                add['label'] = label
+                add['positions'] = pos
+                if index is not None:
+                    add['origin'] = [ index[i] ]
+                out.append( add )
+            out.extend( payloads[idx+1:] )
+        else:
+            raise ValueError("Payload to break not found in current payloads.")
+
+        self._build_site_rows(out)
+        self._update_ok_state()
+        self._draw_preview()
+
+    def _site_validation_changed(self, label, message) -> None:
+        self._update_ok_state()
+        self._set_site_error(label, message)
+
+    def _update_ok_state(self) -> None:
+        ok = bool(self._letter_widgets) and all(w.is_valid() for w in self._letter_widgets)
+        self.ok_btn.setEnabled(ok)
+
+    def _on_ok(self) -> None:
+        # Validate rows first
+        if not all(w.is_valid() for w in self._letter_widgets):
+            return
+
+        pos_blocks: list[np.ndarray] = []
+        kinds: list[int] = []
+        symbols = []
+        labels = []
+        occupancy: Dict[int, Dict[Any, float]] = {}
+        payloads = self._capture_payloads()
+        start = 0
+
+        changed = False
+
+        atoms = self._atoms
+        sprkkr = isinstance(atoms,SPRKKRAtoms)
+
+        regions = []
+        if sprkkr:
+            for r in atoms.regions:
+                regions.append((r, set(r.ids()), []))
+
+        for kind, payload in enumerate(payloads):
+            cart = np.dot(payload['positions'], self._cell)
+            ln = len(cart)
+            pos_blocks.append(cart)
+            kinds.extend([kind] * ln)
+            occs = payload['occupancy']
+            occupancy[str(kind)] = occs
+            symbol = next(iter(occs.keys()), 'X')
+
+            o = payload.get('index')
+            if not changed:
+                if o is None or len(o) != ln or not np.all( np.arange(start, start+ln) == o ):
+                    changed = True
+
+            if regions is not None:
+                origins = o if o is not None else payload.get('origin')
+                if origins is None:
+                    regions = None
+                else:
+                    for i,origin in enumerate(origins):
+                        for r, ids, new in regions:
+                            if origin in ids:
+                                new.append(start+i)
+            start += ln
+            occs = payload['occupancy']
+            symbols.extend( [symbol] * ln )
+            labels.extend( f"{payload['label']}.{i}" for i in range(1,ln+1) )
+
+        if changed:
+            piter = iter(payloads)
+            p = next(piter)
+            o = p['index']
+            pos = p['positions']
+            if o is not None and len(o) == len(pos):
+                new = atoms[p['index']]
+            else:
+                new = Atoms(positions=pos, cell=self._cell, pbc=True)
+            for p in piter:
+                o = p['index']
+                pos = p['positions']
+                if o is not None and len(o) == len(pos):
+                    new += atoms[p['index']]
+                else:
+                    new += atoms(positions=pos)
+            atoms = new
+            sprkkr = False
+
+        if sprkkr:
+            if atoms.are_sites_inited():
+                del atoms.sites
+            if regions:
+                for r, ids, new in regions:
+                    r.copy_for_atoms(atoms, new)
+
+        atoms.cell = self._cell
+        atoms.symbols = symbols
+        atoms.set_array('spacegroup_kinds', np.asarray(kinds, dtype=int))
+        atoms.set_array('labels', np.asarray(labels, dtype=object))
+        atoms.positions = np.vstack(pos_blocks)
+        atoms.info['occupancy'] = occupancy
+        self._result = atoms
+        self.accept()
+
+    def _on_back(self) -> None:
+        self._result = 'back'
+        self.done(42)
+
+    def _mark_active(self, label: str, index:int=None, force=False) -> None:
+        # Avoid redraw if the letter stays the same
+        if not force and (label, index) == self._active_letter:
+            return
+        self._active_letter = (label, index)
+        self._draw_preview()
+
+    def _on_lattice_vector_changed(self, value: float) -> None:
+        """Handle changes to lattice vector spinboxes."""
+        # Build new cell from spinbox values
+        for i in range(3):
+            for j in range(3):
+                self._cell[i, j] = self.lattice_spinboxes[i][j].value()
+
+        # Redraw visualization
+        self._draw_preview()
+
+    def _draw_preview(self) -> None:
+        self.ax.clear()
+        lattice = self._cell
+        plot_lattice(self.ax, lattice)
+
+        # collect other vs active positions
+        others = []
+        active = []
+        label, index = self._active_letter
+
+        for w in self._letter_widgets:
+            if label == w.label:
+                if index is not None:
+                    active.append( w.payload['positions'][index:index+1] )
+                    others.append( w.payload['positions'][:index] )
+                    others.append( w.payload['positions'][index+1:] )
+                    continue
+                to = active
+            else:
+                to = others
+            to.append(w.payload['positions'])
+        if others:
+            plot_sites_in_lattice(self.ax, lattice, np.vstack(others), role='inactive')
+        if active:
+            plot_sites_in_lattice(self.ax, lattice, np.vstack(active), role='active')
+        self.canvas.draw()
+
+    # ---- error aggregation helpers ----
+    def _set_site_error(self, letter: str, message: Optional[str]) -> None:
+        if message:
+            self._site_errors[letter] = message
+        else:
+            self._site_errors.pop(letter, None)
+        self._update_error_label()
+
+    def _update_error_label(self) -> None:
+        self.error_label.setText("\n".join(self._site_errors.values()))
+
+
+def select_site_elements(atoms:Atoms, parent: Optional[QWidget] = None,
+                         back: bool = False) -> Optional[Atoms] | str:
+    """
+    PyQt6 element assignment dialog.
+
+        Returns an ase.Atoms instance with:
+            - positions in Cartesian coordinates
+            - symbols
+            - array 'spacegroup_kinds' (int per atom; a->0, b->1, ...)
+            - array 'occupancy' (object array per atom: dict[AtomicType, float])
+            - array 'labels' (str per atom: site labels like 'a', 'b.1', ...)
+        Or 'back' or None.
+    """
+    key = parent if parent is not None else _DEFAULT_KEY
+    dlg = _DIALOGS.get(key)
+    if dlg is None:
+        dlg = ElementAssignmentDialog(parent, back=back)
+        _DIALOGS[key] = dlg
+    else:
+        dlg._allow_back = bool(back)
+
+    dlg.setup(atoms)
+    code = dlg.exec()
+    if code == 42:
+        return 'back'
+    if code == QDialog.DialogCode.Accepted:
+        return dlg._result
+    return None

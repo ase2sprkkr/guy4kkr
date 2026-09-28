@@ -8,10 +8,7 @@ from ase import Atoms
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem
 
-from guy4ase.gui.online_structure_dialog import (
-    _DOWNLOADED_ROLE,
-    OnlineStructureDialog,
-)
+from guy4ase.gui.dialogs.structures.online_database import _DOWNLOADED_ROLE, OnlineStructureDialog
 from guy4ase.online_databases import (
     DownloadedStructure,
     ProviderCapabilities,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from PyQt6.QtWidgets import QApplication
 
-from .gui.workflow_window import WorkflowWindow
+from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 
 
 def main() -> int:

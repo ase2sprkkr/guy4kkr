@@ -5,8 +5,8 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.spacegroup_selector import SpaceGroupSelectorDialog
-from guy4ase.gui.structure_database_dialog import StructureDatabaseDialog
+from guy4ase.gui.dialogs.structures.spacegroup_selector import SpaceGroupSelectorDialog
+from guy4ase.gui.dialogs.structures.database import StructureDatabaseDialog
 from guy4ase.physics.structure_database import load_structure_database
 
 

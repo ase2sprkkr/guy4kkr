@@ -7,7 +7,7 @@ from ase import Atoms
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from guy4ase.gui.workflow_window import WorkflowWindow
+from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 
 
 def _action_title(widget):

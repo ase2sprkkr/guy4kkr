@@ -1,0 +1,114 @@
+import os
+
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
+
+import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QLineEdit
+from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
+from guy4ase.gui.dialogs.expert_input import InputParametersDialog
+from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
+
+
+@pytest.fixture
+def application():
+    return QApplication.instance() or QApplication([])
+
+
+def erase(control):
+    control.setFocus()
+    control.selectAll()
+    QTest.keyClick(control, Qt.Key.Key_Backspace)
+
+
+@pytest.mark.parametrize('task', ['scf', 'bsf'])
+@pytest.mark.parametrize('path,value', [(('MODE', 'MALF'), .25), (('TAU', 'IQCNTR'), 2),
+                                      (('ENERGY', 'EMINEV'), -3.)])
+def test_guided_delete_number_unsets_and_undo_restores(application, task, path, value):
+    parameters = InputParameters.create(task)
+    parameters.TAU.CLUSTER.set(True)
+    parameters[path[0]][path[1]].set(value)
+    dialog = GuidedInputParametersDialog(task, parameters)
+    editor = dialog.editors_for(path)[0]
+    dialog.select_page(editor.page_id)
+    if editor in dialog._detail_toggles:
+        dialog._detail_toggles[editor].setChecked(True)
+    dialog.show()
+    application.processEvents()
+    assert editor.control.isEnabled()
+    control = editor.control.number if isinstance(editor.control, EnergyEditor) else editor.control
+    erase(control)
+    dialog.directory_edit.setFocus()
+    application.processEvents()
+    assert dialog.session.value(path) is None
+    if not isinstance(editor.control, EnergyEditor):
+        assert editor.control.text() == 'Not set'
+    else:
+        # The relative value is cleared; the unified field now shows the
+        # task's effective absolute default, rather than hiding that default.
+        assert not editor.control.relative.isChecked()
+    dialog.undo_button.click()
+    application.processEvents()
+    assert dialog.session.value(path) == value
+    dialog.redo_button.click()
+    application.processEvents()
+    assert dialog.session.value(path) is None
+    dialog.close()
+
+
+@pytest.mark.parametrize('task', ['scf', 'bsf'])
+@pytest.mark.parametrize('section,name,value', [('MODE', 'MALF', .25), ('TAU', 'IQCNTR', 2),
+                                              ('TAU', 'NSHLCLU', 2),
+                                              ('ENERGY', 'EMINEV', -3.)])
+def test_expert_delete_number_unsets(application, task, section, name, value):
+    parameters = InputParameters.create(task)
+    parameters[section][name].set(value)
+    dialog = InputParametersDialog(parameters)
+    tree_name = 'EMIN / EMINEV' if name == 'EMINEV' else name
+    item, = dialog._tree.findItems(tree_name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+    control = dialog._tree.itemWidget(item, 2)
+    energy = control if isinstance(control, EnergyEditor) else None
+    control = energy.number if energy else control
+    dialog.show()
+    dialog._tree.scrollToItem(item)
+    application.processEvents()
+    erase(control)
+    dialog._filter_edit.setFocus()
+    application.processEvents()
+    assert parameters[section][name]() is None
+    if energy is None:
+        assert (control.placeholderText() if isinstance(control, QLineEdit) else control.text()) == 'Not set'
+    else:
+        assert not energy.relative.isChecked()
+    dialog.close()
+
+
+def test_expert_required_text_cannot_silently_become_unset(application):
+    parameters = InputParameters.create('scf')
+    parameters.CONTROL.POTFIL.set('Fe.pot')
+    dialog = InputParametersDialog(parameters)
+    item, = dialog._tree.findItems('POTFIL', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+    control = dialog._tree.itemWidget(item, 2)
+    control.clear()
+    control.editingFinished.emit()
+    assert parameters.CONTROL.POTFIL() == 'Fe.pot'
+    assert 'must have a value' in control.toolTip()
+    assert control.text() == ''
+    dialog.close()
+
+
+def test_expert_empty_optional_array_unsets(application):
+    parameters = InputParameters.create('scf')
+    parameters.MODE.OP.set('LDA+U')
+    parameters.MODE.LOPT.set(['d'])
+    dialog = InputParametersDialog(parameters)
+    item, = dialog._tree.findItems('LOPT', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+    control = dialog._tree.itemWidget(item, 2)
+    control.clear()
+    control.editingFinished.emit()
+    assert parameters.MODE.LOPT() is None
+    dialog.close()

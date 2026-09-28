@@ -4,38 +4,36 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
-from guy4ase.gui.parameter_tooltips import parameter_tooltip
-from guy4ase.gui.scf_parameters_dialog import GuidedScfParametersDialog
-from guy4ase.gui.task_parameters_dialog import GuidedTaskParametersDialog
+from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
+from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
 
 
-def _label_with_tooltip(dialog, parameter_name):
-    return next(
-        label
-        for label in dialog.findChildren(QLabel)
-        if parameter_name in label.toolTip()
+def _dialog(task):
+    parameter_task = task
+    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    return GuidedInputParametersDialog(
+        task,
+        InputParameters.create(parameter_task),
+        atoms=atoms,
     )
 
 
 def test_scf_fields_show_real_name_and_ase2sprkkr_help():
     application = QApplication.instance() or QApplication([])
-    params = InputParameters.create("scf")
-    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    dialog = GuidedScfParametersDialog(params, atoms)
+    dialog = _dialog("scf")
 
-    for (section, option), editor in dialog._rows:
-        parameter_name = f"{section}.{option}"
+    for editor in dialog._editors:
+        parameter_name = ".".join(editor.path)
         assert parameter_name in editor.toolTip()
-        assert parameter_name in _label_with_tooltip(
-            dialog,
-            parameter_name,
-        ).toolTip()
-    assert "SPR-KKR parameter: SCF.NITER" in dialog._niter.toolTip()
-    assert "Maximal number of iterations of the SCF cycle" in dialog._niter.toolTip()
+        assert parameter_name in dialog._labels_by_path[editor.path][0].toolTip()
+
+    niter = dialog.editors_for(("SCF", "NITER"))[0]
+    assert "SPR-KKR parameter: SCF.NITER" in niter.toolTip()
+    assert "Maximal number of iterations of the SCF cycle" in niter.toolTip()
 
     dialog.close()
     application.processEvents()
@@ -45,18 +43,14 @@ def test_all_task_fields_show_real_parameter_name_on_editor_and_label():
     application = QApplication.instance() or QApplication([])
 
     for task in ("dos", "xas", "arpes", "bsf", "jxc"):
-        parameter_task = "bsfek" if task == "bsf" else task
-        dialog = GuidedTaskParametersDialog(
-            task,
-            InputParameters.create(parameter_task),
-        )
-        for section, option, editor in dialog._editors:
-            parameter_name = f"{section}.{option}"
+        dialog = _dialog(task)
+        for editor in dialog._editors:
+            parameter_name = ".".join(editor.path)
             assert parameter_name in editor.toolTip()
-            assert parameter_name in _label_with_tooltip(
-                dialog,
-                parameter_name,
-            ).toolTip()
+            assert any(
+                parameter_name in label.toolTip()
+                for label in dialog._labels_by_path[editor.path]
+            )
         dialog.close()
 
     application.processEvents()
@@ -77,14 +71,12 @@ def test_generic_help_is_not_mistaken_for_parameter_documentation():
 
 def test_bsf_path_controls_share_kpath_tooltip():
     application = QApplication.instance() or QApplication([])
-    dialog = GuidedTaskParametersDialog(
-        "bsf",
-        InputParameters.create("bsfek"),
-    )
+    dialog = _dialog("bsf")
 
-    assert "TASK.KPATH" in dialog._predefined_path.toolTip()
-    assert "Predefined path in k-space" in dialog._predefined_path.toolTip()
-    assert "TASK.KPATH" in dialog._path_label.toolTip()
+    for editor in dialog.editors_for(("TASK", "KPATH")):
+        assert "TASK.KPATH" in editor.path_combo.toolTip()
+        assert "Predefined path in k-space" in editor.path_combo.toolTip()
+        assert "TASK.KPATH" in editor.path_summary.toolTip()
 
     dialog.close()
     application.processEvents()
