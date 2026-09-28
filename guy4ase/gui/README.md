@@ -66,6 +66,31 @@ and `input_parameters.bsf`. A widget requests modal K-path editing via a signal;
 the guided dialog owns the modal operation and its parent window. Shared group
 selection uses stable IDs, never translated/user-facing titles.
 
+### Conditional guided fields
+
+Presentation rules live beside a task's field declarations and receive a
+Qt-independent `PresentationContext`. Keep them as named functions when they
+express domain meaning:
+
+```python
+def broyden_enabled(context: PresentationContext) -> bool:
+    return context.value("SCF", "ALG") == "BROYDEN2"
+
+GroupSpec("Potential mixing", (
+    ALG,
+    field("SCF", "ISTBRY", "Start Broyden after:", "integer",
+          enabled_when=broyden_enabled),
+))
+```
+
+Fields support `visible_when`, `enabled_when`, `label_when`, `tooltip_when`,
+`disabled_reason_when` and `required_when`. Groups support visibility, dynamic
+titles and notes. Use `layout="paired"` for a two-column group and `GroupSpec.id`
+for stable programmatic identity; displayed titles are not identifiers. Rules
+must only inspect the context. They must not mutate `InputParameters` or invoke
+Qt code—the renderer reapplies them after every session replacement, including
+Undo/Redo, loaded input and accepted expert edits.
+
 The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
 absolute/relative option mapping lives in `input_parameters.energy`.
 `RelativisticScalingEditor` edits global and per-atomic-type `MODE.C`/`MODE.SOC`;

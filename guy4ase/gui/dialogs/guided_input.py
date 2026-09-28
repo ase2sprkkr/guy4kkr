@@ -32,16 +32,17 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
-from guy4ase.gui.input_parameters.bsf import EK, bsf_mode
-from guy4ase.gui.input_parameters.session import SPLIT_SWITCHES, InputParametersSession
+from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
     FieldPlacement,
     FieldRole,
+    GroupSpec,
     PageSpec,
+    PresentationContext,
     TaskDialogSpec,
 )
-from guy4ase.gui.input_parameters.tasks import prepare_parameters as _prepare_parameters
+from guy4ase.gui.input_parameters.tasks import new_parameters, prepare_parameters as _prepare_parameters
 from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.misc.colors import blend as _blend
 from guy4ase.gui.misc.resources import icon_path
@@ -88,15 +89,17 @@ class GuidedInputParametersDialog(QDialog):
         self._navigation_tints: dict[str, QColor] = {}
         self._detail_toggles: dict[ParameterEditor, QToolButton] = {}
         self._field_widgets = {}
-        self._conditional_groups = []
-        self._group_notes = {}
+        self._group_views: list[tuple[GroupSpec, QGroupBox, QToolButton | None, QLabel | None]] = []
+        self._group_notes_by_id: dict[str, QLabel] = {}
+        self._editor_errors: dict[ParameterEditor, str] = {}
+        self._rule_errors: dict[tuple[InputParameterPath, int | None], str] = {}
 
         self.setWindowTitle(self.spec.title)
         self.resize(980, 700)
         self._build_ui()
         self._connect_session()
+        self._apply_presentation()
         self._update_all_statuses()
-        self._update_dynamic_state()
 
     def _validate_spec(self, parameters: InputParameters) -> None:
         """Check field ownership and option existence, not the input values' validity."""
@@ -112,14 +115,10 @@ class GuidedInputParametersDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        intro = QLabel(
+        intro = QLabel(self.spec.intro or (
             "Configure the most useful task parameters. Quick setup mirrors a small selection "
             "from the detailed categories; all remaining parameters are available in Expert settings."
-        )
-        if self.task == "scf" and _is_2d(self.atoms):
-            intro.setText(
-                intro.text() + " One SCF run for a 2D system converges the bulk regions and then the interaction zone."
-            )
+        ))
         intro.setWordWrap(True)
         root.addWidget(intro)
 
@@ -221,8 +220,8 @@ class GuidedInputParametersDialog(QDialog):
         layout.setSpacing(12)
         for group_spec in page.groups:
             group = QGroupBox("" if group_spec.collapsed else group_spec.title, content)
-            if group_spec.special and group_spec.special.startswith("bsf_"):
-                self._conditional_groups.append((group_spec.special, group))
+            if group_spec.id:
+                group.setObjectName(group_spec.id)
             group_tint = _blend(background, QColor(page.color), .08 if background.lightness() > 128 else .16)
             border = _blend(self.palette().mid().color(), QColor(page.color), .25)
             group.setStyleSheet(
@@ -249,7 +248,7 @@ class GuidedInputParametersDialog(QDialog):
                 group_layout.addWidget(toggle)
                 fields.hide()
             group_layout.addWidget(fields)
-            paired = group_spec.special == "energy_grids"
+            paired = group_spec.layout == "paired"
             grid.setColumnMinimumWidth(0, EDITOR_WIDTH if paired else LABEL_WIDTH)
             grid.setColumnMinimumWidth(1, EDITOR_WIDTH)
             grid.setColumnStretch(0, 0)
@@ -265,12 +264,14 @@ class GuidedInputParametersDialog(QDialog):
                     self._add_field(grid, row, page, placement)
                 if toggle is not None:
                     self._detail_toggles[self._editors[-1]] = toggle
-            if group_spec.note:
-                note = QLabel(group_spec.note, fields)
+            note = None
+            if group_spec.note or group_spec.note_when:
+                note = QLabel(group_spec.note or "", fields)
                 note.setWordWrap(True)
                 grid.addWidget(note, len(group_spec.fields), 0, 1, 3)
-                if group_spec.special:
-                    self._group_notes[group_spec.special] = note
+                if group_spec.id:
+                    self._group_notes_by_id[group_spec.id] = note
+            self._group_views.append((group_spec, group, toggle, note))
             layout.addWidget(group)
         layout.addStretch(1)
         scroll.setWidget(content)
@@ -291,7 +292,10 @@ class GuidedInputParametersDialog(QDialog):
             atoms=self.atoms,
             parent=self,
         )
-        editor.validationChanged.connect(self._editor_validation_changed)
+        editor.validationChanged.connect(
+            lambda path, page_id, message, source=editor:
+            self._editor_validation_changed(source, path, page_id, message)
+        )
         editor.pathEditRequested.connect(lambda: self._edit_kpath(editor))
         self._editors.append(editor)
         for path in placement.paths:
@@ -385,9 +389,9 @@ class GuidedInputParametersDialog(QDialog):
             return
 
     def _parameters_replaced(self) -> None:
-        self._errors = {editor.path: editor._error for editor in self._editors if editor._error}
+        self._editor_errors = {editor: editor._error for editor in self._editors if editor._error}
+        self._apply_presentation()
         self._update_all_statuses()
-        self._update_dynamic_state()
 
     def _update_history_buttons(self, *_args: Any) -> None:
         stack = self.session.undo_stack
@@ -426,115 +430,115 @@ class GuidedInputParametersDialog(QDialog):
             self._navigation_labels[page.id].setText(text)
         self._update_history_buttons()
 
-    def _editor_validation_changed(self, path: InputParameterPath, _page_id: str, message: str) -> None:
+    def _editor_validation_changed(
+        self,
+        editor: ParameterEditor,
+        path: InputParameterPath,
+        _page_id: str,
+        message: str,
+    ) -> None:
         if message:
-            self._errors[path] = message
+            self._editor_errors[editor] = message
         else:
-            self._errors.pop(path, None)
-            if self.task == "bsf":
-                # A syntactically valid unset value can still be required by
-                # the selected BSF geometry (e.g. clearing K1).
-                self._update_bsf_state()
+            self._editor_errors.pop(editor, None)
+        self._apply_presentation()
         self._update_all_statuses()
 
-    def _update_dynamic_state(self) -> None:
-        """Update task-dependent visibility and enablement without clearing inactive values."""
-        if self.task not in {"scf", "bsf"}:
-            return
-        value = lambda section, name: self.session.value((section, name))
+    @staticmethod
+    def _missing(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        try:
+            return len(value) == 0
+        except TypeError:
+            return False
 
-        def enable(paths, enabled, reason=None):
-            for path in paths:
-                for editor in self._editors_by_path.get(path, ()):
-                    editor.set_parameter_enabled(enabled, reason)
-                    if reason is not None:
-                        self._field_widgets[editor][0].setToolTip(editor.toolTip())
-                for label in self._labels_by_path.get(path, ()):
-                    label.setEnabled(enabled)
+    def _placement_value(self, placement: FieldPlacement, path: InputParameterPath) -> Any:
+        value = self.session.value(path)
+        index = placement.index if path == placement.path else None
+        if index is None:
+            return value
+        try:
+            return value[index]
+        except (IndexError, TypeError):
+            return None
 
-        if self.task == "scf":
-            enable((("SCF", "ISTBRY"), ("SCF", "ITDEPT")), value("SCF", "ALG") == "BROYDEN2")
-        cluster = bool(value("TAU", "CLUSTER") or value("TAU", "MOL")
-                       or value("TAU", "BZINT") == "CLUSTER")
-        representation = value("TAU", "KKRMODE") or "STANDARD"
-        bzint = value("TAU", "BZINT")
-        enable((("TAU", "BZINT"),), not bool(value("TAU", "CLUSTER") or value("TAU", "MOL")))
-        enable(tuple(("TAU", name) for name in ("NKTAB", "NKTAB2D", "NKTAB3D")),
-               not cluster and bzint == "POINTS")
-        enable((("TAU", "NKMIN"), ("TAU", "NKMAX")), not cluster and bzint == "WEYL")
-        enable((("TAU", "NSHLCLU"), ("TAU", "CLURAD")),
-               cluster or representation in {"TB", "IMPURITY"},
-               'Choose TB or IMPURITY under "KKR representation", enable "Use cluster mode" '
-               'or "Molecular calculation", or select CLUSTER under "BZ integration" on this page.')
-        cluster_reason = ('Enable "Use cluster mode" or "Molecular calculation", or select CLUSTER '
-                          'under "BZ integration" on this page. TB / IMPURITY alone does not enable these fields.')
-        enable(tuple(("TAU", name) for name in ("IQCNTR", "ITCNTR", "NLOUT")), cluster, cluster_reason)
-        if cluster:
-            cluster_note = "Cluster settings are active. Set the extent using shells or radius."
-        elif representation in {"TB", "IMPURITY"}:
-            cluster_note = (f"{representation}: shells and radius are active. Centre and angular cutoff are disabled. "
-                            + cluster_reason)
-        else:
-            cluster_note = (f"Disabled: {representation} with BZ integration {bzint} does not use these cluster settings. "
-                            'Enable "Use cluster mode" or "Molecular calculation", or select CLUSTER under '
-                            '"BZ integration" above. Choose TB / IMPURITY under "KKR representation" '
-                            'to enable shells and radius only.')
-        self._group_notes["cluster_extent"].setText(cluster_note)
-        enable(tuple(("STRCONST", name) for name in ("ETA", "RMAX", "GMAX")),
-               not cluster and representation == "STANDARD")
-        magnetic = not value("CONTROL", "NONMAG")
-        enable(tuple(("MODE", name) for name in ("MDIR", "MALF", "MBET", "MGAM"))
-               + (("SCF", "MSPIN"),), magnetic)
-        op = value("MODE", "OP")
-        beyond_dft = op not in (None, "NONE")
-        enable((("MODE", "LOPT"), ("SCF", "MIXOP")), beyond_dft)
-        enable(tuple(("MODE", name) for name in ("IEREF", "UMODE", "UEFF", "JEFF")), op == "LDA+U")
-        enable((("MODE", "EREF"),), op == "LDA+U" and str(value("MODE", "IEREF")) == "-1")
+    def _rebuild_errors(self) -> None:
+        errors: dict[InputParameterPath, str] = {}
+        for editor, message in self._editor_errors.items():
+            if message:
+                errors.setdefault(editor.path, message)
+        for (path, _index), message in self._rule_errors.items():
+            errors.setdefault(path, message)
+        self._errors = errors
 
-        split = any(bool(self.session.value(path)) for path in SPLIT_SWITCHES)
-        for path in (("ENERGY", "GRID"), ("ENERGY", "NE")):
-            count = len(self.session.value(path))
-            for editor in self._editors_by_path.get(path, ()):
-                if editor.placement.index == 1:
-                    editor.set_parameter_enabled(split)
-                    self._field_widgets[editor][0].setEnabled(split)
-            if split and count != 2:
-                self._errors[path] = "A separate single-site contour requires two values. Set its mesh on the Energy page."
-        if self.task == "bsf":
-            self._update_bsf_state()
-        self._update_all_statuses()
+    def _update_field_tooltip(self, editor: ParameterEditor) -> None:
+        widgets = self._field_widgets[editor]
+        tooltip = editor.toolTip()
+        if editor.placement.role is FieldRole.MIRROR:
+            primary_id = self._primary_pages[editor.path]
+            primary_title = self.spec.pages[self._page_indexes[primary_id]].title
+            tooltip += f"\n\nPrimary location: {primary_title}"
+        widgets[0].setToolTip(tooltip)
 
-    def _update_bsf_state(self) -> None:
-        ek = bsf_mode(self.session.working_parameters) == EK
-        custom = self.session.value(("TASK", "KPATH")) is None
-        for special, group in self._conditional_groups:
-            group.setVisible({"bsf_ek": ek, "bsf_kk": not ek,
-                              "bsf_vectors": not ek or custom}[special])
-            if special == "bsf_vectors":
-                group.setTitle("Custom path" if ek else "K–k plane")
-        for editor, widgets in self._field_widgets.items():
-            path = editor.path
-            visible = True
-            if path in (("TASK", "KPATH"), ("TASK", "NK"), ("TASK", "KE"),
-                        ("ENERGY", "EMAX"), ("ENERGY", "EMAXEV")):
-                visible = ek
-            if path in tuple(("TASK", name) for name in ("NK1", "NK2", "K1", "K2")):
-                visible = not ek
+    def _apply_presentation(self) -> None:
+        """Render declarative rules without modifying parameters or history."""
+        # Rules receive a detached snapshot. Even an accidentally impure rule
+        # therefore cannot mutate the session or create an untracked change.
+        context = PresentationContext(self.session.result(), self.atoms)
+        rule_errors: dict[tuple[InputParameterPath, int | None], str] = {}
+
+        for spec, group, toggle, note in self._group_views:
+            visible = spec.visible_when(context) if spec.visible_when else True
+            group.setVisible(bool(visible))
+            title = spec.title_when(context) if spec.title_when else spec.title
+            if toggle is None:
+                group.setTitle(title)
+            else:
+                toggle.setText(title)
+            if note is not None:
+                note.setText(spec.note_when(context) if spec.note_when else spec.note or "")
+
+        for editor in self._editors:
+            spec = editor.placement
+            widgets = self._field_widgets[editor]
+            visible = spec.visible_when(context) if spec.visible_when else True
             for widget in widgets:
-                widget.setVisible(visible)
-            if path == ("TASK", "KA"):
-                widgets[0].setText("Path segments (2π/a):" if ek else "Plane origin KA (2π/a):")
-                editor.set_parameter_enabled(not ek or custom)
-            elif path == ("TASK", "KE"):
-                editor.set_parameter_enabled(ek and custom)
-            elif path == ("ENERGY", "EMIN"):
-                widgets[0].setText("Minimum energy:" if ek else "Fixed energy:")
-        required = ("NK1", "NK2", "K1", "K2") if not ek else (("KA", "KE") if custom else ())
-        for name in required:
-            path = ("TASK", name)
-            if self.session.value(path) is None:
-                self._errors[path] = f"TASK.{name} is required for this BSF geometry."
-        self._update_all_statuses()
+                widget.setVisible(bool(visible))
+
+            enabled = spec.enabled_when(context) if spec.enabled_when else True
+            reason = spec.disabled_reason_when(context) if not enabled and spec.disabled_reason_when else None
+            editor.set_parameter_enabled(bool(enabled), reason)
+            widgets[0].setEnabled(bool(enabled))
+            for widget in widgets[2:]:
+                widget.setEnabled(bool(enabled))
+
+            label = spec.label_when(context) if spec.label_when else spec.label
+            widgets[0].setText(label)
+            editor.setAccessibleName(label.rstrip(":"))
+            help_text = spec.tooltip_when(context) if spec.tooltip_when else ""
+            editor.set_presentation_help(help_text)
+            self._update_field_tooltip(editor)
+
+            if spec.required_when and spec.required_when(context):
+                for path in spec.paths:
+                    if not self._missing(self._placement_value(spec, path)):
+                        continue
+                    message = spec.required_message
+                    if callable(message):
+                        message = message(context)
+                    rule_errors[(path, spec.index if path == spec.path else None)] = (
+                        message or f"{'.'.join(path)} is required for the selected settings."
+                    )
+
+        self._rule_errors = rule_errors
+        self._rebuild_errors()
+
+    def group_note(self, group_id: str) -> QLabel:
+        """Return a group's note widget for UI tests and accessibility checks."""
+        return self._group_notes_by_id[group_id]
 
     def _select_page_index(self, index: int) -> None:
         if 0 <= index < self.pages.count():
@@ -702,11 +706,7 @@ def select_guided_input_parameters(
 ) -> tuple[InputParameters, str] | None:
     task = task.lower()
     spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
-    parameters = InputParameters.create(spec.parameter_task)
-    if task == "bsf":
-        # A new canonical BSF starts in KK mode (NE=1). Seed its required
-        # plane with XBand's initial choices; never replace imported geometry.
-        parameters.TASK.set({"NK1": 60, "NK2": 60, "K1": [1., 0., 0.], "K2": [0., 1., 0.]})
+    parameters = new_parameters(spec.parameter_task)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,

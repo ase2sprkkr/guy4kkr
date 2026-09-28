@@ -106,6 +106,7 @@ class ParameterEditor(QWidget):
         self._refreshing = False
         self._error = ""
         self._disabled_reason = ""
+        self._presentation_help = ""
         self._null_sentinel: float | int | None = None
         self._value_type = self.session.option(self.path)._definition.type
         self._nullable = True  # Clearing resets to the backend default, or unsets.
@@ -518,6 +519,8 @@ class ParameterEditor(QWidget):
 
     def _update_tooltip(self) -> None:
         tooltip = self._base_tooltip
+        if self._presentation_help:
+            tooltip += f"\n\n{self._presentation_help}"
         if self._disabled_reason:
             tooltip += f"\n\nDisabled: {self._disabled_reason}"
         if self._error:
@@ -529,4 +532,9 @@ class ParameterEditor(QWidget):
         """Disable interaction with an explanation, retaining the underlying value."""
         self.control.setEnabled(enabled)
         self._disabled_reason = "" if enabled else reason or ""
+        self._update_tooltip()
+
+    def set_presentation_help(self, text: str | None) -> None:
+        """Add rule-derived help without replacing validation or option help."""
+        self._presentation_help = text or ""
         self._update_tooltip()

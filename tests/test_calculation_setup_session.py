@@ -519,7 +519,7 @@ def test_energy_grids_are_aligned_side_by_side(task):
 def test_cluster_disabled_explanation_tracks_partial_and_full_activation(task):
     application = QApplication.instance() or QApplication([])
     dialog = GuidedInputParametersDialog(task, InputParameters.create(task))
-    note = dialog._group_notes["cluster_extent"]
+    note = dialog.group_note("cluster_extent")
     radius = dialog.editors_for(("TAU", "CLURAD"))[0]
     centre = dialog.editors_for(("TAU", "IQCNTR"))[0]
     assert note.isEnabled()

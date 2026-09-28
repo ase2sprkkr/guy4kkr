@@ -1,7 +1,15 @@
 """Shared fields, colors and page groups for task definitions."""
 from dataclasses import replace
 
-from .schema import Choice, FieldPlacement, GroupSpec, PageSpec, field, main_energy_mesh_field
+from .schema import (
+    Choice,
+    FieldPlacement,
+    GroupSpec,
+    PageSpec,
+    PresentationContext,
+    field,
+    main_energy_mesh_field,
+)
 
 QUICK_COLOR = "#2878b8"
 MODEL_COLOR = "#27836b"
@@ -45,6 +53,96 @@ KKRMODE = field(
 GRID = main_energy_mesh_field("GRID", "Energy grid (contour):", "keyword", descriptions=True)
 
 
+def cluster_active(context: PresentationContext) -> bool:
+    """Whether SPR-KKR uses a real-space cluster rather than a periodic BZ."""
+    return bool(
+        context.value("TAU", "CLUSTER")
+        or context.value("TAU", "MOL")
+        or context.value("TAU", "BZINT") == "CLUSTER"
+    )
+
+
+def cluster_extent_enabled(context: PresentationContext) -> bool:
+    return cluster_active(context) or context.value("TAU", "KKRMODE") in {"TB", "IMPURITY"}
+
+
+def cluster_extent_reason(_context: PresentationContext) -> str:
+    return (
+        'Choose TB or IMPURITY under "KKR representation", enable "Use cluster mode" '
+        'or "Molecular calculation", or select CLUSTER under "BZ integration" on this page.'
+    )
+
+
+def cluster_centre_reason(_context: PresentationContext) -> str:
+    return (
+        'Enable "Use cluster mode" or "Molecular calculation", or select CLUSTER under '
+        '"BZ integration" on this page. TB / IMPURITY alone does not enable these fields.'
+    )
+
+
+def cluster_note(context: PresentationContext) -> str:
+    representation = context.value("TAU", "KKRMODE") or "STANDARD"
+    bzint = context.value("TAU", "BZINT")
+    if cluster_active(context):
+        return "Cluster settings are active. Set the extent using shells or radius."
+    if representation in {"TB", "IMPURITY"}:
+        return (
+            f"{representation}: shells and radius are active. Centre and angular cutoff are disabled. "
+            + cluster_centre_reason(context)
+        )
+    return (
+        f"Disabled: {representation} with BZ integration {bzint} does not use these cluster settings. "
+        'Enable "Use cluster mode" or "Molecular calculation", or select CLUSTER under '
+        '"BZ integration" above. Choose TB / IMPURITY under "KKR representation" '
+        "to enable shells and radius only."
+    )
+
+
+def bz_integration_enabled(context: PresentationContext) -> bool:
+    return not bool(context.value("TAU", "CLUSTER") or context.value("TAU", "MOL"))
+
+
+def points_integration_enabled(context: PresentationContext) -> bool:
+    return not cluster_active(context) and context.value("TAU", "BZINT") == "POINTS"
+
+
+def weyl_integration_enabled(context: PresentationContext) -> bool:
+    return not cluster_active(context) and context.value("TAU", "BZINT") == "WEYL"
+
+
+def structure_constants_enabled(context: PresentationContext) -> bool:
+    return not cluster_active(context) and (context.value("TAU", "KKRMODE") or "STANDARD") == "STANDARD"
+
+
+def magnetic_enabled(context: PresentationContext) -> bool:
+    return not bool(context.value("CONTROL", "NONMAG"))
+
+
+def beyond_dft_enabled(context: PresentationContext) -> bool:
+    return context.value("MODE", "OP") not in (None, "NONE")
+
+
+def lda_u_enabled(context: PresentationContext) -> bool:
+    return context.value("MODE", "OP") == "LDA+U"
+
+
+def explicit_reference_energy_enabled(context: PresentationContext) -> bool:
+    return lda_u_enabled(context) and str(context.value("MODE", "IEREF")) == "-1"
+
+
+def single_site_mesh_enabled(context: PresentationContext) -> bool:
+    return bool(
+        context.value("ENERGY", "SPLITSS")
+        or context.value("CONTROL", "SPLITSS")
+        or context.value("CONTROL", "FSOHFF")
+        or str(getattr(context.parameters, "task_name", "")).upper() == "COMPTON"
+    )
+
+
+def single_site_mesh_reason(_context: PresentationContext) -> str:
+    return "Enable a separate single-site contour first."
+
+
 def _energy_grid_groups(ne: FieldPlacement) -> tuple[GroupSpec, ...]:
     return (
         GroupSpec("Single-site contribution", (
@@ -53,11 +151,23 @@ def _energy_grid_groups(ne: FieldPlacement) -> tuple[GroupSpec, ...]:
         ), note="Also required by CONTROL.FSOHFF. Disabled single-site settings are remembered until this dialog is closed. SPRKKR sets Im(E) to zero when SPLITSS is active."),
         GroupSpec("Energy grids", (
             replace(GRID, label="Main energy grid (contour):"),
-            replace(GRID, index=1, label="Single-site energy grid (contour):"),
+            replace(
+                GRID,
+                index=1,
+                label="Single-site energy grid (contour):",
+                enabled_when=single_site_mesh_enabled,
+                disabled_reason_when=single_site_mesh_reason,
+                required_when=single_site_mesh_enabled,
+                required_message="A separate single-site contour requires a grid value.",
+            ),
             ne,
             field("ENERGY", "NE", "Single-site energy points:", "integer",
-                  index=1, minimum=1, maximum=100000, nullable=True),
-        ), special="energy_grids"),
+                  index=1, minimum=1, maximum=100000, nullable=True,
+                  enabled_when=single_site_mesh_enabled,
+                  disabled_reason_when=single_site_mesh_reason,
+                  required_when=single_site_mesh_enabled,
+                  required_message="A separate single-site contour requires an energy-point value."),
+        ), layout="paired", id="energy_grids"),
     )
 
 

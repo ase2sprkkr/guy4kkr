@@ -80,6 +80,14 @@ def test_workflow_uses_the_expert_window_public_interface_only():
     assert "self._expert._" not in source
 
 
+def test_guided_renderer_has_no_task_specific_presentation_branches():
+    source = (GUI / "dialogs" / "guided_input.py").read_text()
+    assert "_update_bsf_state" not in source
+    assert "_update_dynamic_state" not in source
+    assert "bsf_mode" not in source
+    assert "SPLIT_SWITCHES" not in source
+
+
 def test_packages_and_specs_do_not_load_dialogs_or_qt():
     subprocess.run([sys.executable, "-c", """
 import sys

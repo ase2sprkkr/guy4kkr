@@ -1,11 +1,31 @@
 """Qt-independent declarations of fields, groups and wizard pages."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from guy4ase.gui.input_parameters.bindings import InputParameterPath
+from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
+
+
+@dataclass(frozen=True)
+class PresentationContext:
+    """Read-only inputs available to Qt-independent presentation rules."""
+
+    parameters: Any
+    atoms: Any = None
+
+    def value(self, section: str, option: str, *, default: Any = None) -> Any:
+        """Return an option value, or ``default`` when a task lacks the option."""
+        try:
+            return resolve_option(self.parameters, (section, option))(all_values=True)
+        except (AttributeError, KeyError):
+            return default
+
+
+Predicate = Callable[[PresentationContext], bool]
+TextRule = Callable[[PresentationContext], str]
 
 
 class FieldRole(Enum):
@@ -42,6 +62,13 @@ class FieldPlacement:
     index: int | None = None
     descriptions: bool = False
     related_paths: tuple[InputParameterPath, ...] = ()
+    visible_when: Predicate | None = None
+    enabled_when: Predicate | None = None
+    label_when: TextRule | None = None
+    tooltip_when: TextRule | None = None
+    disabled_reason_when: TextRule | None = None
+    required_when: Predicate | None = None
+    required_message: str | TextRule | None = None
 
     @property
     def paths(self):
@@ -50,13 +77,16 @@ class FieldPlacement:
 
 @dataclass(frozen=True)
 class GroupSpec:
-    """Group fields on a page; ``special`` selects dialog-specific group behavior."""
+    """A group and its optional parameter-driven presentation rules."""
     title: str
     fields: tuple[FieldPlacement, ...]
-    special: str | None = None
     collapsed: bool = False
     note: str | None = None
     id: str | None = None
+    layout: Literal["form", "paired"] = "form"
+    visible_when: Predicate | None = None
+    title_when: TextRule | None = None
+    note_when: TextRule | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +104,7 @@ class TaskDialogSpec:
     parameter_task: str
     title: str
     pages: tuple[PageSpec, ...]
+    intro: str | None = None
 
     def primary_pages(self) -> dict[InputParameterPath, str]:
         """Map paths to their owning page, validating primary/mirror placements.
