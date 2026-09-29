@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QColor, QIcon, QPalette
@@ -22,9 +22,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.dialogs.main_window import MainWindow
+from guy4ase.gui.flows.operations import GuiOperations
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
     SPACE_LG,
@@ -39,6 +39,9 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+
+if TYPE_CHECKING:
+    from guy4ase.gui.dialogs.main_window import MainWindow
 
 
 def _set_action_button_content(
@@ -119,16 +122,28 @@ class WorkflowWindow(QMainWindow):
         self.workspace = self.controller.workspace
         self.recent_history = RecentFiles()
         self.recent_history.load()
-        self._expert = MainWindow(self.controller, self.recent_history)
+        self.operations = GuiOperations(
+            self.controller, self.recent_history, parent=self
+        )
+        self._expert: MainWindow | None = None
         self._structure_kind: Optional[str] = None
 
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.resultChanged.connect(lambda _result: self._refresh())
+        self.operations.recentFilesChanged.connect(self._refresh)
         self._build_ui()
         self._refresh()
 
     @property
     def expert_window(self) -> MainWindow:
+        if self._expert is None:
+            from guy4ase.gui.dialogs.main_window import MainWindow
+
+            self._expert = MainWindow(
+                self.controller,
+                self.recent_history,
+                self.operations,
+            )
         return self._expert
 
     def _build_ui(self) -> None:
@@ -185,8 +200,8 @@ class WorkflowWindow(QMainWindow):
         )
         result_actions_layout.addWidget(result_actions_title)
         self._result_actions_widget = ResultActionsWidget(
-            lambda value, action: self._expert.execute_output_value_action(
-                value, action, parent=self
+            lambda value, action: self.operations.execute_output_value_action(
+                value, action, self
             ),
             show_values_without_actions=False,
             parent=self._result_actions,
@@ -516,46 +531,47 @@ class WorkflowWindow(QMainWindow):
 
     def _create_3d(self) -> None:
         self._structure_kind = "3d"
-        self._expert.create_structure()
+        self.operations.create_structure(self)
 
     def _create_from_database(self) -> None:
         self._structure_kind = "3d"
-        self._expert.create_structure_from_database()
+        self.operations.create_structure_from_database(self)
 
     def _download_structure(self) -> None:
         self._structure_kind = None
-        self._expert.download_structure()
+        self.operations.download_structure(self)
 
     def _create_surface(self) -> None:
         self._structure_kind = "3d"
-        self._expert.create_structure()
+        self.operations.create_structure(self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
         self._structure_kind = "3d"
-        self._expert.create_structure()
+        self.operations.create_structure(self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
         self._structure_kind = None
-        self._expert.load_structure()
+        self.operations.choose_structure(self)
 
     def _load_output(self) -> None:
         self._structure_kind = None
-        self._expert.load_sprkkr_output()
-        self._refresh()
+        self.operations.choose_output(self)
 
-    def _load_recent(self, kind: str, file_path: str) -> None:
+    def _load_recent(self, kind: RecentKind, file_path: str) -> None:
         self._structure_kind = None
-        self._expert.open_recent_file(kind, file_path)
+        self.operations.open_recent(kind, file_path, self)
         if self.workspace.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
         original_atoms = self.workspace.atoms
-        self._expert.build_2d_structure(surface_mode=surface_mode)
+        self.operations.build_2d_structure(
+            self, surface_mode=surface_mode
+        )
         if self.workspace.atoms is not None and self.workspace.atoms is not original_atoms:
             self._structure_kind = "2d"
         else:
@@ -564,7 +580,7 @@ class WorkflowWindow(QMainWindow):
 
     def _prepare_task(self, task: str) -> None:
         try:
-            self._expert.prepare_guided_task(task)
+            self.operations.prepare_guided_task(task, self)
         except (ImportError, ModuleNotFoundError) as exc:
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return
@@ -601,9 +617,10 @@ class WorkflowWindow(QMainWindow):
         self.controller.reset()
 
     def _open_expert_mode(self) -> None:
-        self._expert.show()
-        self._expert.raise_()
-        self._expert.activateWindow()
+        expert = self.expert_window
+        expert.show()
+        expert.raise_()
+        expert.activateWindow()
 
     @staticmethod
     def _scf_status(atoms: Any) -> Optional[str]:
@@ -619,5 +636,6 @@ class WorkflowWindow(QMainWindow):
         return status in {"CONVERGED", "SCF-CONVERGED", "DONE", "FINISHED"}
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        self._expert.close()
+        if self._expert is not None:
+            self._expert.close()
         super().closeEvent(event)

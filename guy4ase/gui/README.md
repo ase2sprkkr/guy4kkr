@@ -25,12 +25,17 @@
   primary/secondary action states. Semantic colors and layout remain with the
   window or task that owns their meaning; this is intentionally not a theme
   manager.
-- `application`: shared application state and orchestration, kept separate from
+- `application`: shared application state and document services, kept separate from
   Qt windows and reusable widgets. `application.workspace.WorkspaceState` is
   the Qt-independent current document. `application.workspace_controller`
   provides its single mutation/signalling boundary, and
   `application.recent_files` owns Qt-independent history persistence. Menus
   and other presentation state remain owned by the windows.
+- `flows`: shared Qt orchestration such as structure selection, file loading,
+  guided task setup, calculation windows and result actions. A flow may compose
+  leaf dialogs and update `application`, but it does not depend on
+  `MainWindow` or `WorkflowWindow`. Both window shells use the same
+  `GuiOperations` instance; Expert Mode is created lazily as another view.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat

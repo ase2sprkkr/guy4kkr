@@ -54,7 +54,10 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
     graph = _gui_graph()
     for module, targets in graph.items():
         if module.startswith("guy4ase.gui.widgets"):
-            assert not any(t.startswith("guy4ase.gui.dialogs") for t in targets), module
+            assert not any(
+                t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.flows"))
+                for t in targets
+            ), module
         if module.startswith("guy4ase.gui.input_parameters"):
             assert not any(t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.widgets")) for t in targets), module
         if module.startswith("guy4ase.gui.input_parameters.specs"):
@@ -82,10 +85,41 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
         visit(module, ())
 
 
-def test_workflow_uses_the_expert_window_public_interface_only():
-    """Workflow may share state, but must not reach into expert internals."""
+def test_workflow_uses_shared_operations_instead_of_expert_as_backend():
+    """Expert mode is another view, not Workflow's service object."""
     source = (GUI / "dialogs" / "workflow_window.py").read_text()
-    assert "self._expert._" not in source
+    tree = ast.parse(source)
+    workflow = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "WorkflowWindow"
+    )
+    constructor = next(
+        node
+        for node in workflow.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "MainWindow"
+        for node in ast.walk(constructor)
+    )
+    for operation in (
+        "create_structure",
+        "download_structure",
+        "load_structure",
+        "prepare_guided_task",
+        "build_2d_structure",
+        "execute_output_value_action",
+        "open_recent_file",
+    ):
+        assert f"self._expert.{operation}" not in source
+    assert "self.operations." in source
+
+    operations_source = (GUI / "flows" / "operations.py").read_text()
+    assert "dialogs.main_window" not in operations_source
+    assert "dialogs.workflow_window" not in operations_source
 
 
 def test_workspace_mutation_and_history_persistence_are_outside_main_window():

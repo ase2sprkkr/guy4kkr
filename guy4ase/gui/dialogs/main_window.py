@@ -4,15 +4,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ase.io import read as ase_read
 from ase.io import write as ase_write
-from ase2sprkkr.outputs.task_result import TaskResult
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
-    QDialog,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -40,22 +37,13 @@ from guy4ase.gui.dialogs.expert_input import (
     edit_input_parameters,
     select_input_parameters,
 )
-from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
-from guy4ase.gui.dialogs.object_view import show_readonly_object_dialog
-from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
-from guy4ase.gui.dialogs.structures.database import select_structure_prototype
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
-from guy4ase.gui.dialogs.structures.online_database import select_online_structure
-from guy4ase.gui.dialogs.structures.spacegroup_selector import (
-    select_spacegroup,
-    select_spacegroup_from_prototype,
-)
 from guy4ase.gui.dialogs.structures.transforms import (
     repeat_atoms,
     rotate_atoms,
     scale_atoms,
 )
-from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.gui.flows.operations import GuiOperations
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -67,6 +55,7 @@ class MainWindow(QMainWindow):
         self,
         controller: WorkspaceController | None = None,
         recent_files: RecentFiles | None = None,
+        operations: GuiOperations | None = None,
     ):
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -77,6 +66,9 @@ class MainWindow(QMainWindow):
         self.recent_history = recent_files or RecentFiles()
         if recent_files is None:
             self.recent_history.load()
+        self.operations = operations or GuiOperations(
+            self.controller, self.recent_history, parent=self
+        )
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -84,10 +76,8 @@ class MainWindow(QMainWindow):
         self._directory_label: Optional[QLabel] = None
         self._potential_path_label: Optional[QLabel] = None
         self._directory_choose_btn: Optional[QToolButton] = None
-        self._sprkkr_run_window: Optional[QWidget] = None
         self._result_group: Optional[QGroupBox] = None
         self._result_actions_widget: Optional[ResultActionsWidget] = None
-        self._open_result_dialogs: list[QDialog] = []
 
         self._recent_menus: Dict[str, Optional[QMenu]] = {
             'structure': None,
@@ -102,6 +92,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._connect_workspace()
+        self.operations.recentFilesChanged.connect(self._refresh_recent_menus)
         self._refresh_recent_menus()
         self._workspace_structure_changed(self.workspace.atoms)
         self._workspace_input_parameters_changed(
@@ -212,19 +203,8 @@ class MainWindow(QMainWindow):
         self._refresh_recent_start_button()
 
     def open_recent_file(self, kind: RecentKind, file_path: str) -> None:
-        """Open one persisted recent file through the appropriate loader."""
-        path = Path(file_path)
-        if not path.exists():
-            QMessageBox.warning(self, "Missing File", f"File not found:\n{file_path}")
-            self.recent_history.forget(kind, file_path)
-            self._refresh_recent_menus()
-            return
-        loaders = {
-            'structure': self._load_structure_from_path,
-            'input': self._load_sprkkr_input_from_path,
-            'output': self._load_sprkkr_output_from_path,
-        }
-        loaders[kind](file_path)
+        """Open a persisted recent file through the shared GUI workflow."""
+        self.operations.open_recent(kind, file_path, self)
 
     def _refresh_recent_start_button(self) -> None:
         btn = self._recent_start_button
@@ -291,20 +271,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('output', p))
         else:
             btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('structure', p))
-
-    def _load_structure_from_path(self, file_path: str) -> None:
-        try:
-            atoms = ase_read(file_path)
-            resolved = Path(file_path).resolve()
-            is_potential = resolved.suffix.lower() in {'.pot', '.pot_new'}
-            self.controller.set_directory(str(resolved.parent))
-            self.controller.set_structure(
-                atoms, potential_path=str(resolved) if is_potential else None
-            )
-            self.recent_history.remember('structure', file_path)
-            self._refresh_recent_menus()
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to load structure:\n{e!s}")
 
     def _build_ui(self) -> None:
         """Build the main UI layout."""
@@ -701,56 +667,20 @@ class MainWindow(QMainWindow):
             pass
 
     def create_structure(self) -> None:
-        """Create a new structure using the dialog chain."""
-        result = chain_dialogs(
-            select_spacegroup,
-            select_site_elements,
-            back=True,
-            kwargs={ 'parent': self }
-        )
-        # chain_dialogs now returns the actual result from the last dialog
-        # select_site_elements returns an Atoms object or None
-        if result is not None:
-            self.controller.set_structure(result)
+        """Start the shared structure-creation workflow."""
+        self.operations.create_structure(self)
 
     def create_structure_from_database(self) -> None:
         """Create a structure from a database prototype using shared editors."""
-        result = chain_dialogs(
-            select_structure_prototype,
-            select_spacegroup_from_prototype,
-            select_site_elements,
-            back=True,
-            kwargs={"parent": self},
-        )
-        if result is not None:
-            self.controller.set_structure(result)
+        self.operations.create_structure_from_database(self)
 
     def load_structure(self) -> None:
-        """Load structure from file."""
-        from ase.io.formats import ioformats
-
-        exts = {
-            f"*.{ext}"
-            for fmt in ioformats.values()
-            for ext in (fmt.extensions or [])
-        }
-        exts = sorted(exts)
-
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Structure File",
-            "",
-            f"Structure Files ({' '.join(exts)});;All Files (*)"
-        )
-
-        if file_path:
-            self._load_structure_from_path(file_path)
+        """Start the shared structure-loading workflow."""
+        self.operations.choose_structure(self)
 
     def download_structure(self) -> None:
         """Download a structure from a configured online provider."""
-        result = select_online_structure(parent=self)
-        if result is not None:
-            self.controller.set_structure(result)
+        self.operations.download_structure(self)
 
     def _on_save_structure(self) -> None:
         """Save current structure to file."""
@@ -781,8 +711,7 @@ class MainWindow(QMainWindow):
                     file_path += "." + ext
             try:
                 ase_write(file_path, self.workspace.atoms)
-                self.recent_history.remember('structure', file_path)
-                self._refresh_recent_menus()
+                self.operations.remember_recent('structure', file_path)
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{e!s}")
 
@@ -796,21 +725,8 @@ class MainWindow(QMainWindow):
         self.controller.set_input_parameters(params)
 
     def prepare_guided_task(self, task: str) -> None:
-        """Configure and start the guided setup flow for ``task``."""
-        if self.workspace.atoms is None:
-            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
-            return
-        selection = select_guided_input_parameters(
-            task,
-            parent=self,
-            directory=self.workspace.directory,
-            atoms=self.workspace.atoms,
-        )
-        if selection is not None:
-            params, directory = selection
-            self.controller.set_directory(directory)
-            self.controller.set_input_parameters(params)
-            self._on_run_sprkkr_calculation()
+        """Configure and start the shared guided task workflow."""
+        self.operations.prepare_guided_task(task, self)
 
     def _on_input_preview_double_click(self, event) -> None:
         self._on_edit_sprkkr_input()
@@ -834,62 +750,15 @@ class MainWindow(QMainWindow):
             "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
         )
         if file_path:
-            if self._load_sprkkr_input_from_path(file_path) and self.workspace.input_parameters is not None:
+            if self.operations.load_input(file_path, self) and self.workspace.input_parameters is not None:
                 candidate = self.workspace.input_parameters.copy(copy_values=True)
                 edited = edit_input_parameters(candidate, parent=self, show_changed_only=True, atoms=self.workspace.atoms)
                 if edited is not None:
                     self.controller.set_input_parameters(edited)
 
-    def _load_sprkkr_input_from_path(self, file_path: str) -> bool:
-        try:
-            from ase2sprkkr.input_parameters.input_parameters import (
-                InputParameters,  # type: ignore
-            )
-            params = InputParameters.from_file(file_path)
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{e!s}")
-            return False
-        self.controller.set_input_parameters(params)
-        self.recent_history.remember('input', file_path)
-        self._refresh_recent_menus()
-        return True
-
     def load_sprkkr_output(self) -> None:
-        """Choose and load an existing SPR-KKR output file."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load SPRKKR Output File",
-            "",
-            "SPRKKR Output Files (*.out *.log *.txt);;All Files (*)"
-        )
-        if not file_path:
-            return
-
-        self._load_sprkkr_output_from_path(file_path)
-
-    def _load_sprkkr_output_from_path(self, file_path: str) -> None:
-        try:
-            result = TaskResult.from_file(file_path)
-            artifacts = self.controller.adopt_result(
-                result,
-                fallback_directory=Path(file_path).resolve().parent,
-            )
-            self.recent_history.remember('output', file_path)
-            self._refresh_recent_menus()
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to load SPRKKR output:\n{e!s}")
-            return
-
-        if artifacts.potential_path is not None and artifacts.potential_path.is_file():
-            try:
-                from ase2sprkkr.potentials.potentials import Potential  # type: ignore
-                atoms = Potential.from_file(artifacts.potential_path).atoms
-                self.controller.set_structure(
-                    atoms,
-                    potential_path=str(artifacts.potential_path.resolve()),
-                )
-            except Exception as e:
-                QMessageBox.warning(self, "Potential Load Warning", f"Failed to load structure from potential:\n{e!s}")
+        """Start the shared output-loading workflow."""
+        self.operations.choose_output(self)
 
     def _on_save_sprkkr_input(self) -> None:
         if self.workspace.input_parameters is None:
@@ -906,26 +775,13 @@ class MainWindow(QMainWindow):
 
         try:
             self.workspace.input_parameters.to_file(file_path)
-            self.recent_history.remember('input', file_path)
-            self._refresh_recent_menus()
+            self.operations.remember_recent('input', file_path)
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save input parameters:\n{e!s}")
 
     def _on_run_sprkkr_calculation(self) -> None:
-        """Run SPRKKR calculation."""
-        if self.workspace.atoms is None or self.workspace.input_parameters is None or not self.workspace.directory:
-            return
-
-        from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
-
-        self._sprkkr_run_window = SprkkrRunWindow(
-            atoms=self.workspace.atoms,
-            input_parameters=self.workspace.input_parameters,
-            directory=self.workspace.directory,
-            parent=self,
-            on_finished=self._handle_calculation_result,
-        )
-        self._sprkkr_run_window.show()
+        """Start the shared calculation workflow."""
+        self.operations.run_calculation(self)
 
     def execute_output_value_action(
         self,
@@ -934,49 +790,13 @@ class MainWindow(QMainWindow):
         *,
         parent: Optional[QWidget] = None,
     ) -> None:
-        """Run an action advertised by an output-value object."""
-        parent = parent or self
-        try:
-            if action in {'edit', 'data'}:
-                payload = value.data() if action == 'data' else value()
-                title = getattr(value, "display_name", value.name)
-                dialog = show_readonly_object_dialog(payload, title=f'View {title}', parent=parent)
-                self._open_result_dialogs.append(dialog)
-                dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_result_dialog(dlg))
-                return
-
-            method = getattr(value, action, None)
-            method()
-        except Exception as e:
-            QMessageBox.critical(parent, "Action Error", f"Failed to execute action '{action}':\n{e!s}")
-
-    def _forget_result_dialog(self, dialog: QDialog) -> None:
-        self._open_result_dialogs = [item for item in self._open_result_dialogs if item is not dialog]
+        """Delegate an advertised result action to the shared workflow."""
+        self.operations.execute_output_value_action(
+            value, action, parent or self
+        )
 
     def _refresh_result_panel(self) -> None:
         self._result_actions_widget.set_result(self.workspace.result)
-
-    def _handle_calculation_result(self, result: Any) -> None:
-        """Adopt a completed result and present recoverable import warnings."""
-        artifacts = self.controller.adopt_result(result)
-        if artifacts.output_path is not None:
-            self.recent_history.remember('output', artifacts.output_path)
-            self._refresh_recent_menus()
-        potential_file = artifacts.potential_path
-        if potential_file is not None and potential_file.is_file():
-            try:
-                from ase2sprkkr.potentials.potentials import Potential  # type: ignore
-                resolved_potential = str(potential_file.resolve())
-                atoms = Potential.from_file(resolved_potential).atoms
-                self.controller.set_structure(
-                    atoms, potential_path=resolved_potential
-                )
-            except Exception as exc:
-                QMessageBox.warning(
-                    self,
-                    "Potential Load Warning",
-                    f"Calculation finished, but the generated potential could not be loaded:\n{exc}",
-                )
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -1092,17 +912,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Rotate Error", f"Failed to rotate structure:\n{e!s}")
 
     def build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        if self.workspace.atoms is None:
-            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
-            return
-
-        try:
-            result = select_build_2d_structure(self.workspace.atoms, parent=self, surface_mode=surface_mode)
-            if result is None:
-                return
-            self.controller.set_structure(result)
-        except Exception as e:
-            QMessageBox.critical(self, "Build 2D Structure Error", f"Failed to build 2D structure:\n{e!s}")
+        self.operations.build_2d_structure(
+            self, surface_mode=surface_mode
+        )
 
     def eventFilter(self, obj, event):  # type: ignore[override]
         if obj is getattr(self, 'positions_table', None).viewport():

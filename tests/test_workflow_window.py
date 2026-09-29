@@ -62,6 +62,7 @@ def _action_widget(window, group, title):
 def test_load_output_is_only_available_on_the_start_screen():
     application = QApplication.instance() or QApplication([])
     window = WorkflowWindow()
+    assert window._expert is None
 
     assert "Load SPR-KKR Output" in _action_titles(window)
 
@@ -80,7 +81,10 @@ def test_workflow_and_expert_share_one_workspace():
     controller = WorkspaceController(workspace)
     window = WorkflowWindow(controller)
 
+    assert window._expert is None
     assert window.expert_window.workspace is workspace
+    assert window.expert_window.operations is window.operations
+    assert window._expert is not None
     window.controller.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
     application.processEvents()
     assert workspace.atoms is not None
