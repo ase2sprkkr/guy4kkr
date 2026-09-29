@@ -7,7 +7,7 @@ from ase.io import read as ase_read
 from ase2sprkkr.sprkkr.build import semiinfinite_system
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -15,13 +15,11 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -30,18 +28,24 @@ from guy4ase.gui.dialogs.structures.element_assignment import select_site_elemen
 from guy4ase.gui.dialogs.structures.spacegroup_selector import select_spacegroup
 from guy4ase.gui.dialogs.structures.transforms import rotate_atoms, scale_atoms
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
-from guy4ase.gui.plots.lattice import plot_atoms_preview
+from guy4ase.gui.plots.lattice import plot_structure_axis_projection
+from guy4ase.gui.widgets.structures.structure_pane import StructurePane
+from guy4ase.physics.lattice import match_structure_axis_length
 
 
 class Build2DStructureDialog(QDialog):
-    def __init__(self, atoms: Any, parent: Optional[QWidget] = None, *, surface_mode: bool = False):
+    def __init__(
+        self,
+        atoms: Any,
+        parent: Optional[QWidget] = None,
+        *,
+        surface_mode: bool = False,
+    ):
         super().__init__(parent)
         self._surface_mode = surface_mode
         self.setWindowTitle("Build 2D Surface" if surface_mode else "Build 2D Structure")
         self.resize(1200, 760)
 
-        self._left_atoms = atoms.copy()
-        self._right_atoms: Optional[Any] = None
         self._semiinfinite_atoms: Optional[Any] = None
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -55,42 +59,17 @@ class Build2DStructureDialog(QDialog):
 
         left_group = QGroupBox("Main System")
         left_layout = QVBoxLayout(left_group)
-        left_preview_row = QHBoxLayout()
-        self._left_fig = Figure(figsize=(4.0, 3.2))
-        self._left_canvas = FigureCanvas(self._left_fig)
-        self._left_ax = self._left_fig.add_subplot(111, projection='3d')
-        left_preview_row.addWidget(self._left_canvas, 1)
-
-        left_controls = QVBoxLayout()
-        self._left_scale_btn = QPushButton("Scale...")
-        self._left_scale_btn.clicked.connect(self._on_scale_left)
-        left_controls.addWidget(self._left_scale_btn)
-        self._left_rotate_btn = QPushButton("Rotate...")
-        self._left_rotate_btn.clicked.connect(self._on_rotate_left)
-        left_controls.addWidget(self._left_rotate_btn)
-        self._left_match_axis_btn = QPushButton("Match Other Axis")
-        self._left_match_axis_btn.clicked.connect(self._on_match_left_axis)
-        self._left_match_axis_btn.setEnabled(False)
-        left_controls.addWidget(self._left_match_axis_btn)
-        left_controls.addStretch(1)
-        left_preview_row.addLayout(left_controls)
-
-        left_layout.addLayout(left_preview_row, 1)
-        left_lattice_box = QGroupBox("Lattice vectors")
-        left_lattice_layout = QGridLayout(left_lattice_box)
-        self._left_lattice_labels: list[list[QLabel]] = []
-        for i in range(3):
-            row: list[QLabel] = []
-            left_lattice_layout.addWidget(QLabel(f"{chr(ord('a') + i)}:"), i, 0)
-            for j in range(3):
-                lbl = QLabel("–")
-                lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                left_lattice_layout.addWidget(lbl, i, j + 1)
-                row.append(lbl)
-            self._left_lattice_labels.append(row)
-        left_layout.addWidget(left_lattice_box)
-        self._formula_label = QLabel("")
-        left_layout.addWidget(self._formula_label)
+        self.left = StructurePane(atoms.copy(), show_formula=True)
+        self.left.scaleRequested.connect(
+            lambda: self._transform(self.left, scale_atoms, "Scale (left)")
+        )
+        self.left.rotateRequested.connect(
+            lambda: self._transform(self.left, rotate_atoms, "Rotate (left)")
+        )
+        self.left.matchAxisRequested.connect(
+            lambda: self._match_axis(self.left, self.right, "Match axis (left)")
+        )
+        left_layout.addWidget(self.left, 1)
         top.addWidget(left_group, 1)
 
         right_col = QVBoxLayout()
@@ -110,56 +89,26 @@ class Build2DStructureDialog(QDialog):
 
         right_layout.addLayout(right_buttons)
 
-        self._right_stack = QStackedWidget(right_group)
-        self._vacuum_label = QLabel("Vacuum")
-        self._vacuum_label.setStyleSheet("font-size: 14pt; color: #666;")
-        self._vacuum_label.setMinimumHeight(220)
-        self._vacuum_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._right_stack.addWidget(self._vacuum_label)
-
-        self._right_fig = Figure(figsize=(3.8, 2.8))
-        self._right_canvas = FigureCanvas(self._right_fig)
-        self._right_ax = self._right_fig.add_subplot(111, projection='3d')
-        self._right_stack.addWidget(self._right_canvas)
-
-        right_preview_row = QHBoxLayout()
-        right_preview_row.addWidget(self._right_stack, 1)
-
-        right_controls = QVBoxLayout()
-        self._right_scale_btn = QPushButton("Scale...")
-        self._right_scale_btn.clicked.connect(self._on_scale_right)
-        self._right_scale_btn.setEnabled(False)
-        right_controls.addWidget(self._right_scale_btn)
-        self._right_rotate_btn = QPushButton("Rotate...")
-        self._right_rotate_btn.clicked.connect(self._on_rotate_right)
-        self._right_rotate_btn.setEnabled(False)
-        right_controls.addWidget(self._right_rotate_btn)
-        self._right_match_axis_btn = QPushButton("Match Other Axis")
-        self._right_match_axis_btn.clicked.connect(self._on_match_right_axis)
-        self._right_match_axis_btn.setEnabled(False)
-        right_controls.addWidget(self._right_match_axis_btn)
-        right_controls.addStretch(1)
-        right_preview_row.addLayout(right_controls)
-
-        right_layout.addLayout(right_preview_row, 1)
-        right_lattice_box = QGroupBox("Lattice vectors")
-        right_lattice_layout = QGridLayout(right_lattice_box)
-        self._right_lattice_labels: list[list[QLabel]] = []
-        for i in range(3):
-            row: list[QLabel] = []
-            right_lattice_layout.addWidget(QLabel(f"{chr(ord('a') + i)}:"), i, 0)
-            for j in range(3):
-                lbl = QLabel("–")
-                lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                right_lattice_layout.addWidget(lbl, i, j + 1)
-                row.append(lbl)
-            self._right_lattice_labels.append(row)
-        right_layout.addWidget(right_lattice_box)
+        self.right = StructurePane(
+            empty_text="Vacuum", figure_size=(3.8, 2.8)
+        )
+        self.right.scaleRequested.connect(
+            lambda: self._transform(self.right, scale_atoms, "Scale (right)")
+        )
+        self.right.rotateRequested.connect(
+            lambda: self._transform(self.right, rotate_atoms, "Rotate (right)")
+        )
+        self.right.matchAxisRequested.connect(
+            lambda: self._match_axis(
+                self.right, self.left, "Match axis (right)"
+            )
+        )
+        right_layout.addWidget(self.right, 1)
         right_col.addWidget(right_group, 1)
 
         if self._surface_mode:
             right_group.hide()
-            self._left_match_axis_btn.hide()
+            self.left.match_axis_button.hide()
 
         params_group = QGroupBox("2D Build Parameters")
         params_layout = QFormLayout(params_group)
@@ -178,7 +127,9 @@ class Build2DStructureDialog(QDialog):
         self._repeat_right.setValue(0.0)
         self._repeat_right.setKeyboardTracking(False)
         self._repeat_right.valueChanged.connect(self._schedule_result_preview)
-        right_repeat_label = "Repeat vacuum:" if self._surface_mode else "Repeat right:"
+        right_repeat_label = (
+            "Repeat vacuum:" if self._surface_mode else "Repeat right:"
+        )
         params_layout.addRow(right_repeat_label, self._repeat_right)
 
         self._axis = QComboBox(params_group)
@@ -196,7 +147,10 @@ class Build2DStructureDialog(QDialog):
         self._result_fig = Figure(figsize=(4.0, 3.2))
         self._result_canvas = FigureCanvas(self._result_fig)
         self._result_canvas.setMinimumSize(0, 0)
-        self._result_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._result_canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self._result_ax = self._result_fig.add_subplot(111)
         result_layout.addWidget(self._result_canvas, 1)
         root.addWidget(result_group, 1)
@@ -204,7 +158,10 @@ class Build2DStructureDialog(QDialog):
         self._status_label = QLabel("")
         root.addWidget(self._status_label)
 
-        self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         self._buttons.accepted.connect(self._on_ok)
         self._buttons.rejected.connect(self.reject)
         root.addWidget(self._buttons)
@@ -213,9 +170,6 @@ class Build2DStructureDialog(QDialog):
         if self._ok_button is not None:
             self._ok_button.setEnabled(False)
 
-        self._formula_label.setText(f"Formula: {self._left_atoms.get_chemical_formula()}")
-        self._plot_structure(self._left_ax, self._left_canvas, self._left_atoms)
-        self._right_stack.setCurrentIndex(0)
         self._update_lattice_panels()
         self._update_result_preview()
 
@@ -226,107 +180,15 @@ class Build2DStructureDialog(QDialog):
         else:
             self._status_label.setStyleSheet("color: #2f6f2f;")
 
-    def _plot_structure(self, ax, canvas, atoms: Any) -> None:
-        plot_atoms_preview(ax, atoms, canvas=canvas)
-
-    def _plot_result_structure(self, atoms: Any, axis: int) -> None:
-        ax = self._result_ax
-        ax.clear()
-
-        lattice = np.asarray(atoms.get_cell(), dtype=float)
-        horizontal = lattice[axis].copy()
-        horizontal_norm = float(np.linalg.norm(horizontal))
-        if horizontal_norm <= 1e-12:
-            raise ValueError("Selected build axis has zero length.")
-        horizontal /= horizontal_norm
-
-        transverse = []
-        for idx in range(3):
-            if idx == axis:
-                continue
-            candidate = lattice[idx].copy()
-            candidate -= np.dot(candidate, horizontal) * horizontal
-            norm = float(np.linalg.norm(candidate))
-            if norm > 1e-12:
-                transverse.append((norm, candidate / norm))
-        if not transverse:
-            raise ValueError("Cannot find a direction perpendicular to the build axis.")
-        vertical = max(transverse, key=lambda item: item[0])[1]
-
-        corners = np.asarray([
-            i * lattice[0] + j * lattice[1] + k * lattice[2]
-            for i in (0, 1)
-            for j in (0, 1)
-            for k in (0, 1)
-        ])
-        projected_corners = np.column_stack((corners @ horizontal, corners @ vertical))
-        edge_indices = (
-            (0, 1), (0, 2), (0, 4), (7, 6), (7, 5), (7, 3),
-            (1, 3), (1, 5), (2, 3), (2, 6), (4, 5), (4, 6),
-        )
-        for start, end in edge_indices:
-            edge = projected_corners[[start, end]]
-            ax.plot(edge[:, 0], edge[:, 1], color='black', linewidth=0.8, zorder=1)
-
-        positions = np.asarray(atoms.get_positions(), dtype=float)
-        projected = np.column_stack((positions @ horizontal, positions @ vertical))
-        symbols = np.asarray(atoms.get_chemical_symbols())
-        for symbol in dict.fromkeys(symbols.tolist()):
-            selected = symbols == symbol
-            ax.scatter(
-                projected[selected, 0],
-                projected[selected, 1],
-                s=40,
-                edgecolors='black',
-                linewidths=0.9,
-                label=symbol,
-                zorder=2,
-            )
-
-        all_points = np.vstack((projected_corners, projected))
-        mins = all_points.min(axis=0)
-        maxs = all_points.max(axis=0)
-        spans = maxs - mins
-        padding = np.maximum(spans * 0.03, 0.05)
-        ax.set_xlim(mins[0] - padding[0], maxs[0] + padding[0])
-        ax.set_ylim(mins[1] - padding[1], maxs[1] + padding[1])
-        ax.set_aspect('auto')
-        ax.set_axis_off()
-        ax.set_in_layout(False)
-        ax.set_position([0.01, 0.03, 0.98, 0.94])
-        self._result_canvas.draw_idle()
-
-    def _set_lattice_labels(self, labels: list[list[QLabel]], atoms: Optional[Any]) -> None:
-        if atoms is None:
-            for row in labels:
-                for lbl in row:
-                    lbl.setText("–")
-                    lbl.setStyleSheet("")
-            return
-
-        cell = np.array(atoms.get_cell(), dtype=float)
-        for i in range(3):
-            for j in range(3):
-                labels[i][j].setText(f"{cell[i, j]:.6f}")
-                labels[i][j].setStyleSheet("")
-
     def _update_lattice_panels(self) -> None:
-        self._set_lattice_labels(self._left_lattice_labels, self._left_atoms)
-        self._set_lattice_labels(self._right_lattice_labels, self._right_atoms)
-
-        for row in self._left_lattice_labels:
-            for lbl in row:
-                lbl.setStyleSheet("")
-        for row in self._right_lattice_labels:
-            for lbl in row:
-                lbl.setStyleSheet("")
-
-        if self._right_atoms is None:
+        self.left.refresh_lattice()
+        self.right.refresh_lattice()
+        if self.right.atoms is None:
             return
 
         axis = int(self._axis.currentData())
-        left_vec = np.array(self._left_atoms.get_cell()[axis], dtype=float)
-        right_vec = np.array(self._right_atoms.get_cell()[axis], dtype=float)
+        left_vec = np.asarray(self.left.atoms.get_cell()[axis], dtype=float)
+        right_vec = np.asarray(self.right.atoms.get_cell()[axis], dtype=float)
 
         left_norm = np.linalg.norm(left_vec)
         right_norm = np.linalg.norm(right_vec)
@@ -336,14 +198,22 @@ class Build2DStructureDialog(QDialog):
             left_unit = left_vec / left_norm
             right_unit = right_vec / right_norm
             same_direction = np.allclose(left_unit, right_unit, atol=1e-3)
-            same_length = np.isclose(left_norm, right_norm, rtol=1e-3, atol=1e-3)
+            same_length = np.isclose(
+                left_norm, right_norm, rtol=1e-3, atol=1e-3
+            )
             matches = bool(same_direction and same_length)
 
-        if not matches:
-            for lbl in self._left_lattice_labels[axis]:
-                lbl.setStyleSheet("color: #b00020;")
-            for lbl in self._right_lattice_labels[axis]:
-                lbl.setStyleSheet("color: #b00020;")
+        self.left.highlight_axis(axis, not matches)
+        self.right.highlight_axis(axis, not matches)
+
+    def _set_right_atoms(self, atoms: Any) -> None:
+        self.right.set_atoms(atoms)
+        self.left.set_match_enabled(True)
+        self.right.set_match_enabled(True)
+        self._structures_changed()
+
+    def _structures_changed(self) -> None:
+        self._update_result_preview()
 
     def _on_load_right(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -355,15 +225,7 @@ class Build2DStructureDialog(QDialog):
         if not file_path:
             return
         try:
-            self._right_atoms = ase_read(file_path)
-            self._right_stack.setCurrentIndex(1)
-            self._plot_structure(self._right_ax, self._right_canvas, self._right_atoms)
-            self._right_scale_btn.setEnabled(True)
-            self._right_rotate_btn.setEnabled(True)
-            self._left_match_axis_btn.setEnabled(True)
-            self._right_match_axis_btn.setEnabled(True)
-            self._update_lattice_panels()
-            self._update_result_preview()
+            self._set_right_atoms(ase_read(file_path))
         except Exception as e:
             self._set_status(f"Failed to load right structure: {str(e)}", error=True)
 
@@ -376,113 +238,42 @@ class Build2DStructureDialog(QDialog):
         )
         if result is None:
             return
-        self._right_atoms = result
-        self._right_stack.setCurrentIndex(1)
-        self._plot_structure(self._right_ax, self._right_canvas, self._right_atoms)
-        self._right_scale_btn.setEnabled(True)
-        self._right_rotate_btn.setEnabled(True)
-        self._left_match_axis_btn.setEnabled(True)
-        self._right_match_axis_btn.setEnabled(True)
-        self._update_lattice_panels()
-        self._update_result_preview()
+        self._set_right_atoms(result)
 
-    def _on_scale_left(self) -> None:
-        try:
-            updated = scale_atoms(self._left_atoms, parent=self)
-            if updated is None:
-                return
-            self._left_atoms = updated
-            self._formula_label.setText(f"Formula: {self._left_atoms.get_chemical_formula()}")
-            self._plot_structure(self._left_ax, self._left_canvas, self._left_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Scale (left) failed: {str(e)}", error=True)
-
-    def _on_scale_right(self) -> None:
-        if self._right_atoms is None:
-            self._set_status("No replacement structure to scale.", error=True)
+    def _transform(self, pane: StructurePane, operation, description: str) -> None:
+        if pane.atoms is None:
+            self._set_status(
+                f"No structure available for {description.lower()}.", error=True
+            )
             return
         try:
-            updated = scale_atoms(self._right_atoms, parent=self)
+            updated = operation(pane.atoms, parent=self)
             if updated is None:
                 return
-            self._right_atoms = updated
-            self._plot_structure(self._right_ax, self._right_canvas, self._right_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Scale (right) failed: {str(e)}", error=True)
+            pane.set_atoms(updated)
+            self._structures_changed()
+        except Exception as error:
+            self._set_status(f"{description} failed: {error}", error=True)
 
-    def _on_rotate_left(self) -> None:
-        try:
-            updated = rotate_atoms(self._left_atoms, parent=self)
-            if updated is None:
-                return
-            self._left_atoms = updated
-            self._plot_structure(self._left_ax, self._left_canvas, self._left_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Rotate (left) failed: {str(e)}", error=True)
-
-    def _on_rotate_right(self) -> None:
-        if self._right_atoms is None:
-            self._set_status("No replacement structure to rotate.", error=True)
+    def _match_axis(
+        self,
+        pane: StructurePane,
+        other: StructurePane,
+        description: str,
+    ) -> None:
+        if pane.atoms is None or other.atoms is None:
+            self._set_status(
+                "No replacement structure to match against.", error=True
+            )
             return
         try:
-            updated = rotate_atoms(self._right_atoms, parent=self)
-            if updated is None:
-                return
-            self._right_atoms = updated
-            self._plot_structure(self._right_ax, self._right_canvas, self._right_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Rotate (right) failed: {str(e)}", error=True)
-
-    def _stretch_axis_to_other(self, source: Any, target: Any) -> Any:
-        axis = int(self._axis.currentData())
-        source_cell = np.array(source.get_cell(), dtype=float)
-        target_cell = np.array(target.get_cell(), dtype=float)
-
-        source_vec = source_cell[axis]
-        target_vec = target_cell[axis]
-        source_len = float(np.linalg.norm(source_vec))
-        target_len = float(np.linalg.norm(target_vec))
-        if source_len <= 1e-12 or target_len <= 1e-12:
-            raise ValueError("Selected axis has near-zero length and cannot be stretched.")
-
-        source_unit = source_vec / source_len
-        source_cell[axis] = source_unit * target_len
-
-        result = source.copy()
-        result.set_cell(source_cell, scale_atoms=True)
-        return result
-
-    def _on_match_left_axis(self) -> None:
-        if self._right_atoms is None:
-            self._set_status("No replacement structure to match against.", error=True)
-            return
-        try:
-            self._left_atoms = self._stretch_axis_to_other(self._left_atoms, self._right_atoms)
-            self._plot_structure(self._left_ax, self._left_canvas, self._left_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Match axis (left) failed: {str(e)}", error=True)
-
-    def _on_match_right_axis(self) -> None:
-        if self._right_atoms is None:
-            self._set_status("No replacement structure to match against.", error=True)
-            return
-        try:
-            self._right_atoms = self._stretch_axis_to_other(self._right_atoms, self._left_atoms)
-            self._plot_structure(self._right_ax, self._right_canvas, self._right_atoms)
-            self._update_lattice_panels()
-            self._update_result_preview()
-        except Exception as e:
-            self._set_status(f"Match axis (right) failed: {str(e)}", error=True)
+            axis = int(self._axis.currentData())
+            pane.set_atoms(
+                match_structure_axis_length(pane.atoms, other.atoms, axis)
+            )
+            self._structures_changed()
+        except Exception as error:
+            self._set_status(f"{description} failed: {error}", error=True)
 
     def _schedule_result_preview(self, _value: Any = None) -> None:
         self._preview_timer.start()
@@ -499,10 +290,24 @@ class Build2DStructureDialog(QDialog):
             right_repeat = float(self._repeat_right.value())
             repeat = (left_repeat, right_repeat)
             axis = int(self._axis.currentData())
-            atoms2 = self._right_atoms.copy() if self._right_atoms is not None else None
-            semi = semiinfinite_system(self._left_atoms.copy(), repeat=repeat, atoms2=atoms2, axis=axis)
+            atoms2 = (
+                self.right.atoms.copy()
+                if self.right.atoms is not None
+                else None
+            )
+            semi = semiinfinite_system(
+                self.left.atoms.copy(),
+                repeat=repeat,
+                atoms2=atoms2,
+                axis=axis,
+            )
             self._semiinfinite_atoms = semi
-            self._plot_result_structure(semi, axis)
+            plot_structure_axis_projection(
+                self._result_ax,
+                semi,
+                axis,
+                canvas=self._result_canvas,
+            )
             self._set_status("Preview ready.")
             if self._ok_button is not None:
                 self._ok_button.setEnabled(True)
