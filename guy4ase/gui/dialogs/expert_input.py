@@ -49,9 +49,7 @@ from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
     RelativisticScalingEditor,
 )
-from guy4ase.gui.widgets.input_parameters.scalar import (
-    create_scalar_editor,
-)
+from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
 
 
 def _mutable_sequence(value: Any) -> list[Any]:
@@ -231,7 +229,7 @@ class InputParametersDialog(_TreeDialogBase):
             self._build_table_option(opt, item, grammar_type)
         else:
             value = _option_value(opt)
-            editor = create_scalar_editor(
+            editor = create_option_editor(
                 grammar_type,
                 value,
                 lambda new_value, o=opt, option_item=item: self._set_option_value(o, option_item, new_value),
@@ -259,8 +257,15 @@ class InputParametersDialog(_TreeDialogBase):
                 value = binding.value(path)
                 return EnergyState(None if value is None else float(value.to_value('Ry')), 'Ry',
                                    explicit=binding.option(path).is_set())
-            editor = EnergyEditor(state, lambda value, unit, _relative: binding.set_value(
-                path, None if value is None else (value, unit)), self._tree, with_reference=False)
+            def apply(value, unit, _relative):
+                binding.set_value(path, None if value is None else (value, unit))
+            editor = create_option_editor(
+                opt._definition.type,
+                None,
+                parent=self._tree,
+                energy_state=state,
+                energy_apply=apply,
+            )
         binding.editor = editor
         editor.setMinimumWidth(320)
         editor.validationChanged.connect(lambda message: self._special_validation_changed(path, item, message))
@@ -342,8 +347,8 @@ class InputParametersDialog(_TreeDialogBase):
             opt.set(value)
             self._update_changed_style(opt, item)
             self._rebuild_compound_option(opt, item)
-        editor = create_scalar_editor(grammar_type, _option_value(opt), apply,
-                                      option=opt, atoms=self._atoms, read_only=not editable)
+        editor = create_option_editor(grammar_type, _option_value(opt), apply,
+                          option=opt, atoms=self._atoms, read_only=not editable)
         self._set_editor(item, editor)
         item.setToolTip(2, editor.text())
 
@@ -374,7 +379,7 @@ class InputParametersDialog(_TreeDialogBase):
         for index, value in enumerate(values):
             child = QTreeWidgetItem([f'[{index}]', str(grammar_type.type), '', ''])
             self._add_child(item, child)
-            editor = create_scalar_editor(
+            editor = create_option_editor(
                 grammar_type.type,
                 value,
                 lambda new_value, idx=index, o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
@@ -387,7 +392,7 @@ class InputParametersDialog(_TreeDialogBase):
         if max_length is None or len(values) < max_length:
             append_item = QTreeWidgetItem([f'[{len(values)}]', str(grammar_type.type), '', 'Append new item'])
             self._add_child(item, append_item)
-            editor = create_scalar_editor(
+            editor = create_option_editor(
                 grammar_type.type,
                 None,
                 lambda new_value, idx=len(values), o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
@@ -416,7 +421,7 @@ class InputParametersDialog(_TreeDialogBase):
             value = values[index] if index < len(values) else None
             child = QTreeWidgetItem([labels[index], str(subtype), '', ''])
             self._add_child(item, child)
-            editor = create_scalar_editor(
+            editor = create_option_editor(
                 subtype,
                 value,
                 lambda new_value, idx=index, o=opt, parent_item=item: self._update_sequence_value(o, parent_item, idx, new_value),
@@ -465,7 +470,7 @@ class InputParametersDialog(_TreeDialogBase):
                         cell_value = cell_value.item()
                     cell_item = QTreeWidgetItem([str(column_name), str(subtype), '', ''])
                     self._add_child(row_item, cell_item)
-                    editor = create_scalar_editor(
+                    editor = create_option_editor(
                         subtype,
                         cell_value,
                         lambda new_value, r=row_index, c=column_name, o=opt, parent_item=item: self._update_table_field(o, parent_item, r, c, new_value),
@@ -496,7 +501,7 @@ class InputParametersDialog(_TreeDialogBase):
                 name = column_names[col_index] if col_index < len(column_names) else f'[{col_index}]'
                 cell_item = QTreeWidgetItem([str(name), str(subtype), '', ''])
                 self._add_child(row_item, cell_item)
-                editor = create_scalar_editor(
+                editor = create_option_editor(
                     subtype,
                     cell_value,
                     lambda new_value, r=row_index, c=col_index, o=opt, parent_item=item: self._update_table_cell(o, parent_item, r, c, new_value),

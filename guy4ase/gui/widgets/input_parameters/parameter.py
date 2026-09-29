@@ -1,7 +1,6 @@
 """Editors bound to an :class:`InputParametersSession`."""
 from __future__ import annotations
 
-import ast
 from typing import Any
 
 import numpy as np
@@ -21,24 +20,20 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.input_parameters.bindings import (
     InputParameterPath,
     resolve_option,
-    values_equal,
 )
 from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import (
     EnergyState,
     convert_energy,
 )
-from guy4ase.gui.input_parameters.keyword_choices import (
-    keyword_current_value,
-    keyword_items,
-)
+from guy4ase.gui.input_parameters.keyword_choices import keyword_current_value
 from guy4ase.gui.input_parameters.session import InputParametersSession
-from guy4ase.gui.input_parameters.specs.schema import Choice, FieldPlacement
+from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
 from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
 from guy4ase.gui.widgets.input_parameters.registry import create_compound_editor
-from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox, NullableSpinBox
+from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
 
 EDITOR_WIDTH = 280
 
@@ -148,6 +143,8 @@ class ParameterEditor(QWidget):
                 atoms=self.atoms,
                 parent=self,
             )
+        energy_state = None
+        energy_apply = None
         if spec.kind == "energy":
             def state():
                 value = self.session.value(self.path)
@@ -166,67 +163,36 @@ class ParameterEditor(QWidget):
                          else convert_energy(value, unit, 'Ry'))
                 self.session.set_value(self.path, value,
                                        source_page=self.page_id, text=f"Change {spec.label.rstrip(':')}")
-            return EnergyEditor(state, apply, self, with_reference=False,
-                                minimum=spec.minimum if spec.minimum is not None else -1e9)
-        if spec.kind == "vector":
-            return VectorEditor(self.session, self.path, self.page_id, self)
-        if spec.kind == "integer":
-            editor = NullableSpinBox(self)
-            minimum = int(spec.minimum if spec.minimum is not None else -2147483647)
-            if self._nullable:
-                self._null_sentinel = minimum - int(spec.step or 1)
-                minimum = int(self._null_sentinel)
-                editor.set_unset_value(minimum)
-            editor.setRange(minimum,
-                            int(spec.maximum if spec.maximum is not None else 2147483647))
-            editor.setSingleStep(int(spec.step or 1))
-            editor.setKeyboardTracking(False)
-            if spec.special_value_text:
-                editor.setSpecialValueText(spec.special_value_text)
-            return editor
-        if spec.kind == "real":
-            editor = NullableDoubleSpinBox(self)
-            editor.setDecimals(spec.decimals)
-            minimum = float(spec.minimum if spec.minimum is not None else -1e16)
-            if self._nullable:
-                self._null_sentinel = minimum - float(spec.step or .1)
-                minimum = float(self._null_sentinel)
-                editor.set_unset_value(minimum)
-            editor.setRange(minimum,
-                            float(spec.maximum if spec.maximum is not None else 1e16))
-            editor.setSingleStep(float(spec.step or .1))
-            editor.setKeyboardTracking(False)
-            if spec.special_value_text:
-                editor.setSpecialValueText(spec.special_value_text)
-            return editor
-        if spec.kind == "boolean":
-            return QCheckBox(self)
-        if self._uses_keyword_choices or spec.kind in {"choice", "keyword"}:
-            combo = QComboBox(self)
-            choices = list(spec.choices)
-            if self._uses_keyword_choices:
-                items = list(keyword_items(self.session.option(self.path), index=spec.index, atoms=self.atoms))
-                labels = {choice.value: choice.label for choice in choices}
-                choices = [Choice(description if value is None else labels.get(value,
-                                  f"{value}: {description}" if description else str(value)), value)
-                           for value, description in items]
-            for choice in choices:
-                combo.addItem(choice.label, choice.value)
-                combo.setItemData(combo.count() - 1, choice.label, Qt.ItemDataRole.ToolTipRole)
-            if spec.descriptions:
-                combo.view().setMinimumWidth(560)
-            return combo
-        editor = QLineEdit(self)
-        return editor
+            energy_state = state
+            energy_apply = apply
+
+        current_value = self.session.value(self.path)
+        if spec.index is not None:
+            values = list(current_value) if current_value is not None else []
+            current_value = values[spec.index] if len(values) > spec.index else None
+        control = create_option_editor(
+            self._value_type,
+            current_value,
+            on_value=self._apply_value,
+            placement=spec,
+            option=self.session.option(self.path),
+            atoms=self.atoms,
+            parent=self,
+            session=self.session,
+            path=self.path,
+            page_id=self.page_id,
+            energy_state=energy_state,
+            energy_apply=energy_apply,
+        )
+        if isinstance(control, (QSpinBox, QDoubleSpinBox)) and self._nullable:
+            self._null_sentinel = control.minimum()
+        return control
 
     def _connect_control(self) -> None:
         control = self.control
-        if isinstance(control, (QSpinBox, QDoubleSpinBox, QLineEdit)):
-            control.editingFinished.connect(self.commit)
-        elif isinstance(control, QCheckBox):
-            control.toggled.connect(lambda _checked: self.commit())
-        elif isinstance(control, QComboBox):
-            control.currentIndexChanged.connect(lambda _index: self.commit())
+        input_commit = getattr(control, "input_commit", None)
+        if input_commit is not None:
+            input_commit.validationChanged.connect(self._set_error)
         elif self.placement.editor:
             control.validationChanged.connect(self._set_error)
             action = getattr(control, "externalActionRequested", None)
@@ -235,39 +201,32 @@ class ParameterEditor(QWidget):
         elif isinstance(control, (VectorEditor, EnergyEditor)):
             control.validationChanged.connect(self._set_error)
 
-    def _read_value(self) -> Any:
-        """Decode the widget draft, including unset sentinels, without storing it."""
-        spec = self.placement
-        control = self.control
-        if isinstance(control, QSpinBox):
-            if self._nullable and not control.cleanText().strip() and not control.is_default_display():
-                return None
-            value: Any = int(control.value())
-            if self._nullable and value == control.minimum():
-                return None
-            if spec.special_value_text and spec.minimum is not None and value == int(spec.minimum):
-                return None
-            return value
-        if isinstance(control, QDoubleSpinBox):
-            if self._nullable and not control.cleanText().strip() and not control.is_default_display():
-                return None
-            value = float(control.value())
-            if self._nullable and value == control.minimum():
-                return None
-            if spec.special_value_text and spec.minimum is not None and value == float(spec.minimum):
-                return None
-            return value
-        if isinstance(control, QCheckBox):
-            return bool(control.isChecked())
-        if isinstance(control, QComboBox):
-            return control.currentData()
-        if isinstance(control, QLineEdit):
-            text = control.text().strip()
-            if spec.kind == "literal":
-                value = None if not text else ast.literal_eval(text)
-                return value
-            return text or None
-        return None
+    def _apply_value(self, value: Any) -> None:
+        """Apply a factory-decoded scalar value through the session."""
+        if self._refreshing or not self.control.isEnabled():
+            return
+
+        def update(parameters):
+            option = resolve_option(parameters, self.path)
+            if self.placement.index is not None:
+                values = list(option())
+                index = self.placement.index
+                # A missing second mesh starts with the first mesh. Never
+                # discard the other component when editing a single one.
+                while len(values) <= index:
+                    values.append(values[0])
+                values[index] = value
+                option.set(values)
+            else:
+                option.set(value)
+
+        self.session.mutate(
+            update,
+            source_page=self.page_id,
+            path=self.path,
+            field_index=self.placement.index,
+            text=f"Change {self.placement.label.rstrip(':')}",
+        )
 
     def commit(self) -> bool:
         """Apply this draft through the session, reporting errors without raising.
@@ -281,33 +240,8 @@ class ParameterEditor(QWidget):
             return self.control.commit()
         if isinstance(self.control, (VectorEditor, EnergyEditor)):
             return self.control.commit()
-        try:
-            value = self._read_value()
-            if values_equal(value, self._shown):
-                self._set_error('')
-                return True
-            def update(parameters):
-                option = resolve_option(parameters, self.path)
-                if self.placement.index is not None:
-                    values = list(option())
-                    index = self.placement.index
-                    # A missing second mesh starts with the first mesh. Never
-                    # discard the other component when editing a single one.
-                    while len(values) <= index:
-                        values.append(values[0])
-                    values[index] = value
-                    option.set(values)
-                else:
-                    option.set(value)
-
-            self.session.mutate(update, source_page=self.page_id, path=self.path,
-                                field_index=self.placement.index,
-                                text=f"Change {self.placement.label.rstrip(':')}")
-        except Exception as exc:
-            self._set_error(str(exc))
-            return False
-        self._set_error("")
-        return True
+        input_commit = getattr(self.control, "input_commit", None)
+        return True if input_commit is None else input_commit.commit()
 
     def refresh(self) -> None:
         """Replace the draft from session state without creating an edit.
@@ -363,7 +297,9 @@ class ParameterEditor(QWidget):
                 control.setPlaceholderText(default_text(default))
         finally:
             self._refreshing = False
-        self._shown = self._read_value()
+        input_commit = getattr(self.control, "input_commit", None)
+        if input_commit is not None:
+            input_commit.refresh()
         self._set_error("")
 
     @staticmethod

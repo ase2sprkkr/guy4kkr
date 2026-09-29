@@ -13,7 +13,7 @@ from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
 from guy4ase.gui.input_parameters.specs.schema import field, main_energy_mesh_field
-from guy4ase.gui.widgets.input_parameters.scalar import create_scalar_editor
+from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
 
@@ -41,8 +41,8 @@ def test_generic_atom_choices_apply_to_guided_and_expert_keywords(application, m
     session = InputParametersSession(parameters)
     editor = ParameterEditor(session, field("SCF", "VXC", "XC", "keyword"), "physical", atoms=atoms)
     option = session.option(("SCF", "VXC"))
-    generic = create_scalar_editor(option._definition.type, option(), lambda value: None,
-                                    option=option, atoms=atoms)
+    generic = create_option_editor(option._definition.type, option(), lambda value: None,
+                                   option=option, atoms=atoms)
     for combo in (editor.control, generic):
         assert choices(combo) == {"PBE"}
         assert combo.itemText(combo.findData("PBE")) == "PBE: Structure-dependent choice"
@@ -91,7 +91,7 @@ def test_optional_keyword_with_default_selects_default_without_unset(application
     option = session.option(path)
     assert option._definition.is_optional and not option.is_set()
     editor = ParameterEditor(session, field(*path, "Value", "keyword"), "test")
-    generic = create_scalar_editor(option._definition.type, option(), lambda value: None, option=option)
+    generic = create_option_editor(option._definition.type, option(), lambda value: None, option=option)
     for combo in (editor.control, generic):
         assert None not in choices(combo)
         assert combo.currentData() == default
@@ -115,7 +115,7 @@ def test_undo_to_keyword_default_does_not_display_unset(application):
 def test_expert_optional_keyword_without_default_retains_unset(application):
     parameters = InputParameters.create("scf")
     option = parameters.TAU.KKRMODE
-    editor = create_scalar_editor(option._definition.type, option(), option.set, option=option)
+    editor = create_option_editor(option._definition.type, option(), option.set, option=option)
     assert editor.currentData() is None
     assert editor.currentText() == "Not set"
     editor.setCurrentIndex(editor.findData("TB"))
