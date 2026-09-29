@@ -360,16 +360,17 @@ class InputParametersDialog(_TreeDialogBase):
                 lambda message: self._display_editor_error(item, message))
 
     def _display_editor_error(self, item, message):
+        key = id(item)
         if message:
-            self._editor_errors[item] = message
+            self._editor_errors[key] = (item, message)
         else:
-            self._editor_errors.pop(item, None)
+            self._editor_errors.pop(key, None)
         self._refresh_editor_errors()
 
     def _refresh_editor_errors(self):
         self._editor_errors = {
-            item: error
-            for item, error in self._editor_errors.items()
+            key: (item, error)
+            for key, (item, error) in self._editor_errors.items()
             if not sip.isdeleted(item)
         }
         messages = [
@@ -378,7 +379,7 @@ class InputParametersDialog(_TreeDialogBase):
         ]
         messages.extend(
             f"{item.text(0)}: {error}"
-            for item, error in self._editor_errors.items()
+            for item, error in self._editor_errors.values()
         )
         self._editor_error.setText('\n'.join(messages))
         self._editor_error.setVisible(bool(messages))
