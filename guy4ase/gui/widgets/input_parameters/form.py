@@ -163,7 +163,7 @@ class GuidedFormRenderer(QObject):
         self._validate_paths()
         for page in spec.pages:
             self._add_page(page)
-        self.session.parametersReplaced.connect(self.parameters_replaced)
+        self.session.parametersReplaced.connect(self.apply_presentation)
         self.apply_presentation(emit=False)
 
     @property
@@ -487,14 +487,6 @@ class GuidedFormRenderer(QObject):
         self._errors = errors
         if emit:
             self.statusChanged.emit()
-
-    def parameters_replaced(self) -> None:
-        self._editor_errors = {
-            view: view.editor._error
-            for view in self.field_views
-            if view.editor._error
-        }
-        self.apply_presentation()
 
     def update_changed(self, changed: set[InputParameterPath]) -> None:
         for view in self.field_views:

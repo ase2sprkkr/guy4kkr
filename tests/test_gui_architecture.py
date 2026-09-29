@@ -95,6 +95,7 @@ def test_guided_renderer_has_no_task_specific_presentation_branches():
 
 def test_guided_dialog_delegates_field_anatomy_to_form_views():
     source = (GUI / "dialogs" / "guided_input.py").read_text()
+    renderer = (GUI / "widgets" / "input_parameters" / "form.py").read_text()
     for old_parallel_structure in (
         "_editors_by_path",
         "_labels_by_path",
@@ -108,6 +109,7 @@ def test_guided_dialog_delegates_field_anatomy_to_form_views():
         "_navigation_tints",
     ):
         assert old_parallel_structure not in source
+    assert "editor._error" not in renderer
 
 
 def test_generic_parameter_adapter_has_no_registered_editor_implementations():
