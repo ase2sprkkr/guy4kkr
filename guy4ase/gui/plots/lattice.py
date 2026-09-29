@@ -177,6 +177,77 @@ def plot_atoms_preview(
     return color_map
 
 
+def plot_structure_axis_projection(ax, atoms: Any, axis: int, *, canvas=None) -> None:
+    """Plot a structure projected along one selected lattice-vector axis."""
+    ax.clear()
+
+    lattice = np.asarray(atoms.get_cell(), dtype=float)
+    horizontal = lattice[axis].copy()
+    horizontal_norm = float(np.linalg.norm(horizontal))
+    if horizontal_norm <= 1e-12:
+        raise ValueError("Selected build axis has zero length.")
+    horizontal /= horizontal_norm
+
+    transverse = []
+    for index in range(3):
+        if index == axis:
+            continue
+        candidate = lattice[index].copy()
+        candidate -= np.dot(candidate, horizontal) * horizontal
+        norm = float(np.linalg.norm(candidate))
+        if norm > 1e-12:
+            transverse.append((norm, candidate / norm))
+    if not transverse:
+        raise ValueError("Cannot find a direction perpendicular to the build axis.")
+    vertical = max(transverse, key=lambda item: item[0])[1]
+
+    corners = np.asarray([
+        i * lattice[0] + j * lattice[1] + k * lattice[2]
+        for i in (0, 1)
+        for j in (0, 1)
+        for k in (0, 1)
+    ])
+    projected_corners = np.column_stack(
+        (corners @ horizontal, corners @ vertical)
+    )
+    for start, end in edge_indices:
+        edge = projected_corners[[start, end]]
+        ax.plot(
+            edge[:, 0], edge[:, 1], color="black", linewidth=0.8, zorder=1
+        )
+
+    positions = np.asarray(atoms.get_positions(), dtype=float)
+    projected = np.column_stack(
+        (positions @ horizontal, positions @ vertical)
+    )
+    symbols = np.asarray(atoms.get_chemical_symbols())
+    for symbol in dict.fromkeys(symbols.tolist()):
+        selected = symbols == symbol
+        ax.scatter(
+            projected[selected, 0],
+            projected[selected, 1],
+            s=40,
+            edgecolors="black",
+            linewidths=0.9,
+            label=symbol,
+            zorder=2,
+        )
+
+    all_points = np.vstack((projected_corners, projected))
+    mins = all_points.min(axis=0)
+    maxs = all_points.max(axis=0)
+    spans = maxs - mins
+    padding = np.maximum(spans * 0.03, 0.05)
+    ax.set_xlim(mins[0] - padding[0], maxs[0] + padding[0])
+    ax.set_ylim(mins[1] - padding[1], maxs[1] + padding[1])
+    ax.set_aspect("auto")
+    ax.set_axis_off()
+    ax.set_in_layout(False)
+    ax.set_position([0.01, 0.03, 0.98, 0.94])
+    if canvas is not None:
+        canvas.draw_idle()
+
+
 def bounding_box_corners(corners, preserve_ratio=True, padding=0.05):
     """
     Compute bounding box corners of a hexahedron.
