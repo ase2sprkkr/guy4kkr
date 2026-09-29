@@ -131,7 +131,6 @@ class GuidedInputParametersDialog(QDialog):
         for page in self.spec.pages:
             self._add_navigation_page(page)
         self.form.statusChanged.connect(self._update_all_statuses)
-        self.form.externalActionRequested.connect(self._edit_kpath)
         self.navigation.currentRowChanged.connect(self._select_page_index)
         self.navigation.setCurrentRow(0)
 
@@ -360,18 +359,6 @@ class GuidedInputParametersDialog(QDialog):
                 )
         except Exception as exc:
             QMessageBox.critical(self, "Expert Settings Error", str(exc))
-
-    def _edit_kpath(self, view) -> None:
-        """Own modal path editing; widgets only request this action."""
-        if self.atoms is None:
-            QMessageBox.warning(self, 'K-path', 'A structure is required to edit the Brillouin-zone path.')
-            return
-        try:
-            self.session.mutate(
-                lambda parameters: parameters.TASK.k_path_gui(self.atoms, parent=self),
-                text='Edit custom K-path', source_page=view.page_id, path=view.editor.path)
-        except Exception as error:
-            QMessageBox.critical(self, 'K-path Error', str(error))
 
     def _load_input(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(

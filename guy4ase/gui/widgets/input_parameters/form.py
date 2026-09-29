@@ -127,7 +127,6 @@ class GuidedFormRenderer(QObject):
     """Own the anatomy, presentation state and validation state of a form."""
 
     statusChanged = pyqtSignal()
-    externalActionRequested = pyqtSignal(object)
 
     def __init__(
         self,
@@ -379,9 +378,6 @@ class GuidedFormRenderer(QObject):
         editor.validationChanged.connect(
             lambda _path, _page_id, message, source=view:
             self._editor_validation_changed(source, message)
-        )
-        editor.externalActionRequested.connect(
-            lambda source=view: self.externalActionRequested.emit(source)
         )
         self.field_views.append(view)
         self._views_by_editor[editor] = view

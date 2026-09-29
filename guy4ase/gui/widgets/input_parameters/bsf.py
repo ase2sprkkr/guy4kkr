@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTableWidgetItem,
@@ -115,7 +116,7 @@ class BsfMeshEditor(CompoundParameterEditor):
 
 
 class BsfKPathEditor(CompoundParameterEditor):
-    """Select an atom-dependent predefined path or request custom path editing."""
+    """Select an atom-dependent predefined path or edit a custom path."""
 
     # Additional input beyond placement.paths: KA determines the custom-path
     # summary. Mode transitions that replace KPATH already touch its own path.
@@ -126,6 +127,7 @@ class BsfKPathEditor(CompoundParameterEditor):
         self.session = session
         self.placement = placement
         self.page_id = page_id
+        self.atoms = atoms
         self._refreshing = False
 
         layout = QVBoxLayout(self)
@@ -163,9 +165,21 @@ class BsfKPathEditor(CompoundParameterEditor):
         self.setFocusProxy(self.path_combo)
 
         self.path_combo.currentIndexChanged.connect(self._select_predefined_path)
-        self.path_edit.clicked.connect(
-            lambda _checked=False: self.externalActionRequested.emit()
-        )
+        self.path_edit.clicked.connect(self._edit_custom_path)
+
+    def _edit_custom_path(self) -> None:
+        parent = self.window()
+        if self.atoms is None:
+            QMessageBox.warning(parent, "K-path", "A structure is required to edit the Brillouin-zone path.")
+            return
+        try:
+            self.session.mutate(
+                lambda parameters: parameters.TASK.k_path_gui(self.atoms, parent=parent),
+                text="Edit custom K-path", source_page=self.page_id,
+                path=self.placement.path,
+            )
+        except Exception as error:
+            QMessageBox.critical(parent, "K-path Error", str(error))
 
     def _select_predefined_path(self) -> None:
         if self._refreshing:

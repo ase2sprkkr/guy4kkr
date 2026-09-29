@@ -16,7 +16,6 @@ class CompoundParameterEditor(QWidget):
     """
 
     validationChanged = pyqtSignal(str)
-    externalActionRequested = pyqtSignal()
 
     dependencies: tuple[InputParameterPath, ...] = ()
     full_width = False

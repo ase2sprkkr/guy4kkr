@@ -67,7 +67,6 @@ class ParameterEditor(QWidget):
     """A presentation widget that commits one path through the session."""
 
     validationChanged = pyqtSignal(object, str, str)
-    externalActionRequested = pyqtSignal()
 
     def __init__(
         self,
@@ -193,7 +192,6 @@ class ParameterEditor(QWidget):
         control = self.control
         if self.placement.editor:
             control.validationChanged.connect(self._set_error)
-            control.externalActionRequested.connect(self.externalActionRequested.emit)
         else:
             input_commit = getattr(control, "input_commit", None)
             if input_commit is not None:

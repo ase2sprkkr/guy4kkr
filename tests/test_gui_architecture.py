@@ -149,7 +149,6 @@ def test_registered_parameter_editors_share_one_explicit_contract():
         "dependencies",
         "full_width",
         "help_text",
-        "externalActionRequested",
         "set_editor_tooltip",
         "focus_for_history",
     ):

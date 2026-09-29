@@ -108,9 +108,9 @@ implementations such as BSF mode, path selection and path vectors live in
 `widgets.input_parameters.bsf`; shared session adapters for energy bounds and
 relativistic scaling live in `widgets.input_parameters.common`. Such a control
 implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
-`validationChanged(str)`, and may declare `dependencies`, `full_width` and an
-`externalActionRequested` signal. The last signal lets the owning dialog open a
-modal editor without giving the widget a dependency on that dialog.
+`validationChanged(str)`, and may declare `dependencies` and `full_width`.
+Task-specific modal controls, such as the BSF custom K-path editor, handle
+their action in the registered widget and mutate the session for Undo/Redo.
 `ParameterEditor` remains the session/tooltip/presentation adapter and does not
 know the internals of registered controls.
 
