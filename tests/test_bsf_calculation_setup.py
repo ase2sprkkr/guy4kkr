@@ -203,7 +203,7 @@ def test_bsf_serializes_and_reloads_without_wrong_mode_keywords(application, fac
 def test_relative_fixed_energy_and_missing_geometry_validation(application):
     dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsf"))
     assert not dialog._commit_pending()
-    assert ("TASK", "K1") in dialog._errors
+    assert ("TASK", "K1") in dialog.form.errors
     dialog.session.replace_parameters(kk_parameters())
     assert dialog._commit_pending()
     energy = dialog.editors_for(("ENERGY", "EMINEV"))[-1]
@@ -374,7 +374,7 @@ def test_bsf_plane_vectors_keep_invalid_drafts_and_report_required_unset(applica
         vector.table.item(0, column).setData(Qt.ItemDataRole.EditRole, "")
     assert dialog.session.value(("TASK", "K1")) is None
     assert not dialog._commit_pending()
-    assert ("TASK", "K1") in dialog._errors
+    assert ("TASK", "K1") in dialog.form.errors
     dialog.session.undo_stack.undo()
     assert dialog._commit_pending()
     dialog.close()

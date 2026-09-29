@@ -42,18 +42,18 @@ def test_bsf_rules_update_mirrors_labels_and_conditional_errors(application):
     assert {editor.accessibleName() for editor in emin} == {"Fixed energy"}
     assert all(editor.isHidden() for editor in emax)
     dialog.session.set_value(("TASK", "K1"), None)
-    assert ("TASK", "K1") in dialog._errors
+    assert ("TASK", "K1") in dialog.form.errors
 
     switch_mode(dialog, "EK")
     assert {editor.accessibleName() for editor in emin} == {"Minimum energy"}
     assert all(not editor.isHidden() for editor in emax)
     assert k1.isHidden()
-    assert ("TASK", "K1") not in dialog._errors
+    assert ("TASK", "K1") not in dialog.form.errors
 
     dialog.session.undo_stack.undo()
     application.processEvents()
     assert not k1.isHidden()
-    assert ("TASK", "K1") in dialog._errors
+    assert ("TASK", "K1") in dialog.form.errors
     assert {editor.accessibleName() for editor in emin} == {"Fixed energy"}
     dialog.close()
 

@@ -49,10 +49,10 @@ def test_scaling_invalid_draft_does_not_modify_session(application):
     dialog = GuidedInputParametersDialog("scf", InputParameters.create("scf"))
     control = dialog.editors_for(("MODE", "SOC"))[0].control
     control.table.item(0, 0).setData(Qt.ItemDataRole.EditRole, "bad")
-    assert ("MODE", "SOC") in dialog._errors
+    assert ("MODE", "SOC") in dialog.form.errors
     assert not dialog.session.is_modified()
     control.table.item(0, 0).setData(Qt.ItemDataRole.EditRole, .5)
-    assert ("MODE", "SOC") not in dialog._errors
+    assert ("MODE", "SOC") not in dialog.form.errors
     assert dialog.session.value(("MODE", "SOC"))["def"] == .5
     dialog.close()
 

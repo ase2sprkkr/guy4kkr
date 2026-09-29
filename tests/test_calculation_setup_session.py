@@ -350,7 +350,8 @@ def test_history_expands_and_scrolls_to_changed_detail_without_navigating_on_edi
     dialog.show()
     application.processEvents()
     editor, = dialog.editors_for(("MODE", "SOC"))
-    toggle = dialog._detail_toggles[editor]
+    toggle = dialog.form.view_for_editor(editor).detail_toggle
+    assert toggle is not None
     assert not toggle.isChecked()
     dialog.session.set_value(editor.path, .5, source_page="physical")
     application.processEvents()

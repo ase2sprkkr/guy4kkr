@@ -322,10 +322,10 @@ def test_unrelated_edit_preserves_invalid_kpath_draft_but_undo_discards_it(app):
     d = GuidedInputParametersDialog('bsf', p)
     editor = d.editors_for(('TASK', 'KA'))[0]
     editor.control.table.item(0, 0).setData(Qt.ItemDataRole.EditRole, 'bad')
-    assert ('TASK', 'KA') in d._errors
+    assert ('TASK', 'KA') in d.form.errors
     d.session.set_value(('CONTROL', 'PRINT'), 1)
     assert editor.control.table.item(0, 0).text() == 'bad'
-    assert ('TASK', 'KA') in d._errors
+    assert ('TASK', 'KA') in d.form.errors
     d.session.undo_stack.undo()
     assert not editor._error
     assert editor.control.table.item(0, 0).data(Qt.ItemDataRole.EditRole) == 0.

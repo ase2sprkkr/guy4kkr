@@ -35,8 +35,9 @@ def test_guided_delete_number_unsets_and_undo_restores(application, task, path, 
     dialog = GuidedInputParametersDialog(task, parameters)
     editor = dialog.editors_for(path)[0]
     dialog.select_page(editor.page_id)
-    if editor in dialog._detail_toggles:
-        dialog._detail_toggles[editor].setChecked(True)
+    toggle = dialog.form.view_for_editor(editor).detail_toggle
+    if toggle is not None:
+        toggle.setChecked(True)
     dialog.show()
     application.processEvents()
     assert editor.control.isEnabled()

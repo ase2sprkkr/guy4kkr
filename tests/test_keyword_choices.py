@@ -7,6 +7,7 @@ import pytest
 from ase import Atoms
 from ase.build import bulk
 from PyQt6.QtWidgets import QApplication, QComboBox
+from ase2sprkkr.common.grammar_types import String
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
@@ -121,6 +122,28 @@ def test_expert_optional_keyword_without_default_retains_unset(application):
     editor.setCurrentIndex(editor.findData("TB"))
     editor.setCurrentIndex(editor.findData(None))
     assert not option.is_set()
+    editor.close()
+
+
+def test_generic_text_editor_uses_grammar_conversion_not_parser(application, monkeypatch):
+    grammar_type = String()
+    converted = []
+    applied = []
+
+    def convert(value):
+        converted.append(value)
+        return value
+
+    def unexpected_parse(_text):
+        pytest.fail("Text editors should use grammar conversion, not grammar parsing")
+
+    monkeypatch.setattr(grammar_type, "convert", convert)
+    monkeypatch.setattr(grammar_type, "parse", unexpected_parse)
+    editor = create_option_editor(grammar_type, "initial", applied.append)
+    editor.setText("entered_text")
+    editor.editingFinished.emit()
+    assert converted == ["entered_text"]
+    assert applied == ["entered_text"]
     editor.close()
 
 

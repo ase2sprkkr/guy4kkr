@@ -26,10 +26,11 @@ def test_scf_fields_show_real_name_and_ase2sprkkr_help():
     application = QApplication.instance() or QApplication([])
     dialog = _dialog("scf")
 
-    for editor in dialog._editors:
+    for view in dialog.form.field_views:
+        editor = view.editor
         parameter_name = ".".join(editor.path)
         assert parameter_name in editor.toolTip()
-        assert parameter_name in dialog._labels_by_path[editor.path][0].toolTip()
+        assert parameter_name in view.label.toolTip()
 
     niter = dialog.editors_for(("SCF", "NITER"))[0]
     assert "SPR-KKR parameter: SCF.NITER" in niter.toolTip()
@@ -44,13 +45,11 @@ def test_all_task_fields_show_real_parameter_name_on_editor_and_label():
 
     for task in ("dos", "xas", "arpes", "bsf", "jxc"):
         dialog = _dialog(task)
-        for editor in dialog._editors:
+        for view in dialog.form.field_views:
+            editor = view.editor
             parameter_name = ".".join(editor.path)
             assert parameter_name in editor.toolTip()
-            assert any(
-                parameter_name in label.toolTip()
-                for label in dialog._labels_by_path[editor.path]
-            )
+            assert parameter_name in view.label.toolTip()
         dialog.close()
 
     application.processEvents()
