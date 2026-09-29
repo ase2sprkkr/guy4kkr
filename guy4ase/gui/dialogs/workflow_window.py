@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
@@ -37,7 +39,6 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-from guy4ase.gui.workspace import WorkspaceState
 
 
 def _set_action_button_content(
@@ -110,16 +111,19 @@ class WorkflowWindow(QMainWindow):
         _GROUP_DIFFERENT,
     )
 
-    def __init__(self, workspace: WorkspaceState | None = None):
+    def __init__(self, controller: WorkspaceController | None = None):
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
         self.resize(980, 680)
-        self.workspace = workspace or WorkspaceState()
-        self._expert = MainWindow(self.workspace)
+        self.controller = controller or WorkspaceController(parent=self)
+        self.workspace = self.controller.workspace
+        self.recent_history = RecentFiles()
+        self.recent_history.load()
+        self._expert = MainWindow(self.controller, self.recent_history)
         self._structure_kind: Optional[str] = None
 
-        self._expert.structureChanged.connect(self._on_structure_changed)
-        self._expert.calculationResultChanged.connect(lambda _result: self._refresh())
+        self.controller.structureChanged.connect(self._on_structure_changed)
+        self.controller.resultChanged.connect(lambda _result: self._refresh())
         self._build_ui()
         self._refresh()
 
@@ -312,13 +316,13 @@ class WorkflowWindow(QMainWindow):
         self._action_group(group).addWidget(button)
 
     def _add_recent_load_action(self) -> None:
-        recent_files = self._expert.recent_files
+        recent_files = self.recent_history.snapshot
         recent_structures = recent_files['structure']
         recent_outputs = recent_files['output']
         if not recent_structures and not recent_outputs:
             return
 
-        default_kind = self._expert.last_recent_kind
+        default_kind = self.recent_history.last_kind
         if default_kind == 'structure' and not recent_structures:
             default_kind = None
         if default_kind == 'output' and not recent_outputs:
@@ -495,6 +499,10 @@ class WorkflowWindow(QMainWindow):
         )
 
     def _on_structure_changed(self, atoms: Any) -> None:
+        if atoms is None:
+            self._structure_kind = None
+            self._refresh()
+            return
         if self._structure_kind is None:
             self._structure_kind = self._detect_structure_kind(atoms)
         self._refresh()
@@ -572,7 +580,7 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self._expert.restart_scf()
+            self.controller.restart_scf()
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
             return
@@ -590,8 +598,7 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._structure_kind = None
-        self._expert.reset_workspace()
-        self._refresh()
+        self.controller.reset()
 
     def _open_expert_mode(self) -> None:
         self._expert.show()

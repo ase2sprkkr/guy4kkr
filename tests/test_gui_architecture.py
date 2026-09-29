@@ -60,7 +60,11 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
         if module.startswith("guy4ase.gui.input_parameters.specs"):
             assert "guy4ase.gui.input_parameters.session" not in targets, module
         if module == "guy4ase.gui.style" or module.startswith(
-            ("guy4ase.gui.misc", "guy4ase.gui.plots")
+            (
+                "guy4ase.gui.application",
+                "guy4ase.gui.misc",
+                "guy4ase.gui.plots",
+            )
         ):
             assert not any(t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.widgets", "guy4ase.gui.input_parameters")) for t in targets), module
 
@@ -82,6 +86,27 @@ def test_workflow_uses_the_expert_window_public_interface_only():
     """Workflow may share state, but must not reach into expert internals."""
     source = (GUI / "dialogs" / "workflow_window.py").read_text()
     assert "self._expert._" not in source
+
+
+def test_workspace_mutation_and_history_persistence_are_outside_main_window():
+    source = (GUI / "dialogs" / "main_window.py").read_text()
+    for assignment in (
+        "self.workspace.atoms =",
+        "self.workspace.input_parameters =",
+        "self.workspace.directory =",
+        "self.workspace.potential_path =",
+        "self.workspace.result =",
+    ):
+        assert assignment not in source
+    assert "def _remember_recent" not in source
+    assert "def _load_recent_files" not in source
+    assert "def _save_recent_files" not in source
+
+
+def test_run_dialog_reports_completion_through_an_explicit_callback():
+    source = (GUI / "dialogs" / "run_calculation.py").read_text()
+    assert "handle_sprkkr_finished_result" not in source
+    assert "on_finished" in source
 
 
 def test_guided_renderer_has_no_task_specific_presentation_branches():

@@ -7,8 +7,9 @@ from ase import Atoms
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
+from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
-from guy4ase.gui.workspace import WorkspaceState
 
 
 def _action_title(widget):
@@ -64,7 +65,7 @@ def test_load_output_is_only_available_on_the_start_screen():
 
     assert "Load SPR-KKR Output" in _action_titles(window)
 
-    window.expert_window.set_structure(
+    window.controller.set_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     application.processEvents()
@@ -76,10 +77,11 @@ def test_load_output_is_only_available_on_the_start_screen():
 def test_workflow_and_expert_share_one_workspace():
     application = QApplication.instance() or QApplication([])
     workspace = WorkspaceState()
-    window = WorkflowWindow(workspace)
+    controller = WorkspaceController(workspace)
+    window = WorkflowWindow(controller)
 
     assert window.expert_window.workspace is workspace
-    window.expert_window.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
+    window.controller.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
     application.processEvents()
     assert workspace.atoms is not None
     window.close()
@@ -149,7 +151,7 @@ def test_group_labels_follow_dark_and_light_palette_text_color():
 def test_structure_actions_follow_requested_group_order():
     application = QApplication.instance() or QApplication([])
     window = WorkflowWindow()
-    window.expert_window.set_structure(
+    window.controller.set_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     window._scf_status = lambda _atoms: "CONVERGED"

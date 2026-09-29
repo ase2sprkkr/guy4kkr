@@ -4,7 +4,6 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
 
-from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -15,6 +14,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog
 
+from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs import main_window
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.dialogs.guided_input import (
@@ -262,7 +262,7 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept):
     window = main_window.MainWindow()
     p = InputParameters.create('dos')
     p.SITES.NL = [3, 4]
-    window.set_input_parameters(p)
+    window.controller.set_input_parameters(p)
     result = p.copy(copy_values=True)
     result.ENERGY.NE = [42]
     def edit(current, **kwargs):
@@ -275,21 +275,16 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept):
     window.close()
 
 
-def test_corrupt_recent_history_is_ignored(app, monkeypatch, tmp_path):
-    window = main_window.MainWindow()
+def test_corrupt_recent_history_is_ignored(tmp_path):
     history = tmp_path / 'recent_files.json'
     history.write_text('{not valid JSON', encoding='utf-8')
-    monkeypatch.setattr(window, '_recent_files_path', lambda: history)
-    window._recent_files = {'structure': [], 'input': [], 'output': []}
-    window._last_recent_kind = None
+    recent = RecentFiles(history)
+    recent.load()
 
-    window._load_recent_files()
-
-    assert window.recent_files == {
+    assert recent.snapshot == {
         'structure': (), 'input': (), 'output': (),
     }
-    assert window.last_recent_kind is None
-    window.close()
+    assert recent.last_kind is None
 
 
 def test_reset_workspace_clears_the_document_and_views(app):
@@ -300,7 +295,7 @@ def test_reset_workspace_clears_the_document_and_views(app):
     window.workspace.potential_path = '/tmp/potential'
     window.workspace.result = object()
 
-    window.reset_workspace()
+    window.controller.reset()
 
     assert window.workspace.atoms is None
     assert window.workspace.input_parameters is None

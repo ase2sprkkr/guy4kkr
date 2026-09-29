@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -78,13 +79,22 @@ class _SprkkrRunWorker(QObject):
 
 
 class SprkkrRunWindow(QDialog):
-    def __init__(self, atoms: Any, input_parameters: Any, directory: str, parent: Optional[Any] = None):
+    def __init__(
+        self,
+        atoms: Any,
+        input_parameters: Any,
+        directory: str,
+        parent: Optional[Any] = None,
+        *,
+        on_finished: Callable[[Any], None] | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("SPRKKR Run")
         self.resize(900, 600)
 
         self._thread: Optional[QThread] = None
         self._worker: Optional[_SprkkrRunWorker] = None
+        self._finished_callback = on_finished
 
         layout = QVBoxLayout(self)
 
@@ -171,10 +181,8 @@ class SprkkrRunWindow(QDialog):
 
     @pyqtSlot(object)
     def _on_finished(self, _result: object) -> None:
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "handle_sprkkr_finished_result"):
-            try:
-                parent.handle_sprkkr_finished_result(_result)
-            except Exception:
-                pass
-        self._stop_btn.setEnabled(False)
+        try:
+            if self._finished_callback is not None:
+                self._finished_callback(_result)
+        finally:
+            self._stop_btn.setEnabled(False)

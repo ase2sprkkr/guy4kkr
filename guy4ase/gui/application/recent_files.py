@@ -1,0 +1,127 @@
+"""Persistent recent-file history without Qt or window dependencies."""
+from __future__ import annotations
+
+import json
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Literal
+
+import platformdirs
+
+RecentKind = Literal["structure", "input", "output"]
+RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
+
+
+def default_recent_files_path() -> Path:
+    """Return the per-user history path used by the application."""
+    config_home = platformdirs.user_config_dir(
+        "guy4ase", appauthor="ase2sprkkr"
+    )
+    return Path(config_home) / "recent_files.json"
+
+
+class RecentFiles:
+    """Load, normalize and persist bounded recent-file lists."""
+
+    def __init__(self, path: Path | None = None, *, limit: int = 10) -> None:
+        if limit < 1:
+            raise ValueError("Recent-file limit must be positive.")
+        self.path = path or default_recent_files_path()
+        self.limit = limit
+        self._files: dict[RecentKind, list[str]] = {
+            kind: [] for kind in RECENT_KINDS
+        }
+        self.last_kind: RecentKind | None = None
+
+    def paths(self, kind: RecentKind) -> tuple[str, ...]:
+        """Return an immutable snapshot for one file kind."""
+        return tuple(self._files[kind])
+
+    @property
+    def snapshot(self) -> dict[str, tuple[str, ...]]:
+        """Return an immutable snapshot of all histories."""
+        return {kind: tuple(self._files[kind]) for kind in RECENT_KINDS}
+
+    @staticmethod
+    def _normalize(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(str(item) for item in value))
+
+    def load(self) -> None:
+        """Load history; corrupt or unreadable caches behave as empty."""
+        self._files = {kind: [] for kind in RECENT_KINDS}
+        self.last_kind = None
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+
+        if isinstance(data, list):  # legacy structure-only format
+            self._files["structure"] = self._normalize(data)[: self.limit]
+            return
+        if not isinstance(data, dict):
+            return
+        values = data.get("recent_files")
+        if isinstance(values, dict):
+            for kind in RECENT_KINDS:
+                self._files[kind] = self._normalize(values.get(kind))[: self.limit]
+        last_kind = data.get("last_recent_kind")
+        if last_kind in {"structure", "output"}:
+            self.last_kind = last_kind
+
+    def save(self) -> bool:
+        """Persist history, returning false when the cache is not writable."""
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "recent_files": self._files,
+                "last_recent_kind": self.last_kind,
+            }
+            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def remember(self, kind: RecentKind, file_path: str | Path) -> None:
+        """Move a path to the front and persist the bounded history."""
+        normalized = str(Path(file_path))
+        recent = self._files[kind]
+        recent[:] = [item for item in recent if item != normalized]
+        recent.insert(0, normalized)
+        del recent[self.limit :]
+        if kind in {"structure", "output"}:
+            self.last_kind = kind
+        self.save()
+
+    def forget(self, kind: RecentKind, file_path: str | Path) -> None:
+        """Remove one path and persist only if the history changed."""
+        normalized = str(Path(file_path))
+        previous = self._files[kind]
+        retained = [item for item in previous if item != normalized]
+        if retained == previous:
+            return
+        self._files[kind] = retained
+        self._repair_last_kind()
+        self.save()
+
+    def remove_missing(self, kinds: Iterable[RecentKind] = RECENT_KINDS) -> None:
+        """Remove paths which no longer exist and persist any change."""
+        changed = False
+        for kind in kinds:
+            retained = [path for path in self._files[kind] if Path(path).exists()]
+            if retained != self._files[kind]:
+                self._files[kind] = retained
+                changed = True
+        if changed:
+            self._repair_last_kind()
+            self.save()
+
+    def _repair_last_kind(self) -> None:
+        if self.last_kind is not None and not self._files[self.last_kind]:
+            if self._files["output"]:
+                self.last_kind = "output"
+            elif self._files["structure"]:
+                self.last_kind = "structure"
+            else:
+                self.last_kind = None

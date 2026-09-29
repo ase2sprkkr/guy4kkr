@@ -25,10 +25,12 @@
   primary/secondary action states. Semantic colors and layout remain with the
   window or task that owns their meaning; this is intentionally not a theme
   manager.
-- `workspace.WorkspaceState`: the Qt-independent current document: structure,
-  input parameters, working directory, potential and calculation result.
-  `MainWindow` renders and mutates it through public operations; guided
-  `WorkflowWindow` shares the same instance rather than accessing its internals.
+- `application`: shared application state and orchestration, kept separate from
+  Qt windows and reusable widgets. `application.workspace.WorkspaceState` is
+  the Qt-independent current document. `application.workspace_controller`
+  provides its single mutation/signalling boundary, and
+  `application.recent_files` owns Qt-independent history persistence. Menus
+  and other presentation state remain owned by the windows.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat
@@ -151,6 +153,9 @@ and expert tree. Additional validation/application is passed through its
 ## Dependency rules
 
 - Dialogs compose widgets and parameter-editing services.
+- Windows render `WorkspaceController` changes; they do not assign document
+  fields directly. Calculation completion is delivered through an explicit
+  callback rather than by inspecting a parent window for a named method.
 - Widgets may use parameter services and small helpers, but never import
   concrete application dialogs. Use signals or callbacks to request actions.
 - `input_parameters` must not import `dialogs` or `widgets`.
