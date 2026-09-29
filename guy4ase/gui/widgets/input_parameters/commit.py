@@ -23,7 +23,6 @@ class EditorCommit(QObject):
         self.apply_value = apply_value
         self.error = ''
         self._shown = deepcopy(read_value())
-        widget.input_commit = self
 
     def refresh(self):
         self._shown = deepcopy(self.read_value())

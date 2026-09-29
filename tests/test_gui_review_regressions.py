@@ -217,14 +217,13 @@ def test_invalid_expert_text_blocks_ok_until_corrected(app):
     _, editor = tree_editor(d, 'MDIR')
     editor.setText('garbage')
     editor.editingFinished.emit()
-    assert editor.input_commit.error
+    assert 'MDIR:' in d._editor_error.text()
     d._on_ok()
     assert QDialog.result(d) != QDialog.DialogCode.Accepted
     assert d.result().MODE.MDIR() is None
     editor.setText('{0,0,1}')
     editor.editingFinished.emit()
-    assert not editor.input_commit.error
-    assert not d._editor_error.isVisible()
+    assert not d._editor_error.text()
     d._on_ok()
     assert QDialog.result(d) == QDialog.DialogCode.Accepted
     d.close()
@@ -238,12 +237,12 @@ def test_expert_numeric_error_is_inline_and_keeps_model(app):
     item, _ = tree_editor(d, 'NE')
     editor = d._tree.itemWidget(item.child(0), 2)
     editor.setValue(1)
-    assert editor.input_commit.error
+    assert '[0]:' in d._editor_error.text()
     assert d.result().ENERGY.NE()[0] == 200
     d._on_ok()
     assert QDialog.result(d) != QDialog.DialogCode.Accepted
     editor.setValue(200)
-    assert not editor.input_commit.error
+    assert not d._editor_error.text()
     d.close()
 
 

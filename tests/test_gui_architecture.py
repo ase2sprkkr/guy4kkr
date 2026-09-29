@@ -16,8 +16,24 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.input_parameters.bindings import InputParametersBinding
+from guy4ase.gui.input_parameters.field_binding import (
+    IndexedFieldBinding,
+    SessionFieldBinding,
+)
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditor,
+    ParameterValueEditorWidget,
+)
+from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
+from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
+from guy4ase.gui.widgets.input_parameters.scalar import (
+    BooleanEditor,
+    ChoiceEditor,
+    IntegerEditor,
+    RealEditor,
+    TextEditor,
+)
 from guy4ase.gui.widgets.input_parameters.registry import EDITOR_FACTORIES
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
@@ -212,11 +228,23 @@ def test_generic_parameter_adapter_has_no_registered_editor_implementations():
     assert "input_parameters.bsf" not in common_source
 
 
-def test_registered_parameter_editors_share_one_explicit_contract():
+def test_all_parameter_value_editors_share_one_explicit_contract():
     assert EDITOR_FACTORIES
     assert all(
-        issubclass(factory, CompoundParameterEditor)
+        issubclass(factory, ParameterValueEditorWidget)
         for factory in EDITOR_FACTORIES.values()
+    )
+    assert all(
+        issubclass(editor, ParameterValueEditor)
+        for editor in (
+            IntegerEditor,
+            RealEditor,
+            BooleanEditor,
+            ChoiceEditor,
+            TextEditor,
+            EnergyEditor,
+            VectorEditor,
+        )
     )
     source = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
     for capability in (
@@ -228,6 +256,52 @@ def test_registered_parameter_editors_share_one_explicit_contract():
     ):
         assert f'getattr(self.control, "{capability}"' not in source
         assert f'hasattr(self.control, "{capability}"' not in source
+
+
+def test_parameter_editor_does_not_reconstruct_value_editor_dispatch():
+    source = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
+    for implementation in (
+        "QSpinBox",
+        "QDoubleSpinBox",
+        "QCheckBox",
+        "QComboBox",
+        "QLineEdit",
+        "EnergyEditor",
+        "VectorEditor",
+        "input_commit",
+        '("ENERGY", "GRID")',
+        '("ENERGY", "NE")',
+    ):
+        assert implementation not in source
+    for operation in (
+        "self.control.refresh()",
+        "self.control.commit()",
+        "self.control.focus_for_history(path, index)",
+    ):
+        assert operation in source
+
+
+def test_indexing_is_the_only_specialized_field_binding_capability():
+    assert "index" not in SessionFieldBinding.__dict__
+    assert "index" in IndexedFieldBinding.__dict__
+    source = (GUI / "input_parameters" / "field_binding.py").read_text()
+    assert "EnergyFieldBinding" not in source
+    assert 'placement.kind == "energy"' not in source
+
+
+def test_energy_editor_selection_is_explicit_not_inferred_from_grammar():
+    source = (GUI / "widgets" / "input_parameters" / "scalar.py").read_text()
+    assert "def _editor_kind" not in source
+    assert 'if kind == "energy" or isinstance(grammar_type, Energy)' not in source
+    parameter = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
+    assert "editor_kind=spec.kind" in parameter
+
+
+def test_expert_dialog_commits_only_explicitly_registered_value_editors():
+    source = (GUI / "dialogs" / "expert_input.py").read_text()
+    assert "item.setData(0, self._VALUE_EDITOR_ROLE, True)" in source
+    assert "if not editor.commit():" in source
+    assert "isinstance(editor, ParameterValueEditor) and not editor.commit()" not in source
 
 
 def test_packages_and_specs_do_not_load_dialogs_or_qt():

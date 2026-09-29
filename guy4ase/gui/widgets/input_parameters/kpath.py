@@ -1,17 +1,18 @@
 """Reusable numeric vector editor backed by the shared session."""
 
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem, QVBoxLayout
 
 from guy4ase.gui.misc.tables import fit_table_height
 from guy4ase.gui.widgets.numeric_table import CoordinateDelegate, coordinate_value
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditorWidget,
+)
 
 
-class VectorEditor(QWidget):
+class VectorEditor(ParameterValueEditorWidget):
     """A three-component vector with full-precision editing and optional unset state."""
-    validationChanged = pyqtSignal(str)
-
     def __init__(self, session, path, page_id, parent=None):
         super().__init__(parent)
         self.session, self.path, self.page_id = session, path, page_id

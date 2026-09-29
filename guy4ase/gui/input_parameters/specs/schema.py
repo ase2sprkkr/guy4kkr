@@ -45,7 +45,7 @@ class FieldPlacement:
     """Describe a view of an option, not an additional stored parameter value.
 
     ``index`` selects one array element; ``related_paths`` belong to the same
-    composite editor. ``editor`` names an optional registered compound control;
+    composite editor. ``editor`` names an optional registered value editor;
     it is unrelated to the field's page or group. Defaults come exclusively
     from InputParameters and are shown as placeholders, not duplicated here.
     """

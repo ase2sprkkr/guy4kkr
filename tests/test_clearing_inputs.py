@@ -118,7 +118,7 @@ def test_expert_site_text_uses_input_grammar(application):
     control.editingFinished.emit()
 
     assert parameters.TAU.IQCNTR() == 3
-    assert not control.input_commit.error
+    assert not dialog._editor_error.text()
     dialog.close()
 
 

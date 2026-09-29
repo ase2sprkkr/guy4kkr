@@ -24,7 +24,9 @@ from guy4ase.gui.input_parameters.bsf import (
 )
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
 from guy4ase.gui.misc.tables import fit_table_height
-from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditorWidget,
+)
 from guy4ase.gui.widgets.numeric_table import (
     CoordinateDelegate,
     CoordinateTable,
@@ -32,7 +34,7 @@ from guy4ase.gui.widgets.numeric_table import (
 )
 
 
-class BsfMeshEditor(CompoundParameterEditor):
+class BsfMeshEditor(ParameterValueEditorWidget):
     """Edit BSF E-k/k-k mode and the main energy sampling as one value."""
 
     dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"))
@@ -115,7 +117,7 @@ class BsfMeshEditor(CompoundParameterEditor):
         self.energy_count.setToolTip(text)
 
 
-class BsfKPathEditor(CompoundParameterEditor):
+class BsfKPathEditor(ParameterValueEditorWidget):
     """Select an atom-dependent predefined path or edit a custom path."""
 
     # Additional input beyond placement.paths: KA determines the custom-path
@@ -248,7 +250,7 @@ class BsfKPathEditor(CompoundParameterEditor):
             widget.setToolTip(text)
 
 
-class BsfVectorsEditor(CompoundParameterEditor):
+class BsfVectorsEditor(ParameterValueEditorWidget):
     """Edit BSF path segments or the plane origin as one atomic control.
 
     The table is an editing buffer, refreshed from the session on undo/redo.
@@ -493,7 +495,7 @@ class BsfVectorsEditor(CompoundParameterEditor):
         self.table.setToolTip(text)
 
 
-EDITORS: dict[str, type[CompoundParameterEditor]] = {
+EDITORS: dict[str, type[ParameterValueEditorWidget]] = {
     "bsf_mesh": BsfMeshEditor,
     "bsf_kpath": BsfKPathEditor,
     "bsf_vectors": BsfVectorsEditor,

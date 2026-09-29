@@ -185,7 +185,25 @@ class InputParametersSession(QObject):
 
     def single_site_value(self, path: InputParameterPath) -> Any:
         """Display a remembered, disabled mesh without writing it to input."""
-        return self._single_site.get(path[1])
+        return self._single_site.get(path)
+
+    def display_value(self, path: InputParameterPath, index: int | None = None) -> Any:
+        """Return one displayed field value, including dormant editing state.
+
+        Dormant single-site mesh components are deliberately not written into
+        InputParameters while their mode is disabled. The field binding asks
+        the session for that presentation value rather than knowing which
+        concrete ENERGY options participate in this mechanism.
+        """
+        value = self.value(path)
+        if index is None:
+            return value
+        try:
+            if value is not None and len(value) > index:
+                return value[index]
+        except TypeError:
+            return None
+        return self._single_site.get(path) if index == 1 else None
 
     def history_description(self, *, undo: bool) -> str:
         """Describe the next history command, with old/new values for its tooltip."""
@@ -276,12 +294,13 @@ class InputParametersSession(QObject):
         # edits. Only a transition of the effective switch changes array lengths.
         if before != after:
             for name in ("GRID", "NE"):
-                option = resolve_option(candidate, ("ENERGY", name))
+                path = ("ENERGY", name)
+                option = resolve_option(candidate, path)
                 values = list(option())
                 if after and len(values) == 1:
-                    option.set(values + [remembered.get(name, values[0])])
+                    option.set(values + [remembered.get(path, values[0])])
                 elif not after and len(values) > 1:
-                    remembered[name] = deepcopy(values[1])
+                    remembered[path] = deepcopy(values[1])
                     option.set(values[:1])
         return remembered
 

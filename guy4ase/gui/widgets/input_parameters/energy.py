@@ -5,11 +5,13 @@ from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy
 
 from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import convert_energy
-from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditorWidget,
+)
 from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox
 
 
-class EnergyEditor(CompoundParameterEditor):
+class EnergyEditor(ParameterValueEditorWidget):
     """Independent widget: reads state and commits via caller-supplied callbacks.
 
     Unit selection is presentation only. A reference change reinterprets the

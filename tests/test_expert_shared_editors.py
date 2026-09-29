@@ -63,7 +63,7 @@ def test_invalid_scaling_blocks_expert_accept_and_keeps_draft(application):
     assert 'MODE.SOC' in dialog._editor_error.text()
     assert dialog.result().MODE.SOC(all_values=True) == {'def': 1.}
     control.table.item(0, 0).setData(Qt.ItemDataRole.EditRole, .5)
-    assert not dialog._special_errors
+    assert not dialog._editor_error.text()
     dialog._on_ok()
     assert not dialog.isVisible()
     assert dialog.result().MODE.SOC(all_values=True) == {'def': .5}

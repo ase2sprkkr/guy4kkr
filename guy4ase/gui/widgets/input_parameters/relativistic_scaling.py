@@ -14,11 +14,13 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.misc.tables import fit_table_height
-from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditorWidget,
+)
 from guy4ase.gui.widgets.numeric_table import CoordinateDelegate, coordinate_value
 
 
-class RelativisticScalingEditor(CompoundParameterEditor):
+class RelativisticScalingEditor(ParameterValueEditorWidget):
     """Rows are the global setting and explicit type indices (not site indices).
 
     A scalar/one-element array applies to all orbitals. Array-capable option

@@ -1,9 +1,9 @@
-"""Registry for compound field editors kept outside the generic adapter."""
+"""Registry for task-specific value editors kept outside the generic adapter."""
 from __future__ import annotations
 
 from .bsf import EDITORS as BSF_EDITORS
 from .common import EDITORS as COMMON_EDITORS
-from .compound import CompoundParameterEditor
+from .value_editor import ParameterValueEditorWidget
 
 EDITOR_FACTORIES = {
     **COMMON_EDITORS,
@@ -11,7 +11,7 @@ EDITOR_FACTORIES = {
 }
 
 
-def create_compound_editor(
+def create_registered_editor(
     name,
     session,
     placement,
@@ -19,15 +19,15 @@ def create_compound_editor(
     *,
     atoms=None,
     parent=None,
-) -> CompoundParameterEditor:
-    """Instantiate a registered editor implementing the explicit contract."""
+) -> ParameterValueEditorWidget:
+    """Instantiate a task-specific editor implementing the shared contract."""
     try:
         factory = EDITOR_FACTORIES[name]
     except KeyError as exc:
-        raise ValueError(f"Unknown compound input editor {name!r}") from exc
+        raise ValueError(f"Unknown registered input editor {name!r}") from exc
     editor = factory(session, placement, page_id, atoms=atoms, parent=parent)
-    if not isinstance(editor, CompoundParameterEditor):
+    if not isinstance(editor, ParameterValueEditorWidget):
         raise TypeError(
-            f"Compound editor {name!r} must inherit CompoundParameterEditor"
+            f"Registered editor {name!r} must inherit ParameterValueEditorWidget"
         )
     return editor

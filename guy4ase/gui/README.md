@@ -7,7 +7,7 @@
   `guy4ase.main` remains the application entry point.
 - `widgets`: reusable controls. `widgets.input_parameters` contains editors for
   ase2sprkkr `InputParameters`; these are shared by guided and expert editing.
-  Task-only compound controls live in modules such as
+  Task-only composite controls live in modules such as
   `widgets.input_parameters.bsf`; structure-specific controls live in
   `widgets.structures`.
 - `input_parameters`: editing state, backend bindings, energy/BSF operations,
@@ -58,10 +58,12 @@ The guided dialog uses the session's corresponding access methods, preserving
 Undo/Redo. The getter follows replacement of the object after loading text input.
 
 The expert dialog also edits a copy: Cancel never modifies its caller's input.
-Ordinary expert controls use `widgets.input_parameters.commit.EditorCommit` to
-contain validation exceptions and avoid writing unchanged, rounded display
-values back into the model. Both dialogs use `input_parameters.validation` for
-completion checks, without requiring calculator-supplied files such as POTFIL.
+Ordinary scalar controls use `widgets.input_parameters.commit.EditorCommit`
+internally to contain validation exceptions and avoid writing unchanged,
+rounded display values back into the model. It is an implementation helper,
+not a protocol inspected by either dialog. Both dialogs use
+`input_parameters.validation` for completion checks, without requiring
+calculator-supplied files such as POTFIL.
 
 Implicit backend defaults appear as placeholders (`Default: …`) in text and
 numeric inputs. They are not presets and are not stored by focusing a control.
@@ -105,7 +107,7 @@ must only inspect the context. They must not mutate `InputParameters` or invoke
 Qt code—the renderer reapplies them after every session replacement, including
 Undo/Redo, loaded input and accepted expert edits.
 
-Compound task-specific controls are selected by `FieldPlacement.editor`, never
+Task-specific controls are selected by `FieldPlacement.editor`, never
 by a page or group ID:
 
 ```python
@@ -113,9 +115,12 @@ field("TASK", "KA", "Path segments:", editor="bsf_vectors",
       related_paths=(("TASK", "KE"),))
 ```
 
-Factories are collected in `widgets.input_parameters.registry`. Every factory
-returns a `CompoundParameterEditor`; this base class is the executable contract
-and supplies defaults for optional capabilities. Task-specific
+Factories are collected in `widgets.input_parameters.registry`. Scalar,
+energy, vector and registered task-specific controls all implement the single
+`ParameterValueEditor` lifecycle. `ParameterValueEditorWidget` is only a
+convenient QWidget base for controls composed from child widgets; it is not a
+separate editor category. The contract supplies defaults for optional
+capabilities. Task-specific
 implementations such as BSF mode, path selection and path vectors live in
 `widgets.input_parameters.bsf`; shared session adapters for energy bounds and
 relativistic scaling live in `widgets.input_parameters.common`. Such a control
@@ -123,8 +128,17 @@ implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
 `validationChanged(str)`, and may declare `dependencies` and `full_width`.
 Task-specific modal controls, such as the BSF custom K-path editor, handle
 their action in the registered widget and mutate the session for Undo/Redo.
-`ParameterEditor` remains the session/tooltip/presentation adapter and does not
-know the internals of registered controls.
+`input_parameters.field_binding.SessionFieldBinding` maps a scalar or whole
+option to its value, default and atomic session write. An explicitly indexed
+placement uses `IndexedFieldBinding`; the option's array type alone does not
+imply indexing because fields such as `MSPIN` edit the whole array. Energy-unit
+conversion belongs to the energy value editor rather than the storage binding.
+The field declaration selects that presentation explicitly with
+`kind="energy"`; it is not inferred from the option's grammar type.
+Dormant single-site mesh values remain owned by the session.
+`ParameterEditor` remains the
+session/tooltip/presentation shell and delegates `refresh()`, `commit()` and
+history focus without knowing any concrete Qt value-editor type.
 
 `widgets.input_parameters.form.GuidedFormRenderer` owns the rendered anatomy of
 the guided form. Its `PageView`, `GroupView` and `FieldView` objects keep an
@@ -138,7 +152,7 @@ than in the dialog.
 The smallest new editor therefore only needs the lifecycle methods:
 
 ```python
-class MyEditor(CompoundParameterEditor):
+class MyEditor(ParameterValueEditorWidget):
     def refresh(self): ...
     def commit(self) -> bool: ...
 ```

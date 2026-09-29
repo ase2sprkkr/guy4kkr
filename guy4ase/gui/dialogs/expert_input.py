@@ -50,6 +50,7 @@ from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
     RelativisticScalingEditor,
 )
 from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
+from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 
 
 def _mutable_sequence(value: Any) -> list[Any]:
@@ -99,6 +100,7 @@ class _TreeEditorBinding(InputParametersBinding):
 class InputParametersDialog(_TreeDialogBase):
     """Edit an isolated parameter copy; only the accepted result is published."""
     _CHANGED_ROLE = Qt.ItemDataRole.UserRole
+    _VALUE_EDITOR_ROLE = Qt.ItemDataRole.UserRole + 2
 
     def __init__(
         self,
@@ -145,7 +147,6 @@ class InputParametersDialog(_TreeDialogBase):
 
     def _build_tree(self) -> None:
         self._special_editors = {}
-        self._special_errors = {}
         self._editor_errors = {}
         self._editor_error.hide()
         self._tree.clear()
@@ -237,7 +238,7 @@ class InputParametersDialog(_TreeDialogBase):
                 option=opt,
                 atoms=self._atoms,
             )
-            self._set_editor(item, editor)
+            self._set_editor(item, editor, '.'.join(path))
 
     def _build_energy_option(self, opt, item, path, paired=False):
         binding = _TreeEditorBinding(self, item)
@@ -263,15 +264,15 @@ class InputParametersDialog(_TreeDialogBase):
             editor = create_option_editor(
                 opt._definition.type,
                 None,
+                editor_kind="energy",
                 parent=self._tree,
                 energy_state=state,
                 energy_apply=apply,
             )
         binding.editor = editor
         editor.setMinimumWidth(320)
-        editor.validationChanged.connect(lambda message: self._special_validation_changed(path, item, message))
         self._special_editors[path] = (binding, item)
-        self._set_editor(item, editor)
+        self._set_editor(item, editor, '.'.join(path))
         self._tree.setColumnWidth(2, max(320, self._tree.columnWidth(2)))
         binding.refresh()
         self._update_changed_style(opt, item, refresh_filter=False)
@@ -286,19 +287,10 @@ class InputParametersDialog(_TreeDialogBase):
         editor = RelativisticScalingEditor(binding, path, 'expert', self._tree)
         binding.editor = editor
         editor.setMinimumWidth(280)
-        editor.validationChanged.connect(lambda message: self._special_validation_changed(path, item, message))
         self._special_editors[path] = (binding, item)
-        self._set_editor(item, editor)
+        self._set_editor(item, editor, '.'.join(path))
         self._tree.setColumnWidth(2, max(280, self._tree.columnWidth(2)))
         binding.refresh()
-
-    def _special_validation_changed(self, path, item, message):
-        if message:
-            self._special_errors[path] = message
-        else:
-            self._special_errors.pop(path, None)
-        self._refresh_editor_errors()
-        item.setToolTip(2, message)
 
     def _set_option_value(self, opt: Any, item: QTreeWidgetItem, value: Any) -> None:
         opt.set(value)
@@ -351,43 +343,42 @@ class InputParametersDialog(_TreeDialogBase):
         self._set_editor(item, editor)
         item.setToolTip(2, editor.text())
 
-    def _set_editor(self, item, editor):
-        """Install a control and surface ordinary and compound validation uniformly."""
+    def _set_editor(self, item, editor, error_label=None):
+        """Install a control and surface value-editor validation uniformly."""
+        if not isinstance(editor, ParameterValueEditor):
+            raise TypeError("Expert value controls must implement ParameterValueEditor")
+        item.setData(0, self._VALUE_EDITOR_ROLE, True)
         self._tree.setItemWidget(item, 2, editor)
-        commit = getattr(editor, 'input_commit', None)
-        if commit is not None:
-            commit.validationChanged.connect(
-                lambda message: self._display_editor_error(item, message))
+        editor.validationChanged.connect(
+            lambda message: self._display_editor_error(
+                item, error_label or item.text(0), message))
 
-    def _display_editor_error(self, item, message):
+    def _display_editor_error(self, item, label, message):
         key = id(item)
         if message:
-            self._editor_errors[key] = (item, message)
+            self._editor_errors[key] = (item, label, message)
         else:
             self._editor_errors.pop(key, None)
         self._refresh_editor_errors()
 
     def _refresh_editor_errors(self):
         self._editor_errors = {
-            key: (item, error)
-            for key, (item, error) in self._editor_errors.items()
+            key: (item, label, error)
+            for key, (item, label, error) in self._editor_errors.items()
             if not sip.isdeleted(item)
         }
-        messages = [
-            f"{'.'.join(path)}: {error}"
-            for path, error in self._special_errors.items()
-        ]
-        messages.extend(
-            f"{item.text(0)}: {error}"
-            for item, error in self._editor_errors.values()
+        messages = list(
+            f"{label}: {error}"
+            for _item, label, error in self._editor_errors.values()
         )
         self._editor_error.setText('\n'.join(messages))
         self._editor_error.setVisible(bool(messages))
 
     def _editor_widgets(self):
-        """Snapshot current tree controls; a commit may rebuild compound children."""
+        """Snapshot registered value editors; a commit may rebuild child rows."""
         def walk(item):
-            yield item, self._tree.itemWidget(item, 2)
+            if item.data(0, self._VALUE_EDITOR_ROLE):
+                yield item, self._tree.itemWidget(item, 2)
             for index in range(item.childCount()):
                 yield from walk(item.child(index))
         return list(walk(self._tree.invisibleRootItem()))
@@ -596,9 +587,7 @@ class InputParametersDialog(_TreeDialogBase):
         for item, editor in self._editor_widgets():
             if editor is None or sip.isdeleted(editor) or sip.isdeleted(item):
                 continue
-            controller = getattr(editor, 'input_commit', editor)
-            commit = getattr(controller, 'commit', None)
-            if commit is not None and not commit():
+            if not editor.commit():
                 self._filter_edit.clear()
                 self._changed_only_checkbox.setChecked(False)
                 parent = item.parent()
