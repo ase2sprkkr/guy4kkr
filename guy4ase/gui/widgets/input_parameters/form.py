@@ -28,7 +28,7 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PresentationContext,
     TaskDialogSpec,
 )
-from guy4ase.gui.misc.colors import blend
+from guy4ase.gui.style import SPACE_MD, SPACE_SM, group_panel_stylesheet
 from guy4ase.gui.widgets.input_parameters.parameter import EDITOR_WIDTH, ParameterEditor
 
 LABEL_WIDTH = 245
@@ -41,7 +41,7 @@ class FieldView:
     placement: FieldPlacement
     editor: ParameterEditor
     label: QLabel
-    page: "PageView"
+    page: PageView
     display_widgets: tuple[QWidget, ...]
     auxiliary_widgets: tuple[QWidget, ...] = ()
     detail_toggle: QToolButton | None = None
@@ -193,8 +193,8 @@ class GuidedFormRenderer(QObject):
         page = PageView(spec, scroll)
         content = QWidget(scroll)
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(12)
+        layout.setContentsMargins(SPACE_SM, SPACE_SM, SPACE_SM, SPACE_SM)
+        layout.setSpacing(SPACE_MD)
         for group_spec in spec.groups:
             group = self._add_group(page, group_spec, content)
             page.groups.append(group)
@@ -213,22 +213,10 @@ class GuidedFormRenderer(QObject):
         group_widget = QGroupBox("" if spec.collapsed else spec.title, parent)
         if spec.id:
             group_widget.setObjectName(spec.id)
-        background = self.pages_widget.palette().window().color()
-        group_tint = blend(
-            background,
-            QColor(page.spec.color),
-            .08 if background.lightness() > 128 else .16,
-        )
-        border = blend(
-            self.pages_widget.palette().mid().color(),
-            QColor(page.spec.color),
-            .25,
-        )
         group_widget.setStyleSheet(
-            "QGroupBox {"
-            f"background-color: {group_tint.name()}; border: 1px solid {border.name()};"
-            "border-radius: 5px; margin-top: 0.8em; padding: 8px;"
-            "} QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
+            group_panel_stylesheet(
+                self.pages_widget.palette(), QColor(page.spec.color)
+            )
         )
         group_layout = QVBoxLayout(group_widget)
         fields = QWidget(group_widget)
@@ -245,8 +233,8 @@ class GuidedFormRenderer(QObject):
         grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 0)
         grid.setColumnStretch(2, 1)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(7)
+        grid.setHorizontalSpacing(SPACE_MD)
+        grid.setVerticalSpacing(SPACE_SM)
 
         group = GroupView(spec, group_widget, toggle=toggle)
         for row, placement in enumerate(spec.fields):

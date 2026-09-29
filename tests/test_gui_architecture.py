@@ -59,7 +59,9 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
             assert not any(t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.widgets")) for t in targets), module
         if module.startswith("guy4ase.gui.input_parameters.specs"):
             assert "guy4ase.gui.input_parameters.session" not in targets, module
-        if module.startswith(("guy4ase.gui.misc", "guy4ase.gui.plots")):
+        if module == "guy4ase.gui.style" or module.startswith(
+            ("guy4ase.gui.misc", "guy4ase.gui.plots")
+        ):
             assert not any(t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.widgets", "guy4ase.gui.input_parameters")) for t in targets), module
 
     visited = set()
@@ -114,6 +116,17 @@ def test_guided_dialog_delegates_field_anatomy_to_form_views():
     assert "navigation_item" not in renderer
     assert "navigation_label" not in renderer
     assert "navigation_tint" not in renderer
+
+
+def test_workflow_and_guided_renderer_use_shared_visual_primitives():
+    """Shared styling belongs below dialogs; semantic colors remain local."""
+    workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
+    guided = (GUI / "dialogs" / "guided_input.py").read_text()
+    renderer = (GUI / "widgets" / "input_parameters" / "form.py").read_text()
+    assert "def _blend_color" not in workflow
+    assert "guy4ase.gui.style" in workflow
+    assert "guy4ase.gui.style" in guided
+    assert "guy4ase.gui.style" in renderer
 
 
 def test_generic_parameter_adapter_has_no_registered_editor_implementations():

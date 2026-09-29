@@ -23,9 +23,21 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.dialogs.main_window import MainWindow
-from guy4ase.gui.workspace import WorkspaceState
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.style import (
+    SPACE_LG,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XS,
+    SPACE_XXL,
+    action_card_stylesheet,
+    button_stylesheet,
+    group_panel_stylesheet,
+    heading_font,
+    secondary_text_stylesheet,
+)
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.gui.workspace import WorkspaceState
 
 
 def _set_action_button_content(
@@ -44,8 +56,10 @@ def _set_action_button_content(
     button.setAccessibleDescription(description)
 
     layout = QHBoxLayout(button)
-    layout.setContentsMargins(16, 8, 34 if menu_button else 16, 8)
-    layout.setSpacing(16)
+    layout.setContentsMargins(
+        SPACE_LG, SPACE_SM, 34 if menu_button else SPACE_LG, SPACE_SM
+    )
+    layout.setSpacing(SPACE_LG)
 
     icon_label = QLabel(button)
     icon_label.setFixedSize(icon_size)
@@ -56,16 +70,30 @@ def _set_action_button_content(
     )
     layout.addWidget(icon_label)
 
-    text = title if not description else f"{title}\n{description}"
-    text_label = QLabel(text, button)
-    text_label.setForegroundRole(QPalette.ColorRole.ButtonText)
-    text_label.setSizePolicy(
+    text_widget = QWidget(button)
+    text_layout = QVBoxLayout(text_widget)
+    text_layout.setContentsMargins(0, 0, 0, 0)
+    text_layout.setSpacing(2)
+    title_label = QLabel(title, text_widget)
+    title_label.setForegroundRole(QPalette.ColorRole.ButtonText)
+    title_label.setFont(heading_font(title_label.font(), "section"))
+    title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    text_layout.addWidget(title_label)
+    if description:
+        description_label = QLabel(description, text_widget)
+        description_label.setForegroundRole(QPalette.ColorRole.ButtonText)
+        description_label.setWordWrap(True)
+        description_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        text_layout.addWidget(description_label)
+    text_widget.setSizePolicy(
         QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
     )
-    text_label.setAttribute(
+    text_widget.setAttribute(
         Qt.WidgetAttribute.WA_TransparentForMouseEvents
     )
-    layout.addWidget(text_label, 1)
+    layout.addWidget(text_widget, 1)
 
 
 class WorkflowWindow(QMainWindow):
@@ -103,7 +131,7 @@ class WorkflowWindow(QMainWindow):
         central = QWidget(self)
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
-        root.setContentsMargins(32, 28, 24, 28)
+        root.setContentsMargins(SPACE_XXL, SPACE_XL, SPACE_XL, SPACE_XL)
         root.setSpacing(0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, central)
@@ -114,20 +142,21 @@ class WorkflowWindow(QMainWindow):
         content = QWidget(splitter)
         content.setMinimumWidth(480)
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 24, 0)
+        content_layout.setContentsMargins(0, 0, SPACE_XL, 0)
         title = QLabel("What would you like to do?")
-        title.setStyleSheet("font-size: 24pt; font-weight: 600;")
+        title.setObjectName("workflowTitle")
+        title.setFont(heading_font(title.font(), "window"))
         content_layout.addWidget(title)
         self._subtitle = QLabel()
         self._subtitle.setWordWrap(True)
-        self._subtitle.setStyleSheet("font-size: 11pt; color: #666;")
+        self._subtitle.setStyleSheet(secondary_text_stylesheet(self.palette()))
         content_layout.addWidget(self._subtitle)
-        content_layout.addSpacing(22)
+        content_layout.addSpacing(SPACE_XL)
 
         self._actions = QWidget(content)
         self._actions_layout = QVBoxLayout(self._actions)
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
-        self._actions_layout.setSpacing(16)
+        self._actions_layout.setSpacing(SPACE_LG)
         self._action_group_layouts: dict[str, QVBoxLayout] = {}
         content_layout.addWidget(self._actions)
 
@@ -140,14 +169,16 @@ class WorkflowWindow(QMainWindow):
         side.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(8)
+        side_layout.setSpacing(SPACE_SM)
 
         self._result_actions = QWidget(side)
         result_actions_layout = QVBoxLayout(self._result_actions)
         result_actions_layout.setContentsMargins(0, 0, 0, 0)
-        result_actions_layout.setSpacing(4)
+        result_actions_layout.setSpacing(SPACE_XS)
         result_actions_title = QLabel("Results...", self._result_actions)
-        result_actions_title.setStyleSheet("font-weight: 600;")
+        result_actions_title.setFont(
+            heading_font(result_actions_title.font(), "section")
+        )
         result_actions_layout.addWidget(result_actions_title)
         self._result_actions_widget = ResultActionsWidget(
             lambda value, action: self._expert.execute_output_value_action(
@@ -160,16 +191,27 @@ class WorkflowWindow(QMainWindow):
         side_layout.addWidget(self._result_actions, 1)
 
         expert_box = QGroupBox("", side)
+        expert_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         expert_layout = QVBoxLayout(expert_box)
         side_text = QLabel("Access every setting directly.", expert_box)
         side_text.setWordWrap(True)
-        side_text.setStyleSheet("color: palette(mid);")
+        side_text.setStyleSheet(secondary_text_stylesheet(self.palette()))
         expert_layout.addWidget(side_text)
         expert_btn = QPushButton("Open Expert Mode", expert_box)
         expert_btn.setMinimumHeight(40)
+        expert_btn.setStyleSheet(button_stylesheet(self.palette()))
         expert_btn.clicked.connect(self._open_expert_mode)
         expert_layout.addWidget(expert_btn)
-        side_layout.addWidget(expert_box)
+        expert_box.setStyleSheet(
+            group_panel_stylesheet(
+                self.palette(), self.palette().color(QPalette.ColorRole.Highlight)
+            )
+        )
+        side_layout.addWidget(
+            expert_box, alignment=Qt.AlignmentFlag.AlignBottom
+        )
         splitter.addWidget(side)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -193,7 +235,7 @@ class WorkflowWindow(QMainWindow):
         group = QWidget(self._actions)
         layout = QVBoxLayout(group)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(SPACE_SM)
         display_title = (
             "Create derived structure"
             if title == self._GROUP_CREATE
@@ -203,9 +245,7 @@ class WorkflowWindow(QMainWindow):
         label = QLabel(display_title, group)
         label.setObjectName("workflowActionGroupLabel")
         label.setForegroundRole(QPalette.ColorRole.WindowText)
-        label.setStyleSheet(
-            "font-size: 9pt; font-weight: 600;"
-        )
+        label.setFont(heading_font(label.font(), "section"))
         layout.addWidget(label)
 
         position = sum(
@@ -223,19 +263,8 @@ class WorkflowWindow(QMainWindow):
         self._result_actions_widget.set_result(result)
         self._result_actions.setVisible(self._result_actions_widget.has_rows)
 
-    @staticmethod
-    def _blend_color(base: QColor, tint: QColor, amount: float) -> QColor:
-        keep = 1.0 - amount
-        return QColor(
-            round(base.red() * keep + tint.red() * amount),
-            round(base.green() * keep + tint.green() * amount),
-            round(base.blue() * keep + tint.blue() * amount),
-        )
-
     def _action_style(self, category: str, widget: str) -> str:
         palette = self.palette()
-        base = palette.color(QPalette.ColorRole.Button)
-        text = palette.color(QPalette.ColorRole.ButtonText)
         accents = {
             'structure': QColor('#3979b8'),
             'load': QColor('#527f9f'),
@@ -244,15 +273,11 @@ class WorkflowWindow(QMainWindow):
             'neutral': palette.color(QPalette.ColorRole.Mid),
         }
         accent = accents[category]
-        tint_amount = 0.22 if category != 'neutral' else 0.08
-        background = self._blend_color(base, accent, tint_amount)
-        hover = self._blend_color(base, accent, min(tint_amount + 0.12, 1.0))
-        return (
-            f"{widget} {{ text-align: left; padding: 0; font-size: 11pt; "
-            f"color: {text.name()}; background-color: {background.name()}; "
-            f"border: 1px solid {accent.name()}; border-left: 6px solid {accent.name()}; "
-            f"border-radius: 4px; }} "
-            f"{widget}:hover {{ color: {text.name()}; background-color: {hover.name()}; }}"
+        return action_card_stylesheet(
+            palette,
+            accent,
+            widget,
+            subtle=category == 'neutral',
         )
 
     def _add_action(

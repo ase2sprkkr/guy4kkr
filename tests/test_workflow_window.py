@@ -85,8 +85,8 @@ def test_workflow_and_expert_share_one_workspace():
     window.close()
 
 
-def test_start_actions_are_grouped_with_small_labels():
-    application = QApplication.instance() or QApplication([])
+def test_start_actions_are_grouped_with_section_labels():
+    _application = QApplication.instance() or QApplication([])
     window = WorkflowWindow()
 
     assert _group_titles(window) == [
@@ -105,8 +105,8 @@ def test_start_actions_are_grouped_with_small_labels():
     labels = window._actions.findChildren(
         QLabel, "workflowActionGroupLabel"
     )
-    assert all("font-size: 9pt" in label.styleSheet() for label in labels)
-    assert all("color:" not in label.styleSheet() for label in labels)
+    assert all(label.font().bold() for label in labels)
+    assert all(not label.styleSheet() for label in labels)
     create_button = _action_widget(
         window, "Create structure", "Create a 3D Structure"
     )

@@ -35,10 +35,19 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
-from guy4ase.gui.input_parameters.tasks import new_parameters, prepare_parameters as _prepare_parameters
+from guy4ase.gui.input_parameters.tasks import new_parameters
+from guy4ase.gui.input_parameters.tasks import prepare_parameters as _prepare_parameters
 from guy4ase.gui.input_parameters.validation import validate_setup
-from guy4ase.gui.misc.colors import blend as _blend
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.style import (
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    button_stylesheet,
+    heading_font,
+    navigation_tile_stylesheet,
+    secondary_text_stylesheet,
+)
 from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
 
@@ -56,7 +65,7 @@ class NavigationView:
 
     item: QListWidgetItem
     label: QLabel
-    tint: QColor
+    accent: QColor
 
 
 class GuidedInputParametersDialog(QDialog):
@@ -89,11 +98,19 @@ class GuidedInputParametersDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(SPACE_LG, SPACE_LG, SPACE_LG, SPACE_MD)
+        root.setSpacing(SPACE_MD)
+        title = QLabel(self.spec.title, self)
+        title.setObjectName("guidedDialogTitle")
+        title.setFont(heading_font(title.font(), "dialog"))
+        root.addWidget(title)
         intro = QLabel(self.spec.intro or (
             "Configure the most useful task parameters. Quick setup mirrors a small selection "
             "from the detailed categories; all remaining parameters are available in Expert settings."
         ))
         intro.setWordWrap(True)
+        intro.setObjectName("guidedDialogSubtitle")
+        intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         root.addWidget(intro)
 
         directory_row = QHBoxLayout()
@@ -102,6 +119,7 @@ class GuidedInputParametersDialog(QDialog):
         self.directory_edit.setPlaceholderText("Select a calculation directory")
         directory_row.addWidget(self.directory_edit, 1)
         browse = QPushButton("Browse…", self)
+        browse.setStyleSheet(button_stylesheet(self.palette()))
         browse.clicked.connect(self._choose_directory)
         directory_row.addWidget(browse)
         root.addLayout(directory_row)
@@ -111,9 +129,9 @@ class GuidedInputParametersDialog(QDialog):
         self.navigation.setObjectName("categoryNavigation")
         self.navigation.setMinimumWidth(220)
         self.navigation.setMaximumWidth(280)
-        self.navigation.setSpacing(7)
+        self.navigation.setSpacing(SPACE_SM)
         self.navigation.setStyleSheet(
-            "QListWidget { border: 0; padding: 6px; background: palette(base); }"
+            f"QListWidget {{ border: 0; padding: {SPACE_SM}px; background: palette(base); }}"
             "QListWidget::item { border: 0; }"
         )
         self.pages = QStackedWidget(self)
@@ -139,36 +157,49 @@ class GuidedInputParametersDialog(QDialog):
         self.undo_button.setText("Undo")
         self.undo_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.undo_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        self.undo_button.setStyleSheet(
+            button_stylesheet(self.palette(), "QToolButton")
+        )
         self.undo_button.clicked.connect(self.session.undo_stack.undo)
         footer.addWidget(self.undo_button)
         self.redo_button = QToolButton(self)
         self.redo_button.setText("Redo")
         self.redo_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.redo_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+        self.redo_button.setStyleSheet(
+            button_stylesheet(self.palette(), "QToolButton")
+        )
         self.redo_button.clicked.connect(self.session.undo_stack.redo)
         footer.addWidget(self.redo_button)
 
         load = QPushButton("Load input…", self)
+        load.setStyleSheet(button_stylesheet(self.palette()))
         load.clicked.connect(self._load_input)
         footer.addWidget(load)
         self.edit_input_button = QPushButton("Edit input file…", self)
+        self.edit_input_button.setStyleSheet(button_stylesheet(self.palette()))
         self.edit_input_button.clicked.connect(self._edit_input_file)
         footer.addWidget(self.edit_input_button)
         expert = QPushButton("Expert settings…", self)
+        expert.setStyleSheet(button_stylesheet(self.palette()))
         expert.clicked.connect(self._open_expert_settings)
         footer.addWidget(expert)
         footer.addStretch(1)
 
         self.previous_button = QPushButton("Previous", self)
+        self.previous_button.setStyleSheet(button_stylesheet(self.palette()))
         self.previous_button.clicked.connect(lambda: self.navigation.setCurrentRow(self.navigation.currentRow() - 1))
         footer.addWidget(self.previous_button)
         self.next_button = QPushButton("Next", self)
+        self.next_button.setStyleSheet(button_stylesheet(self.palette()))
         self.next_button.clicked.connect(lambda: self.navigation.setCurrentRow(self.navigation.currentRow() + 1))
         footer.addWidget(self.next_button)
         cancel = QPushButton("Cancel", self)
+        cancel.setStyleSheet(button_stylesheet(self.palette()))
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
         calculate = QPushButton("Calculate", self)
+        calculate.setStyleSheet(button_stylesheet(self.palette(), primary=True))
         calculate.setDefault(True)
         calculate.setIcon(QIcon(str(icon_path("system-run.svg"))))
         calculate.clicked.connect(self._accept)
@@ -179,14 +210,9 @@ class GuidedInputParametersDialog(QDialog):
         item = QListWidgetItem(page.title)
         item.setData(Qt.ItemDataRole.UserRole, page.id)
         item.setSizeHint(QSize(0, 46))
-        background = self.palette().window().color()
-        tint = _blend(
-            background,
-            QColor(page.color),
-            .36 if background.lightness() > 128 else .48,
-        )
+        accent = QColor(page.color)
         label = QLabel(page.title, self.navigation)
-        label.setContentsMargins(12, 0, 8, 0)
+        label.setContentsMargins(SPACE_MD, 0, SPACE_SM, 0)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         font = label.font()
         font.setBold(True)
@@ -194,7 +220,7 @@ class GuidedInputParametersDialog(QDialog):
         label.setFont(font)
         self.navigation.addItem(item)
         self.navigation.setItemWidget(item, label)
-        self._navigation[page.id] = NavigationView(item, label, tint)
+        self._navigation[page.id] = NavigationView(item, label, accent)
 
     def _connect_session(self) -> None:
         stack = self.session.undo_stack
@@ -272,15 +298,12 @@ class GuidedInputParametersDialog(QDialog):
 
     def _update_navigation_styles(self) -> None:
         selected = self.navigation.currentRow()
-        highlight = self.palette().highlight().color().name()
-        border = self.palette().mid().color().name()
-        text = self.palette().text().color().name()
         for page_id, navigation in self._navigation.items():
             active = self._page_indexes[page_id] == selected
             navigation.label.setStyleSheet(
-                f"background-color: {navigation.tint.name()};"
-                f"color: {text}; border: {3 if active else 1}px solid "
-                f"{highlight if active else border}; border-radius: 6px;"
+                navigation_tile_stylesheet(
+                    self.palette(), navigation.accent, selected=active
+                )
             )
 
     def editors_for(self, path: InputParameterPath) -> tuple[ParameterEditor, ...]:

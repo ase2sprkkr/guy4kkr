@@ -20,6 +20,11 @@
   `guy4ase.physics.lattice`, not in the GUI.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.
+- `style`: the small palette-aware visual vocabulary shared by dialogs and
+  renderers: spacing, relative heading fonts, tinting, rounded panels and
+  primary/secondary action states. Semantic colors and layout remain with the
+  window or task that owns their meaning; this is intentionally not a theme
+  manager.
 - `workspace.WorkspaceState`: the Qt-independent current document: structure,
   input parameters, working directory, potential and calculation result.
   `MainWindow` renders and mutates it through public operations; guided
