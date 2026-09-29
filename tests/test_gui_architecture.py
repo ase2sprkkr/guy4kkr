@@ -11,6 +11,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 import numpy as np
 import pytest
+from ase import Atoms
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
@@ -19,6 +20,7 @@ from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
 from guy4ase.gui.widgets.input_parameters.registry import EDITOR_FACTORIES
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
+from guy4ase.ase.element_assignment import ElementAssignmentDraft
 
 ROOT = Path(__file__).resolve().parents[1]
 GUI = ROOT / "guy4ase" / "gui"
@@ -280,9 +282,11 @@ def test_element_rows_use_callbacks_without_a_parent_dialog():
         parents.append(parent)
         return "Co"
 
+    atoms = Atoms("Fe", cell=np.eye(3), pbc=True)
+    atoms.set_array("labels", np.asarray(["a"], dtype=object))
+    draft = ElementAssignmentDraft(atoms)
     row = QLetterRow(
-        {"label": "a", "positions": [[0., 0., 0.]], "occupancy": {"Fe": 1.}},
-        np.eye(3), select_element=pick_element,
+        draft, draft.sites[0], select_element=pick_element,
         on_validation=lambda label, message: messages.append((label, message)),
     )
     row.rows[0]["pick"].click()
@@ -293,3 +297,9 @@ def test_element_rows_use_callbacks_without_a_parent_dialog():
     row.rows[1]["elem"].setText("Fe")
     assert messages[-1] == ("a", "Occupation too large for site a")
     row.close()
+
+
+def test_element_assignment_domain_model_has_no_qt_dependency():
+    source = (ROOT / "guy4ase" / "ase" / "element_assignment.py").read_text()
+    assert "PyQt" not in source
+    assert "guy4ase.gui" not in source

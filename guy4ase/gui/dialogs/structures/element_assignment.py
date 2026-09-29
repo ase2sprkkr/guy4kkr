@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from weakref import WeakKeyDictionary
 
 import numpy as np
 from ase import Atoms
-from ase.data import chemical_symbols
-from ase2sprkkr import SPRKKRAtoms
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt
@@ -27,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.ase.element_assignment import AssignmentSite, ElementAssignmentDraft
 from guy4ase.gui.dialogs.structures.element_selector import select_element
 from guy4ase.gui.plots.lattice import plot_lattice, plot_sites_in_lattice
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
@@ -37,8 +36,6 @@ class _GlobalSentinel:
 
 _DEFAULT_KEY = _GlobalSentinel()
 _DIALOGS = WeakKeyDictionary()
-_VALID_SYMBOLS = set(s for s in chemical_symbols if isinstance(s, str))
-_VALID_SYMBOLS.add("Vc")
 
 
 class ElementAssignmentDialog(QDialog):
@@ -54,7 +51,7 @@ class ElementAssignmentDialog(QDialog):
         self.resize(1400, 650)
         self._allow_back = bool(back)
         self._letter_widgets: list[QLetterRow] = []
-        self._cell: Optional[np.ndarray] = None
+        self._draft: ElementAssignmentDraft | None = None
         self._active_letter: tuple(Optional[str],Optional[int]) = (None, None)
         self._site_errors: Dict[str, Optional[str]] = {}
         self._build_ui()
@@ -149,25 +146,29 @@ class ElementAssignmentDialog(QDialog):
     def setup(self, atoms: Atoms, back: bool = False) -> None:
         # reset state
         self._allow_back = bool(back)
+        self._site_errors.clear()
+        self._update_error_label()
         for child in list(self._letter_widgets):
             child.setParent(None)
-        self._atoms = atoms
-        self._cell = atoms.cell.copy()
+        self._draft = ElementAssignmentDraft(atoms)
+        cell = self._draft.cell
 
         # Update lattice vector spinboxes
         for i in range(3):
             for j in range(3):
                 self.lattice_spinboxes[i][j].blockSignals(True)
-                self.lattice_spinboxes[i][j].setValue(self._cell[i, j])
+                self.lattice_spinboxes[i][j].setValue(cell[i, j])
                 self.lattice_spinboxes[i][j].blockSignals(False)
 
-        payload = QLetterRow.payload_from_atoms(atoms)
-        self._build_site_rows(payload)
+        self._build_site_rows()
 
         self._update_ok_state()
         self._draw_preview()
 
-    def _build_site_rows(self, payloads) -> None:
+    def _build_site_rows(self) -> None:
+        draft = self._require_draft()
+        self._site_errors.clear()
+        self._update_error_label()
         # Clear entire container layout (prevents duplicated spacers/headers across setups)
         while self.container_layout.count():
             item = self.container_layout.takeAt(0)
@@ -178,9 +179,9 @@ class ElementAssignmentDialog(QDialog):
         self._letter_widgets.clear()
 
         # Build site rows
-        for payload in payloads:
+        for site in draft.sites:
             row = QLetterRow(
-                payload, self._atoms.cell, self.container,
+                draft, site, self.container,
                 on_activity=self._mark_active, on_break=self._break_site,
                 select_element=select_element, on_validation=self._site_validation_changed,
             )
@@ -222,40 +223,9 @@ class ElementAssignmentDialog(QDialog):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.container_layout.addWidget(spacer)
 
-    def _capture_payloads(self) -> Dict[str, list[Dict[str, Any]]]:
-        return [ w.resulting_payload() for w in self._letter_widgets ]
-
-    def _break_site(self, payload) -> None:
-        # Split a multi-position letter into independent subsites letter.1, letter.2, ...
-
-        payloads = self._capture_payloads()
-        labels = {p['label'] for p in payloads}
-        out = []
-
-        for idx, p in enumerate(payloads):
-            if p is payload:
-                out = payloads[:idx]
-                index = payload.get('index')
-
-                for i,pos in enumerate(payload['positions']):
-                    add = payload.copy()
-                    template = f"{payload['label']}.{i+1}"
-                    label = template
-                    j=1
-                    while label in labels:
-                        label = f"{template}.{j}"
-                        j+=1
-                    add['label'] = label
-                    add['positions'] = pos.reshape(1,3)
-                    if index is not None:
-                        add['origin'] = [ index[i] ]
-                    out.append( add )
-                out.extend( payloads[idx+1:] )
-                break
-        else:
-            raise ValueError("Payload to break not found in current payloads.")
-
-        self._build_site_rows(out)
+    def _break_site(self, site: AssignmentSite) -> None:
+        self._require_draft().split_site(site)
+        self._build_site_rows()
         self._update_ok_state()
         self._draw_preview()
 
@@ -264,93 +234,14 @@ class ElementAssignmentDialog(QDialog):
         self._set_site_error(label, message)
 
     def _update_ok_state(self) -> None:
-        ok = bool(self._letter_widgets) and all(w.is_valid() for w in self._letter_widgets)
+        ok = self._draft is not None and self._draft.is_valid()
         self.ok_btn.setEnabled(ok)
 
     def _on_ok(self) -> None:
-        # Validate rows first
-        if not all(w.is_valid() for w in self._letter_widgets):
+        draft = self._require_draft()
+        if not draft.is_valid():
             return
-
-        pos_blocks: list[np.ndarray] = []
-        kinds: list[int] = []
-        symbols = []
-        labels = []
-        occupancy: Dict[int, Dict[Any, float]] = {}
-        payloads = self._capture_payloads()
-        start = 0
-
-        changed = False
-
-        atoms = self._atoms
-        sprkkr = isinstance(atoms,SPRKKRAtoms)
-
-        regions = []
-        if sprkkr:
-            for r in atoms.regions:
-                regions.append((r, set(r.ids()), []))
-
-        for kind, payload in enumerate(payloads):
-            cart = np.dot(payload['positions'], self._cell)
-            ln = len(cart)
-            pos_blocks.append(cart)
-            kinds.extend([kind] * ln)
-            occs = payload['occupancy']
-            occupancy[str(kind)] = occs
-            symbol = next(iter(occs.keys()), 'X')
-
-            o = payload.get('index')
-            if not changed:
-                if o is None or len(o) != ln or not np.all( np.arange(start, start+ln) == o ):
-                    changed = True
-
-            if regions is not None:
-                origins = o if o is not None else payload.get('origin')
-                if origins is None:
-                    regions = None
-                else:
-                    for i,origin in enumerate(origins):
-                        for r, ids, new in regions:
-                            if origin in ids:
-                                new.append(start+i)
-            start += ln
-            occs = payload['occupancy']
-            symbols.extend( [symbol] * ln )
-            labels.extend( f"{payload['label']}.{i}" for i in range(1,ln+1) )
-
-        if changed:
-            piter = iter(payloads)
-            p = next(piter)
-            o = p['index']
-            pos = p['positions']
-            if o is not None and len(o) == len(pos):
-                new = atoms[p['index']]
-            else:
-                new = Atoms(positions=pos, cell=self._cell, pbc=True)
-            for p in piter:
-                o = p['index']
-                pos = p['positions']
-                if o is not None and len(o) == len(pos):
-                    new += atoms[p['index']]
-                else:
-                    new += atoms(positions=pos)
-            atoms = new
-            sprkkr = False
-
-        if sprkkr:
-            if atoms.are_sites_inited():
-                del atoms.sites
-            if regions:
-                for r, ids, new in regions:
-                    r.copy_for_atoms(atoms, new)
-
-        atoms.cell = self._cell
-        atoms.symbols = symbols
-        atoms.set_array('spacegroup_kinds', np.asarray(kinds, dtype=int))
-        atoms.set_array('labels', np.asarray(labels, dtype=object))
-        atoms.positions = np.vstack(pos_blocks)
-        atoms.info['occupancy'] = occupancy
-        self._result = atoms
+        self._result = draft.apply()
         self.accept()
 
     def _on_back(self) -> None:
@@ -366,17 +257,20 @@ class ElementAssignmentDialog(QDialog):
 
     def _on_lattice_vector_changed(self, value: float) -> None:
         """Handle changes to lattice vector spinboxes."""
-        # Build new cell from spinbox values
+        draft = self._require_draft()
         for i in range(3):
             for j in range(3):
-                self._cell[i, j] = self.lattice_spinboxes[i][j].value()
+                draft.set_cell_component(
+                    i, j, self.lattice_spinboxes[i][j].value()
+                )
 
         # Redraw visualization
         self._draw_preview()
 
     def _draw_preview(self) -> None:
         self.ax.clear()
-        lattice = self._cell
+        draft = self._require_draft()
+        lattice = draft.cell
         plot_lattice(self.ax, lattice)
 
         # collect other vs active positions
@@ -384,17 +278,17 @@ class ElementAssignmentDialog(QDialog):
         active = []
         label, index = self._active_letter
 
-        for w in self._letter_widgets:
-            if label == w.label:
+        for site in draft.sites:
+            if label == site.label:
                 if index is not None:
-                    active.append( w.payload['positions'][index:index+1] )
-                    others.append( w.payload['positions'][:index] )
-                    others.append( w.payload['positions'][index+1:] )
+                    active.append(site.positions[index:index + 1])
+                    others.append(site.positions[:index])
+                    others.append(site.positions[index + 1:])
                     continue
                 to = active
             else:
                 to = others
-            to.append(w.payload['positions'])
+            to.append(site.positions)
         if others:
             plot_sites_in_lattice(self.ax, lattice, np.vstack(others), role='inactive')
         if active:
@@ -411,6 +305,11 @@ class ElementAssignmentDialog(QDialog):
 
     def _update_error_label(self) -> None:
         self.error_label.setText("\n".join(self._site_errors.values()))
+
+    def _require_draft(self) -> ElementAssignmentDraft:
+        if self._draft is None:
+            raise RuntimeError("Element assignment dialog has not been set up")
+        return self._draft
 
 
 def select_site_elements(atoms:Atoms, parent: Optional[QWidget] = None,

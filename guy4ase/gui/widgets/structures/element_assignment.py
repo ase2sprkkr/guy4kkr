@@ -1,13 +1,8 @@
-"""Element/occupation rows for a Wyckoff site, independent of dialogs."""
+"""Qt presentation for one element-assignment site."""
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, Optional
 
-import numpy as np
-from ase import Atoms
-from ase.data import chemical_symbols
-from ase2sprkkr.sprkkr.atomic_types import AtomicType
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -27,10 +22,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.ase.utils import labels_for_partitions, partition_by_kinds
-
-_VALID_SYMBOLS = set(s for s in chemical_symbols if isinstance(s, str))
-_VALID_SYMBOLS.add("Vc")
+from guy4ase.ase.element_assignment import (
+    AssignmentSite,
+    ElementAssignmentDraft,
+    OccupancyEntry,
+)
 
 
 class QLetterRow(QWidget):
@@ -39,17 +35,18 @@ class QLetterRow(QWidget):
     glyph_font.setBold(True)
     glyph_font.setPointSize(12)
 
-    def __init__(self, payload: Dict[str, Any],
-                 cell: np.ndarray,
+    def __init__(self, draft: ElementAssignmentDraft,
+                 site: AssignmentSite,
                  parent: Optional[QWidget] = None,
                  on_activity: Optional[callable] = None,
                  on_break: Optional[callable] = None,
                  select_element=None,
                  on_validation=None):
         super().__init__(parent)
+        self.draft = draft
+        self.site = site
         self._select_element = select_element
         self._on_validation = on_validation
-        self.cell = cell
         self._on_activity = on_activity
         self._on_break = on_break
         self.rows: list[Dict[str, Any]] = []
@@ -91,10 +88,10 @@ class QLetterRow(QWidget):
         controls.addWidget(self.normalize_btn)
         # Break symmetry button (visible only when multiplicity > 1)
         self.break_btn = QPushButton("Break symmetry")
-        can_break = len(payload['positions']) > 1
+        can_break = site.can_split
         self.break_btn.setVisible(bool(can_break))
         if can_break and callable(self._on_break):
-            self.break_btn.clicked.connect(lambda: self._on_break(self.payload))
+            self.break_btn.clicked.connect(lambda: self._on_break(self.site))
         controls.addWidget(self.break_btn)
         self.vbox.addLayout(controls)
 
@@ -147,32 +144,32 @@ class QLetterRow(QWidget):
 
         self._pos_spins: list[list[QDoubleSpinBox]] = []
 
-        self.load_payload(payload)
+        self.load_site()
 
     @property
     def label(self):
-        return self.payload.get('label', '')
+        return self.site.label
 
-    def load_payload(self, payload: Dict[str, Any]) -> None:
-        self.payload = payload
-        self.site_label.setText(f"Site kind {payload.get('label', '')}")
+    def load_site(self) -> None:
+        """Refresh all controls from the assignment model."""
+        self.site_label.setText(f"Site kind {self.site.label}")
 
         self._refresh_break_button()
 
         self._rebuild_positions_table()
-        self.load_occupancy(payload.get('occupancy', {}))
+        self.load_occupancy()
         self._validate_controls_state()
         self._validate_totals()
 
     def _refresh_break_button(self) -> None:
         try:
-            can_break = len(self.payload.get('positions', [])) > 1
+            can_break = self.site.can_split
         except Exception:
             can_break = False
         self.break_btn.setVisible(bool(can_break))
 
     def _rebuild_positions_table(self) -> None:
-        positions = self.payload.get('positions', [])
+        positions = self.site.positions
         n_rows = len(positions)
         old_rows = self.positions_table.rowCount()
         self.positions_table.setRowCount(n_rows)
@@ -230,19 +227,7 @@ class QLetterRow(QWidget):
         return int(r) if r is not None and r >= 0 else 0
 
     def _add_position(self) -> None:
-        pos = np.asarray(self.payload.get('positions', []), dtype=float)
-        if pos.ndim != 2 or pos.shape[1] != 3:
-            pos = np.zeros((0, 3), dtype=float)
-
-        if pos.shape[0] == 0:
-            new_row = np.zeros((1, 3), dtype=float)
-            pos = new_row
-            new_index = 0
-        else:
-            pos = np.vstack([pos, pos[-1].copy()])
-            new_index = pos.shape[0] - 1
-
-        self.payload['positions'] = pos
+        new_index = self.draft.add_position(self.site)
         self._refresh_break_button()
         self._rebuild_positions_table()
         try:
@@ -256,18 +241,13 @@ class QLetterRow(QWidget):
             pass
 
     def _delete_position(self) -> None:
-        pos = np.asarray(self.payload.get('positions', []), dtype=float)
-        if pos.ndim != 2 or pos.shape[1] != 3 or pos.shape[0] <= 1:
-            return
-
         row = self._current_position_row()
-        row = max(0, min(row, pos.shape[0] - 1))
-        pos = np.delete(pos, row, axis=0)
-        self.payload['positions'] = pos
+        if not self.draft.remove_position(self.site, row):
+            return
         self._refresh_break_button()
         self._rebuild_positions_table()
 
-        new_row = min(row, pos.shape[0] - 1)
+        new_row = min(row, len(self.site.positions) - 1)
         try:
             self.positions_table.setCurrentCell(new_row, 0)
         except Exception:
@@ -279,7 +259,7 @@ class QLetterRow(QWidget):
             pass
 
     def _on_position_changed(self, row: int, col: int, value: float) -> None:
-        self.payload['positions'][row][col] = value
+        self.draft.set_position_component(self.site, row, col, value)
         # Ensure preview updates immediately when positions change
         try:
             if callable(self._on_activity):
@@ -287,28 +267,23 @@ class QLetterRow(QWidget):
         except Exception:
             pass
 
-    def load_occupancy(self, occupancy: Dict[Any, float]) -> None:
-        """Replace current element rows with provided payload [{'element':sym,'occupancy':val},...]."""
+    def load_occupancy(self) -> None:
+        """Refresh element controls from the model's occupancy entries."""
         # remove existing row widgets
         for r in list(self.rows):
             r['w'].setParent(None)
         self.rows.clear()
 
-        # add rows from payload
-        if not occupancy:
-            self._add_row()
-        else:
-            for symbol, occ in occupancy.items():
-                symbol = re.sub(r'_\d+$', '', symbol)
-                self._add_row(element=getattr(symbol, "symbol", str(symbol)), occ=occ)
+        for entry in self.site.occupancies:
+            self._add_entry_widget(entry)
 
     def add_row(self) -> None:
         """Add a blank element row."""
-        self._add_row()
+        self._add_entry_widget(self.draft.add_occupancy(self.site))
         self._validate_controls_state()
         self._validate_totals()
 
-    def _add_row(self, element: Optional[str] = "", occ: float = 1.0) -> None:
+    def _add_entry_widget(self, entry: OccupancyEntry) -> None:
         select_element = self._select_element
 
         row_w = QWidget(self)
@@ -319,9 +294,7 @@ class QLetterRow(QWidget):
 
         elem_edit = QLineEdit()
         elem_edit.setPlaceholderText("Element")
-        if not isinstance(element, str):
-            element = ""
-        elem_edit.setText(element)
+        elem_edit.setText(entry.symbol)
         elem_edit.setMaxLength(3)
         elem_edit.setFixedWidth(55)
         label_elem = QLabel("Element")
@@ -340,7 +313,7 @@ class QLetterRow(QWidget):
         occ_spin.setRange(0.0, 1.0)
         occ_spin.setDecimals(3)
         occ_spin.setSingleStep(0.05)
-        occ_spin.setValue(occ)
+        occ_spin.setValue(entry.value)
         label_occ = QLabel("occupation")
         label_occ.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         occ_spin.setFixedWidth(70)
@@ -361,6 +334,7 @@ class QLetterRow(QWidget):
             'occ': occ_spin,
             'del': del_btn,
             'pick': pick_btn,
+            'entry': entry,
         }
         self.rows.append(row)
         self.rows_box.addWidget(row_w)
@@ -372,8 +346,12 @@ class QLetterRow(QWidget):
         pick_btn.clicked.connect(do_pick)
         del_btn.clicked.connect(lambda: self._remove_row(row))
         # Validation only; no redraw on value changes
-        elem_edit.textChanged.connect(lambda _t: self._validate_row(row))
-        occ_spin.valueChanged.connect(lambda _v: self._validate_totals())
+        elem_edit.textChanged.connect(
+            lambda text: self._on_symbol_changed(row, text)
+        )
+        occ_spin.valueChanged.connect(
+            lambda value: self._on_occupancy_changed(row, value)
+        )
 
         # Focus-driven highlighting
         for w in (elem_edit, occ_spin, pick_btn, del_btn):
@@ -382,7 +360,7 @@ class QLetterRow(QWidget):
         self._validate_row(row)
 
     def _remove_row(self, row: Dict[str, Any]) -> None:
-        if len(self.rows) <= 1:
+        if not self.draft.remove_occupancy(self.site, row['entry']):
             return
         row['w'].setParent(None)
         try:
@@ -399,7 +377,7 @@ class QLetterRow(QWidget):
 
     def _validate_row(self, row: Dict[str, Any]) -> None:
         elem = row['elem'].text().strip()
-        ok = elem in _VALID_SYMBOLS
+        ok = self.draft.symbol_is_valid(elem)
         # Styling: red border when invalid. Keep readable background.
         if ok or elem == "":
             row['elem'].setStyleSheet("")
@@ -409,14 +387,15 @@ class QLetterRow(QWidget):
         self._validate_totals()
 
     def _normalize(self) -> None:
-        total = sum(r['occ'].value() for r in self.rows) or 1.0
+        self.draft.normalize_occupancy(self.site)
         for r in self.rows:
-            r['occ'].setValue(r['occ'].value() / total)
+            r['occ'].blockSignals(True)
+            r['occ'].setValue(r['entry'].value)
+            r['occ'].blockSignals(False)
         self._validate_totals()
 
     def _validate_totals(self) -> None:
-        total = sum(r['occ'].value() for r in self.rows)
-        over = total > 1.0000001
+        over = self.draft.occupancy_is_overfull(self.site)
         # red border on all occupancy widgets when overfull
         style_bad = "QDoubleSpinBox { border: 1px solid #cc3333; }"
         for r in self.rows:
@@ -447,65 +426,14 @@ class QLetterRow(QWidget):
         return super().eventFilter(obj, event)
 
     def is_valid(self) -> bool:
-        # Require at least one valid element symbol and total between 0 and 1.0
-        has_valid_element = False
-        for r in self.rows:
-            elem = r['elem'].text().strip()
-            if elem:
-                if elem not in _VALID_SYMBOLS:
-                    return False
-                has_valid_element = True
+        return self.draft.is_site_valid(self.site)
 
-        if not has_valid_element:
-            return False
+    def _on_symbol_changed(self, row: Dict[str, Any], text: str) -> None:
+        self.draft.set_occupancy_symbol(self.site, row['entry'], text)
+        self._validate_row(row)
 
-        total = sum(r['occ'].value() for r in self.rows)
-        # Allow partial occupation: total must be > 0 and <= 1.0
-        return 0.0 < total <= 1.0 + 1e-6
-
-    def resulting_payload(self) -> list[Dict[str, Any]]:
-        payload = self.payload
-        occs = {}
-        for r in self.rows:
-            elem = r['elem'].text().strip()
-            occ = float(r['occ'].value())
-            if not elem:
-                continue
-            if elem in occs:
-                elem = AtomicType.from_symbol(elem)
-            occs[elem] = occ
-        payload['occupancy'] = occs
-        return payload
-
-    @classmethod
-    def payload_from_atoms(cls, atoms: Atoms) -> list[Dict[str, Any]]:
-        """Extract payload from atoms."""
-        payloads: list[Dict[str, Any]] = []
-        parts = partition_by_kinds(atoms)
-        kinds = atoms.get_array('spacegroup_kinds') if 'spacegroup_kinds' in atoms.arrays else None
-        occs = atoms.info.get('occupancy', {})
-        labels = labels_for_partitions(atoms, partitions=parts)
-        positions = atoms.get_scaled_positions()
-
-        occ_map: Dict[str, float] = {}
-        for i, part in enumerate(parts):
-            first = part[0]
-            label = labels[i]
-            sym = atoms[first].symbol
-            if occs and kinds is not None:
-                kind = kinds[first]
-                occ = occs.get(str(kind), None)
-            else:
-                occ = None
-            if occ is None:
-                if sym == 'X':
-                    occ = {}
-                else:
-                    occ = { sym: 1.0 }
-            payloads.append({
-                'label': label,
-                'occupancy': occ,
-                'positions': positions[part],
-                'index': part,
-            })
-        return payloads
+    def _on_occupancy_changed(
+        self, row: Dict[str, Any], value: float
+    ) -> None:
+        self.draft.set_occupancy_value(self.site, row['entry'], value)
+        self._validate_totals()
