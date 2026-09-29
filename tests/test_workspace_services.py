@@ -5,7 +5,11 @@ from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    ResultArtifacts,
+    WorkspaceController,
+)
+from guy4ase.gui.flows.operations import GuiOperations
 
 
 def test_recent_files_roundtrip_is_bounded_and_repairs_missing_entries(tmp_path):
@@ -113,3 +117,63 @@ def test_adopt_result_resolves_artifacts_and_working_directory(tmp_path):
     assert artifacts.potential_path == potential
     assert controller.workspace.result is result
     assert controller.workspace.directory == str(tmp_path.resolve())
+
+
+def test_gui_operations_applies_shared_result_side_effects(tmp_path, monkeypatch):
+    selected_output = tmp_path / "selected.out"
+    discovered_output = tmp_path / "reported.out"
+    potential = tmp_path / "converged.pot"
+    artifacts = ResultArtifacts(discovered_output, potential)
+    controller = WorkspaceController()
+    history = RecentFiles(tmp_path / "recent.json")
+    operations = GuiOperations(controller, history)
+    result = object()
+    adopted: list[tuple[object, object]] = []
+    potential_loads: list[tuple[object, object, str]] = []
+    parent = object()
+
+    def adopt(value, *, fallback_directory=None):
+        adopted.append((value, fallback_directory))
+        return artifacts
+
+    monkeypatch.setattr(controller, "adopt_result", adopt)
+    monkeypatch.setattr(
+        operations,
+        "_load_result_potential",
+        lambda path, owner, prefix: potential_loads.append(
+            (path, owner, prefix)
+        ),
+    )
+
+    returned = operations.adopt_result(
+        result,
+        parent,
+        fallback_directory=tmp_path,
+        recent_output=selected_output,
+        potential_error_prefix="Potential warning",
+    )
+
+    assert returned is artifacts
+    assert adopted == [(result, tmp_path)]
+    assert history.paths("output") == (str(selected_output),)
+    assert potential_loads == [(potential, parent, "Potential warning")]
+
+
+def test_gui_operations_uses_discovered_output_without_explicit_recent_path(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "finished.out"
+    artifacts = ResultArtifacts(output, None)
+    controller = WorkspaceController()
+    history = RecentFiles(tmp_path / "recent.json")
+    operations = GuiOperations(controller, history)
+    monkeypatch.setattr(
+        controller,
+        "adopt_result",
+        lambda result, *, fallback_directory=None: artifacts,
+    )
+    monkeypatch.setattr(operations, "_load_result_potential", lambda *args: None)
+
+    operations.adopt_result(object(), object())
+
+    assert history.paths("output") == (str(output),)

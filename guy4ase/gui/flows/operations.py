@@ -11,7 +11,10 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    ResultArtifacts,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import show_readonly_object_dialog
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
@@ -144,11 +147,15 @@ class GuiOperations(QObject):
     def load_output(self, file_path: str | Path, parent: QWidget) -> bool:
         try:
             result = TaskResult.from_file(file_path)
-            artifacts = self.controller.adopt_result(
+            self.adopt_result(
                 result,
+                parent,
                 fallback_directory=Path(file_path).resolve().parent,
+                recent_output=file_path,
+                potential_error_prefix=(
+                    "Failed to load structure from potential"
+                ),
             )
-            self.remember_recent("output", file_path)
         except Exception as exc:  # noqa: BLE001 - backend readers vary
             QMessageBox.critical(
                 parent,
@@ -156,12 +163,46 @@ class GuiOperations(QObject):
                 f"Failed to load SPRKKR output:\n{exc}",
             )
             return False
+        return True
+
+    def adopt_result(
+        self,
+        result: Any,
+        parent: QWidget,
+        *,
+        fallback_directory: str | Path | None = None,
+        recent_output: str | Path | None = None,
+        potential_error_prefix: str = (
+            "The result was loaded, but its potential could not be loaded"
+        ),
+    ) -> ResultArtifacts:
+        """Adopt one result and apply its UI-facing artifact side effects.
+
+        ``WorkspaceController`` owns result interpretation and document
+        mutation. This method adds the orchestration shared by results opened
+        from disk and results returned by a calculation: recent-file history,
+        potential loading and warning presentation.
+
+        ``recent_output`` overrides the discovered output path so that a file
+        explicitly selected by the user is the one retained in history.
+        """
+        artifacts = self.controller.adopt_result(
+            result,
+            fallback_directory=fallback_directory,
+        )
+        output_path = (
+            recent_output
+            if recent_output is not None
+            else artifacts.output_path
+        )
+        if output_path is not None:
+            self.remember_recent("output", output_path)
         self._load_result_potential(
             artifacts.potential_path,
             parent,
-            "Failed to load structure from potential",
+            potential_error_prefix,
         )
-        return True
+        return artifacts
 
     def open_recent(
         self, kind: RecentKind, file_path: str, parent: QWidget
@@ -238,9 +279,7 @@ class GuiOperations(QObject):
             input_parameters=self.workspace.input_parameters,
             directory=self.workspace.directory,
             parent=parent,
-            on_finished=lambda result: self._handle_calculation_result(
-                result, parent
-            ),
+            on_finished=lambda result: self.adopt_result(result, parent),
         )
         self._run_windows.append(window)
         window.destroyed.connect(
@@ -248,18 +287,6 @@ class GuiOperations(QObject):
         )
         window.show()
         return window
-
-    def _handle_calculation_result(
-        self, result: Any, parent: QWidget
-    ) -> None:
-        artifacts = self.controller.adopt_result(result)
-        if artifacts.output_path is not None:
-            self.remember_recent("output", artifacts.output_path)
-        self._load_result_potential(
-            artifacts.potential_path,
-            parent,
-            "Calculation finished, but the generated potential could not be loaded",
-        )
 
     def _load_result_potential(
         self,
