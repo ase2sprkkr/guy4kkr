@@ -1,6 +1,7 @@
 """Side-navigation guided editor for SPR-KKR input parameters."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +32,14 @@ from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
+    PageSpec,
     TaskDialogSpec,
 )
 from guy4ase.gui.input_parameters.tasks import new_parameters, prepare_parameters as _prepare_parameters
 from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.misc.colors import blend as _blend
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer, PageView
+from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
 
 
@@ -46,6 +48,15 @@ def _is_2d(atoms: Any) -> bool:
         return not all(bool(value) for value in atoms.get_pbc())
     except Exception:
         return False
+
+
+@dataclass(frozen=True)
+class NavigationView:
+    """Widgets and color belonging to one page in the dialog navigation."""
+
+    item: QListWidgetItem
+    label: QLabel
+    tint: QColor
 
 
 class GuidedInputParametersDialog(QDialog):
@@ -68,6 +79,7 @@ class GuidedInputParametersDialog(QDialog):
         prepared = _prepare_parameters(parameters, self.task)
         self.session = InputParametersSession(prepared, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
+        self._navigation: dict[str, NavigationView] = {}
 
         self.setWindowTitle(self.spec.title)
         self.resize(980, 700)
@@ -116,7 +128,7 @@ class GuidedInputParametersDialog(QDialog):
             atoms=self.atoms,
             select_page=self.select_page,
         )
-        for page in self.form.page_views:
+        for page in self.spec.pages:
             self._add_navigation_page(page)
         self.form.statusChanged.connect(self._update_all_statuses)
         self.form.externalActionRequested.connect(self._edit_kpath)
@@ -164,17 +176,17 @@ class GuidedInputParametersDialog(QDialog):
         footer.addWidget(calculate)
         root.addLayout(footer)
 
-    def _add_navigation_page(self, page: PageView) -> None:
-        item = QListWidgetItem(page.spec.title)
-        item.setData(Qt.ItemDataRole.UserRole, page.spec.id)
+    def _add_navigation_page(self, page: PageSpec) -> None:
+        item = QListWidgetItem(page.title)
+        item.setData(Qt.ItemDataRole.UserRole, page.id)
         item.setSizeHint(QSize(0, 46))
         background = self.palette().window().color()
         tint = _blend(
             background,
-            QColor(page.spec.color),
+            QColor(page.color),
             .36 if background.lightness() > 128 else .48,
         )
-        label = QLabel(page.spec.title, self.navigation)
+        label = QLabel(page.title, self.navigation)
         label.setContentsMargins(12, 0, 8, 0)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         font = label.font()
@@ -183,9 +195,7 @@ class GuidedInputParametersDialog(QDialog):
         label.setFont(font)
         self.navigation.addItem(item)
         self.navigation.setItemWidget(item, label)
-        page.navigation_item = item
-        page.navigation_label = label
-        page.navigation_tint = tint
+        self._navigation[page.id] = NavigationView(item, label, tint)
 
     def _connect_session(self) -> None:
         stack = self.session.undo_stack
@@ -240,9 +250,9 @@ class GuidedInputParametersDialog(QDialog):
                 if page_errors:
                     suffix += f"  ⚠ {page_errors}"
             text = page.title + suffix
-            page_view = self.form.page_view(page.id)
-            page_view.navigation_item.setText(text)
-            page_view.navigation_label.setText(text)
+            navigation = self._navigation[page.id]
+            navigation.item.setText(text)
+            navigation.label.setText(text)
         self._update_history_buttons()
 
     def group_note(self, group_id: str) -> QLabel:
@@ -266,10 +276,10 @@ class GuidedInputParametersDialog(QDialog):
         highlight = self.palette().highlight().color().name()
         border = self.palette().mid().color().name()
         text = self.palette().text().color().name()
-        for page in self.form.page_views:
-            active = self._page_indexes[page.spec.id] == selected
-            page.navigation_label.setStyleSheet(
-                f"background-color: {page.navigation_tint.name()};"
+        for page_id, navigation in self._navigation.items():
+            active = self._page_indexes[page_id] == selected
+            navigation.label.setStyleSheet(
+                f"background-color: {navigation.tint.name()};"
                 f"color: {text}; border: {3 if active else 1}px solid "
                 f"{highlight if active else border}; border-radius: 6px;"
             )

@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QLabel,
-    QListWidgetItem,
     QScrollArea,
     QStackedWidget,
     QToolButton,
@@ -122,9 +121,6 @@ class PageView:
     spec: PageSpec
     scroll: QScrollArea
     groups: list[GroupView] = field(default_factory=list)
-    navigation_item: QListWidgetItem | None = None
-    navigation_label: QLabel | None = None
-    navigation_tint: QColor | None = None
 
 
 class GuidedFormRenderer(QObject):
@@ -151,7 +147,6 @@ class GuidedFormRenderer(QObject):
         self.primary_pages = spec.primary_pages()
         self._page_titles = {page.id: page.title for page in spec.pages}
         self.page_views: list[PageView] = []
-        self._pages_by_id: dict[str, PageView] = {}
         self.field_views: list[FieldView] = []
         self._views_by_path: dict[InputParameterPath, list[FieldView]] = defaultdict(list)
         self._views_by_editor: dict[ParameterEditor, FieldView] = {}
@@ -172,9 +167,6 @@ class GuidedFormRenderer(QObject):
 
     def editors_for(self, path: InputParameterPath) -> tuple[ParameterEditor, ...]:
         return tuple(view.editor for view in self._views_by_path.get(path, ()))
-
-    def page_view(self, page_id: str) -> PageView:
-        return self._pages_by_id[page_id]
 
     def views_for(self, path: InputParameterPath) -> tuple[FieldView, ...]:
         return tuple(self._views_by_path.get(path, ()))
@@ -212,7 +204,6 @@ class GuidedFormRenderer(QObject):
         scroll.setWidget(content)
         self.pages_widget.addWidget(scroll)
         self.page_views.append(page)
-        self._pages_by_id[spec.id] = page
 
     def _add_group(
         self,

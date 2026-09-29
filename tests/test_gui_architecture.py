@@ -110,6 +110,10 @@ def test_guided_dialog_delegates_field_anatomy_to_form_views():
     ):
         assert old_parallel_structure not in source
     assert "editor._error" not in renderer
+    assert "QListWidgetItem" not in renderer
+    assert "navigation_item" not in renderer
+    assert "navigation_label" not in renderer
+    assert "navigation_tint" not in renderer
 
 
 def test_generic_parameter_adapter_has_no_registered_editor_implementations():

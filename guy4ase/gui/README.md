@@ -118,8 +118,10 @@ know the internals of registered controls.
 the guided form. Its `PageView`, `GroupView` and `FieldView` objects keep an
 editor together with its label, mirror link, auxiliary widgets, collapsed-group
 toggle and validation state. `GuidedInputParametersDialog` owns workflow and
-navigation only; adding field decorations or another group layout belongs in
-the renderer rather than in the dialog.
+navigation only. Its `NavigationView` keeps each list item, label and tint
+together; these shell widgets are not stored in renderer-owned `PageView`s.
+Adding field decorations or another group layout belongs in the renderer rather
+than in the dialog.
 
 The smallest new editor therefore only needs the lifecycle methods:
 
