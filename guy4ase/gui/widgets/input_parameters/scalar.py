@@ -280,11 +280,10 @@ def create_option_editor(
         if kind == "literal":
             value = ast.literal_eval(text) if text else None
         else:
-            try:
-                value = grammar_type.parse(text) if text else None
-            except Exception:
-                value = grammar_type.convert(text)
-                grammar_type.validate(value)
+            value = text
+        if value is not None:
+            value = grammar_type.convert(value)
+            grammar_type.validate(value)
         on_value(value)
         if whole_option:
             editor.setPlaceholderText(default_text(option.default_value))
