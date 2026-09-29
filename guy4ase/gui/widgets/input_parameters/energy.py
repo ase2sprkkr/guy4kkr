@@ -1,15 +1,15 @@
 """Energy value, display units and (where applicable) reference to Fermi energy."""
 
 from ase2sprkkr.common.grammar_types import Energy
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy
 
 from guy4ase.gui.input_parameters.defaults import default_text
 from guy4ase.gui.input_parameters.energy import convert_energy
+from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
 from guy4ase.gui.widgets.nullable_spinbox import NullableDoubleSpinBox
 
 
-class EnergyEditor(QWidget):
+class EnergyEditor(CompoundParameterEditor):
     """Independent widget: reads state and commits via caller-supplied callbacks.
 
     Unit selection is presentation only. A reference change reinterprets the
@@ -19,8 +19,6 @@ class EnergyEditor(QWidget):
     must apply the whole change or raise without modifying the caller's state.
     The widget does not own InputParameters, an undo stack, or task validation.
     """
-    validationChanged = pyqtSignal(str)
-
     def __init__(self, read_state, apply_value, parent=None, *, with_reference=True,
                  reference_selectable=True, minimum=-1e9):
         super().__init__(parent)

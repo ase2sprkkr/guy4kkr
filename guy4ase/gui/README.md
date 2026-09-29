@@ -101,7 +101,9 @@ field("TASK", "KA", "Path segments:", editor="bsf_vectors",
       related_paths=(("TASK", "KE"),))
 ```
 
-Factories are collected in `widgets.input_parameters.registry`. Task-specific
+Factories are collected in `widgets.input_parameters.registry`. Every factory
+returns a `CompoundParameterEditor`; this base class is the executable contract
+and supplies defaults for optional capabilities. Task-specific
 implementations such as BSF mode, path selection and path vectors live in
 `widgets.input_parameters.bsf`; shared session adapters for energy bounds and
 relativistic scaling live in `widgets.input_parameters.common`. Such a control
@@ -111,6 +113,17 @@ implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
 modal editor without giving the widget a dependency on that dialog.
 `ParameterEditor` remains the session/tooltip/presentation adapter and does not
 know the internals of registered controls.
+
+The smallest new editor therefore only needs the lifecycle methods:
+
+```python
+class MyEditor(CompoundParameterEditor):
+    def refresh(self): ...
+    def commit(self) -> bool: ...
+```
+
+Override `focus_for_history()`, `set_editor_tooltip()`, `dependencies`,
+`full_width` or `help_text` only when their defaults are insufficient.
 
 The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
 absolute/relative option mapping lives in `input_parameters.energy`.

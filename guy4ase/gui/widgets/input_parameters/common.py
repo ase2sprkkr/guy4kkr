@@ -1,8 +1,6 @@
 """Session adapters for compound controls shared by guided task dialogs."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-
 from guy4ase.gui.input_parameters.energy import (
     bound_energy_state,
     reference_selectable,
@@ -41,10 +39,6 @@ class BoundEnergyParameterEditor(EnergyEditor):
             ),
         )
 
-    def focus_for_history(self, _path, _index) -> None:
-        self.setFocus(Qt.FocusReason.OtherFocusReason)
-
-
 class RelativisticScalingParameterEditor(RelativisticScalingEditor):
     """Adapt the shared per-type scaling table to a guided field placement."""
 
@@ -59,7 +53,7 @@ class RelativisticScalingParameterEditor(RelativisticScalingEditor):
     def focus_for_history(self, _path, index) -> None:
         if self.table.rowCount():
             self.table.setCurrentCell(min(index or 0, self.table.rowCount() - 1), 0)
-        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        super().focus_for_history(_path, index)
 
 
 EDITORS = {

@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.input_parameters.bindings import InputParametersBinding
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
+from guy4ase.gui.widgets.input_parameters.registry import EDITOR_FACTORIES
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +110,25 @@ def test_generic_parameter_adapter_has_no_registered_editor_implementations():
 
     common_source = (GUI / "widgets" / "input_parameters" / "common.py").read_text()
     assert "input_parameters.bsf" not in common_source
+
+
+def test_registered_parameter_editors_share_one_explicit_contract():
+    assert EDITOR_FACTORIES
+    assert all(
+        issubclass(factory, CompoundParameterEditor)
+        for factory in EDITOR_FACTORIES.values()
+    )
+    source = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
+    for capability in (
+        "dependencies",
+        "full_width",
+        "help_text",
+        "externalActionRequested",
+        "set_editor_tooltip",
+        "focus_for_history",
+    ):
+        assert f'getattr(self.control, "{capability}"' not in source
+        assert f'hasattr(self.control, "{capability}"' not in source
 
 
 def test_packages_and_specs_do_not_load_dialogs_or_qt():

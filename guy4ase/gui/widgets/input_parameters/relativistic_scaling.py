@@ -1,7 +1,7 @@
 """Global and per-atomic-type editors for DEFAULTDICT scaling options."""
 import numpy as np
 from ase2sprkkr.common.grammar_types import Array
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -11,21 +11,19 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
-    QWidget,
 )
 
 from guy4ase.gui.misc.tables import fit_table_height
+from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
 from guy4ase.gui.widgets.numeric_table import CoordinateDelegate, coordinate_value
 
 
-class RelativisticScalingEditor(QWidget):
+class RelativisticScalingEditor(CompoundParameterEditor):
     """Rows are the global setting and explicit type indices (not site indices).
 
     A scalar/one-element array applies to all orbitals. Array-capable option
     types expose s, p, d, f, ... columns without rewriting values on refresh.
     """
-    validationChanged = pyqtSignal(str)
-
     def __init__(self, session, path, page_id, parent=None):
         super().__init__(parent)
         self.session, self.path, self.page_id = session, path, page_id

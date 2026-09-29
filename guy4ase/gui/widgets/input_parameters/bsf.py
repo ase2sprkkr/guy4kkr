@@ -1,7 +1,7 @@
 """Compound controls used only by the guided BSF task."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QTableWidgetItem,
     QVBoxLayout,
-    QWidget,
 )
 
 from guy4ase.gui.input_parameters.bsf import (
@@ -24,6 +23,7 @@ from guy4ase.gui.input_parameters.bsf import (
 )
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
 from guy4ase.gui.misc.tables import fit_table_height
+from guy4ase.gui.widgets.input_parameters.compound import CompoundParameterEditor
 from guy4ase.gui.widgets.numeric_table import (
     CoordinateDelegate,
     CoordinateTable,
@@ -31,10 +31,9 @@ from guy4ase.gui.widgets.numeric_table import (
 )
 
 
-class BsfMeshEditor(QWidget):
+class BsfMeshEditor(CompoundParameterEditor):
     """Edit BSF E-k/k-k mode and the main energy sampling as one value."""
 
-    validationChanged = pyqtSignal(str)
     dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"))
     full_width = False
     help_text = (
@@ -115,11 +114,9 @@ class BsfMeshEditor(QWidget):
         self.energy_count.setToolTip(text)
 
 
-class BsfKPathEditor(QWidget):
+class BsfKPathEditor(CompoundParameterEditor):
     """Select an atom-dependent predefined path or request custom path editing."""
 
-    validationChanged = pyqtSignal(str)
-    externalActionRequested = pyqtSignal()
     # Additional input beyond placement.paths: KA determines the custom-path
     # summary. Mode transitions that replace KPATH already touch its own path.
     dependencies = (("TASK", "KA"),)
@@ -237,7 +234,7 @@ class BsfKPathEditor(QWidget):
             widget.setToolTip(text)
 
 
-class BsfVectorsEditor(QWidget):
+class BsfVectorsEditor(CompoundParameterEditor):
     """Edit BSF path segments or the plane origin as one atomic control.
 
     The table is an editing buffer, refreshed from the session on undo/redo.
@@ -245,7 +242,6 @@ class BsfVectorsEditor(QWidget):
     them; display rounding never changes the values committed to the session.
     """
 
-    validationChanged = pyqtSignal(str)
     # Additional inputs beyond placement.paths (KA and related KE).
     dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"))
     full_width = True
@@ -483,7 +479,7 @@ class BsfVectorsEditor(QWidget):
         self.table.setToolTip(text)
 
 
-EDITORS: dict[str, type[QWidget]] = {
+EDITORS: dict[str, type[CompoundParameterEditor]] = {
     "bsf_mesh": BsfMeshEditor,
     "bsf_kpath": BsfKPathEditor,
     "bsf_vectors": BsfVectorsEditor,

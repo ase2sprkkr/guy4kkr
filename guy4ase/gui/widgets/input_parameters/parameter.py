@@ -99,7 +99,7 @@ class ParameterEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.control = self._create_control()
-        self.full_width = bool(getattr(self.control, "full_width", False))
+        self.full_width = self.control.full_width if placement.editor else False
         if not self.full_width:
             self.control.setFixedWidth(EDITOR_WIDTH)
         layout.addWidget(self.control, 1)
@@ -114,12 +114,12 @@ class ParameterEditor(QWidget):
             self.path[-1],
             placement.label,
         )
-        extra_help = getattr(self.control, "help_text", "")
+        extra_help = self.control.help_text if placement.editor else ""
         if extra_help:
             self._base_tooltip += f"\n{extra_help}"
         self.setToolTip(self._base_tooltip)
         self.control.setToolTip(self._base_tooltip)
-        if hasattr(self.control, "set_editor_tooltip"):
+        if placement.editor:
             self.control.set_editor_tooltip(self._base_tooltip)
         self._connect_control()
         self.session.editApplied.connect(self._session_changed)
@@ -128,7 +128,8 @@ class ParameterEditor(QWidget):
     def _session_changed(self, paths, reset):
         """Preserve unrelated drafts; replacements and history explicitly discard them."""
         dependencies = set(self.placement.paths)
-        dependencies.update(getattr(self.control, "dependencies", ()))
+        if self.placement.editor:
+            dependencies.update(self.control.dependencies)
         if reset or dependencies.intersection(paths):
             self.refresh()
 
@@ -190,16 +191,15 @@ class ParameterEditor(QWidget):
 
     def _connect_control(self) -> None:
         control = self.control
-        input_commit = getattr(control, "input_commit", None)
-        if input_commit is not None:
-            input_commit.validationChanged.connect(self._set_error)
-        elif self.placement.editor:
+        if self.placement.editor:
             control.validationChanged.connect(self._set_error)
-            action = getattr(control, "externalActionRequested", None)
-            if action is not None:
-                action.connect(self.externalActionRequested)
-        elif isinstance(control, (VectorEditor, EnergyEditor)):
-            control.validationChanged.connect(self._set_error)
+            control.externalActionRequested.connect(self.externalActionRequested.emit)
+        else:
+            input_commit = getattr(control, "input_commit", None)
+            if input_commit is not None:
+                input_commit.validationChanged.connect(self._set_error)
+            elif isinstance(control, (VectorEditor, EnergyEditor)):
+                control.validationChanged.connect(self._set_error)
 
     def _apply_value(self, value: Any) -> None:
         """Apply a factory-decoded scalar value through the session."""
@@ -342,7 +342,7 @@ class ParameterEditor(QWidget):
             tooltip += f"\n\nInvalid value: {self._error}"
         self.setToolTip(tooltip)
         self.control.setToolTip(tooltip)
-        if hasattr(self.control, "set_editor_tooltip"):
+        if self.placement.editor:
             self.control.set_editor_tooltip(tooltip)
 
     def set_parameter_enabled(self, enabled: bool, reason: str | None = None) -> None:
