@@ -223,6 +223,8 @@ def test_invalid_expert_text_blocks_ok_until_corrected(app):
     assert d.result().MODE.MDIR() is None
     editor.setText('{0,0,1}')
     editor.editingFinished.emit()
+    assert not editor.input_commit.error
+    assert not d._editor_error.isVisible()
     d._on_ok()
     assert QDialog.result(d) == QDialog.DialogCode.Accepted
     d.close()

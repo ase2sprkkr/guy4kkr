@@ -275,15 +275,27 @@ def create_option_editor(
     editor.setReadOnly(read_only)
 
     def apply(text):
-        if allow_empty and not text:
-            return
+        if not text:
+            if allow_empty:
+                return
+            if nullable:
+                on_value(None)
+                if whole_option:
+                    editor.setPlaceholderText(default_text(option.default_value))
+                    editor.clear()
+                return
+            option_name = getattr(option, "name", "Value")
+            raise ValueError(f"{option_name} must have a value")
         if kind == "literal":
-            value = ast.literal_eval(text) if text else None
+            value = grammar_type.convert(ast.literal_eval(text))
+        elif isinstance(grammar_type, String):
+            value = grammar_type.convert(text)
         else:
-            value = text
-        if value is not None:
-            value = grammar_type.convert(value)
-            grammar_type.validate(value)
+            # The control displays ``grammar_type.string(value)``.  Its inverse
+            # is the grammar parser, not ``convert()``, which expects an
+            # already-structured Python value for types such as Site/SetOf.
+            value = grammar_type.parse(text)
+        grammar_type.validate(value)
         on_value(value)
         if whole_option:
             editor.setPlaceholderText(default_text(option.default_value))

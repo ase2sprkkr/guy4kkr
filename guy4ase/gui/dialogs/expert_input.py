@@ -146,6 +146,7 @@ class InputParametersDialog(_TreeDialogBase):
     def _build_tree(self) -> None:
         self._special_editors = {}
         self._special_errors = {}
+        self._editor_errors = {}
         self._editor_error.hide()
         self._tree.clear()
         self._build_section(self._params)
@@ -296,9 +297,7 @@ class InputParametersDialog(_TreeDialogBase):
             self._special_errors[path] = message
         else:
             self._special_errors.pop(path, None)
-        self._editor_error.setText('\n'.join(
-            f"{'.'.join(key)}: {error}" for key, error in self._special_errors.items()))
-        self._editor_error.setVisible(bool(self._special_errors))
+        self._refresh_editor_errors()
         item.setToolTip(2, message)
 
     def _set_option_value(self, opt: Any, item: QTreeWidgetItem, value: Any) -> None:
@@ -362,8 +361,27 @@ class InputParametersDialog(_TreeDialogBase):
 
     def _display_editor_error(self, item, message):
         if message:
-            self._editor_error.setText(f'{item.text(0)}: {message}')
-            self._editor_error.show()
+            self._editor_errors[item] = message
+        else:
+            self._editor_errors.pop(item, None)
+        self._refresh_editor_errors()
+
+    def _refresh_editor_errors(self):
+        self._editor_errors = {
+            item: error
+            for item, error in self._editor_errors.items()
+            if not sip.isdeleted(item)
+        }
+        messages = [
+            f"{'.'.join(path)}: {error}"
+            for path, error in self._special_errors.items()
+        ]
+        messages.extend(
+            f"{item.text(0)}: {error}"
+            for item, error in self._editor_errors.items()
+        )
+        self._editor_error.setText('\n'.join(messages))
+        self._editor_error.setVisible(bool(messages))
 
     def _editor_widgets(self):
         """Snapshot current tree controls; a commit may rebuild compound children."""

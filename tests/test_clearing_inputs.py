@@ -104,6 +104,24 @@ def test_expert_required_text_cannot_silently_become_unset(application):
     dialog.close()
 
 
+def test_expert_site_text_uses_input_grammar(application):
+    dialog = InputParametersDialog(InputParameters.create('scf'))
+    parameters = dialog.result()
+    item, = dialog._tree.findItems(
+        'IQCNTR',
+        Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+        0,
+    )
+    control = dialog._tree.itemWidget(item, 2)
+
+    control.setText('3')
+    control.editingFinished.emit()
+
+    assert parameters.TAU.IQCNTR() == 3
+    assert not control.input_commit.error
+    dialog.close()
+
+
 def test_expert_empty_optional_array_unsets(application):
     parameters = InputParameters.create('scf')
     parameters.MODE.OP.set('LDA+U')
