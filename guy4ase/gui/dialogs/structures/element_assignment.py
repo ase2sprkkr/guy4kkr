@@ -235,22 +235,23 @@ class ElementAssignmentDialog(QDialog):
         for idx, p in enumerate(payloads):
             if p is payload:
                 out = payloads[:idx]
+                index = payload.get('index')
 
-            for i,pos in enumerate(payload['positions']):
-                index = payload.pop('index', None)
-                add = payload.copy()
-                template = f"{payload['label']}.{i+1}"
-                label = template
-                j=1
-                while label in labels:
-                    label = f"{template}.{j}"
-                    j+=1
-                add['label'] = label
-                add['positions'] = pos
-                if index is not None:
-                    add['origin'] = [ index[i] ]
-                out.append( add )
-            out.extend( payloads[idx+1:] )
+                for i,pos in enumerate(payload['positions']):
+                    add = payload.copy()
+                    template = f"{payload['label']}.{i+1}"
+                    label = template
+                    j=1
+                    while label in labels:
+                        label = f"{template}.{j}"
+                        j+=1
+                    add['label'] = label
+                    add['positions'] = pos.reshape(1,3)
+                    if index is not None:
+                        add['origin'] = [ index[i] ]
+                    out.append( add )
+                out.extend( payloads[idx+1:] )
+                break
         else:
             raise ValueError("Payload to break not found in current payloads.")
 
