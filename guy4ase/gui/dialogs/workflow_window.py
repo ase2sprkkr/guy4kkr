@@ -24,7 +24,11 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.flows.operations import GuiOperations
+from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
+from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.flows import calculation as calculation_flow
+from guy4ase.gui.flows import files as file_flows
+from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
     SPACE_LG,
@@ -116,7 +120,6 @@ class WorkflowWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        operations: GuiOperations,
         *,
         open_expert: Callable[[], None],
     ) -> None:
@@ -126,11 +129,10 @@ class WorkflowWindow(QMainWindow):
         self.controller = controller
         self.workspace = self.controller.workspace
         self.recent_history = recent_files
-        self.operations = operations
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.resultChanged.connect(lambda _result: self._refresh())
-        self.operations.recentFilesChanged.connect(self._refresh)
+        self.recent_history.changed.connect(self._refresh)
         self._build_ui()
         self._refresh()
 
@@ -188,9 +190,7 @@ class WorkflowWindow(QMainWindow):
         )
         result_actions_layout.addWidget(result_actions_title)
         self._result_actions_widget = ResultActionsWidget(
-            lambda value, action: self.operations.execute_output_value_action(
-                value, action, self
-            ),
+            lambda value, action: execute_value_action(value, action, self),
             show_values_without_actions=False,
             parent=self._result_actions,
         )
@@ -506,43 +506,73 @@ class WorkflowWindow(QMainWindow):
         self._refresh()
 
     def _create_3d(self) -> None:
-        self.operations.create_structure(self)
+        structure_flows.create_structure(self.controller, self)
 
     def _create_from_database(self) -> None:
-        self.operations.create_structure_from_database(self)
+        structure_flows.create_structure_from_database(self.controller, self)
 
     def _download_structure(self) -> None:
-        self.operations.download_structure(self)
+        structure_flows.download_structure(self.controller, self)
 
     def _create_surface(self) -> None:
-        self.operations.create_structure(self)
+        structure_flows.create_structure(self.controller, self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
-        self.operations.create_structure(self)
+        structure_flows.create_structure(self.controller, self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
-        self.operations.choose_structure(self)
+        file_flows.choose_and_load_structure(
+            self.controller, self.recent_history, self
+        )
 
     def _load_output(self) -> None:
-        self.operations.choose_output(self)
+        file_flows.choose_and_load_output(
+            self.controller, self.recent_history, self
+        )
 
     def _load_recent(self, kind: RecentKind, file_path: str) -> None:
-        self.operations.open_recent(kind, file_path, self)
+        file_flows.open_recent(
+            self.controller,
+            self.recent_history,
+            kind,
+            file_path,
+            self,
+        )
         if self.workspace.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        self.operations.build_2d_structure(
-            self, surface_mode=surface_mode
+        structure_flows.build_2d_structure(
+            self.controller, self, surface_mode=surface_mode
         )
 
     def _prepare_task(self, task: str) -> None:
         try:
-            self.operations.prepare_guided_task(task, self)
+            if self.workspace.atoms is None:
+                QMessageBox.information(
+                    self,
+                    "No Structure",
+                    "Load or create a structure first.",
+                )
+                return
+            selection = select_guided_input_parameters(
+                task,
+                parent=self,
+                directory=self.workspace.directory,
+                atoms=self.workspace.atoms,
+            )
+            if selection is None:
+                return
+            parameters, directory = selection
+            self.controller.set_directory(directory)
+            self.controller.set_input_parameters(parameters)
+            calculation_flow.run_calculation(
+                self.controller, self.recent_history, self
+            )
         except (ImportError, ModuleNotFoundError) as exc:
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return

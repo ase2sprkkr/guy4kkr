@@ -17,8 +17,8 @@
   individual task modules expose `build_spec`, and `registry.task_dialog_spec`
   selects and validates a layout.
 - `plots`: Matplotlib rendering. Pure lattice queries and transformations,
-  including structure dimensionality derived from `Atoms.pbc`, belong in
-  `guy4ase.physics.lattice`, not in the GUI.
+  including supported bulk/layered classification derived from periodicity
+  and SPR-KKR regions, belong in `guy4ase.physics.lattice`, not in the GUI.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.
 - `style`: the small palette-aware visual vocabulary shared by dialogs and
@@ -26,22 +26,26 @@
   primary/secondary action states. Semantic colors and layout remain with the
   window or task that owns their meaning; this is intentionally not a theme
   manager.
-- `application`: shared application state and document services, kept separate from
-  Qt windows and reusable widgets. `application.workspace.WorkspaceState` is
-  the Qt-independent current document. `application.workspace_controller`
-  provides its single mutation/signalling boundary, and
-  `application.recent_files` owns Qt-independent history persistence. Menus
-  and other presentation state remain owned by the windows.
-- `flows`: shared Qt orchestration such as structure selection, file loading,
-  guided task setup, calculation windows and result actions. A flow may compose
-  leaf dialogs and update `application`, but it does not depend on
-  `MainWindow` or `WorkflowWindow`.
+- `application`: shared observable/document state, kept separate from windows
+  and reusable widgets. `application.workspace.WorkspaceState` is the
+  Qt-independent current document. `WorkspaceController` is its single
+  mutation/signalling boundary and owns non-Qt document I/O and complete result
+  adoption. `RecentFiles` is observable persistent application state. Neither
+  object knows file choosers, messages or concrete windows.
+- `flows`: stateless shared Qt workflows composed from application state and
+  leaf dialogs. `structures`, `files` and `calculation` are modules of ordinary
+  functions, not service objects. They may show modal UI and publish changes
+  through `WorkspaceController`, but never import `MainWindow` or
+  `WorkflowWindow`. Window-specific orchestration remains with its owning
+  dialog.
 
 `guy4ase.main.GuiApplication` is the single composition root. It creates and
-owns one `WorkspaceController`, `RecentFiles` and `GuiOperations`, then injects
-those same instances into the sibling `WorkflowWindow` and `MainWindow` views.
-It also owns their top-level lifetime and lazy expert-window creation.
-Neither window constructs application services or another top-level window.
+owns one `WorkspaceController` and one `RecentFiles`, then injects those same
+instances into the sibling `WorkflowWindow` and `MainWindow` views. It also
+owns their top-level lifetime and lazy expert-window creation. Neither window
+constructs application state or another top-level window. Shared behavior does
+not require an injected operations namespace; windows call the appropriate
+stateless flow function directly.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat
@@ -197,6 +201,10 @@ and expert tree. Additional validation/application is passed through its
 - Windows render `WorkspaceController` changes; they do not assign document
   fields directly. Calculation completion is delivered through an explicit
   callback rather than by inspecting a parent window for a named method.
+- `application` does not import dialogs, widgets or flows. Flows may compose
+  application state and leaf dialogs, but never import either top-level window.
+- `RecentFiles.changed` directly refreshes interested views; no forwarding
+  service signal or transient-window registry exists.
 - Widgets may use parameter services and small helpers, but never import
   concrete application dialogs. Use signals or callbacks to request actions.
 - `input_parameters` must not import `dialogs` or `widgets`.

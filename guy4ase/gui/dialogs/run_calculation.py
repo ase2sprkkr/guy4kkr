@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from ase2sprkkr.sprkkr.calculator import SPRKKR
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QDialog,
@@ -89,12 +89,14 @@ class SprkkrRunWindow(QDialog):
         on_finished: Callable[[Any], None] | None = None,
     ):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("SPRKKR Run")
         self.resize(900, 600)
 
         self._thread: Optional[QThread] = None
         self._worker: Optional[_SprkkrRunWorker] = None
         self._finished_callback = on_finished
+        self._close_requested = False
 
         layout = QVBoxLayout(self)
 
@@ -124,7 +126,12 @@ class SprkkrRunWindow(QDialog):
         self._start(SprkkrRunInputs(atoms=atoms, input_parameters=input_parameters, directory=directory))
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        self._on_stop()
+        if self._thread is not None and self._thread.isRunning():
+            self._close_requested = True
+            self._on_stop()
+            self.hide()
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def _start(self, inputs: SprkkrRunInputs) -> None:
@@ -138,14 +145,20 @@ class SprkkrRunWindow(QDialog):
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
 
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._thread_finished)
 
         self._thread = thread
         self._worker = worker
         thread.start()
+
+    @pyqtSlot()
+    def _thread_finished(self) -> None:
+        if self._close_requested:
+            self.close()
 
     @pyqtSlot(str)
     def _set_status(self, text: str) -> None:

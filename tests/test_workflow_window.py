@@ -94,7 +94,6 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     assert expert.workspace is workspace
     assert expert.controller is window.controller is gui.controller
     assert expert.recent_history is window.recent_history is gui.recent_files
-    assert expert.operations is window.operations is gui.operations
     window.controller.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
     application.processEvents()
     assert workspace.atoms is not None

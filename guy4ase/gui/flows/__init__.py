@@ -1,1 +1,1 @@
-"""Reusable Qt workflows shared by the application's window shells."""
+"""Stateless Qt workflow functions shared by the application's windows."""

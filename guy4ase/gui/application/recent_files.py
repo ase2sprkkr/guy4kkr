@@ -1,4 +1,4 @@
-"""Persistent recent-file history without Qt or window dependencies."""
+"""Observable persistent recent-file history without window dependencies."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import platformdirs
+from PyQt6.QtCore import QObject, pyqtSignal
 
 RecentKind = Literal["structure", "input", "output"]
 RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
@@ -20,10 +21,19 @@ def default_recent_files_path() -> Path:
     return Path(config_home) / "recent_files.json"
 
 
-class RecentFiles:
-    """Load, normalize and persist bounded recent-file lists."""
+class RecentFiles(QObject):
+    """Load, normalize, persist and publish bounded recent-file lists."""
 
-    def __init__(self, path: Path | None = None, *, limit: int = 10) -> None:
+    changed = pyqtSignal()
+
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        limit: int = 10,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
         if limit < 1:
             raise ValueError("Recent-file limit must be positive.")
         self.path = path or default_recent_files_path()
@@ -87,12 +97,17 @@ class RecentFiles:
         """Move a path to the front and persist the bounded history."""
         normalized = str(Path(file_path))
         recent = self._files[kind]
+        previous = tuple(recent)
+        previous_last_kind = self.last_kind
         recent[:] = [item for item in recent if item != normalized]
         recent.insert(0, normalized)
         del recent[self.limit :]
         if kind in {"structure", "output"}:
             self.last_kind = kind
+        if tuple(recent) == previous and self.last_kind == previous_last_kind:
+            return
         self.save()
+        self.changed.emit()
 
     def forget(self, kind: RecentKind, file_path: str | Path) -> None:
         """Remove one path and persist only if the history changed."""
@@ -104,6 +119,7 @@ class RecentFiles:
         self._files[kind] = retained
         self._repair_last_kind()
         self.save()
+        self.changed.emit()
 
     def remove_missing(self, kinds: Iterable[RecentKind] = RECENT_KINDS) -> None:
         """Remove paths which no longer exist and persist any change."""
@@ -116,6 +132,7 @@ class RecentFiles:
         if changed:
             self._repair_last_kind()
             self.save()
+            self.changed.emit()
 
     def _repair_last_kind(self) -> None:
         if self.last_kind is not None and not self._files[self.last_kind]:

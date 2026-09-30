@@ -12,6 +12,7 @@ from ase2sprkkr.common.options import BaseOption
 from ase2sprkkr.common.repeated_configuration_containers import (
     RepeatedConfigurationContainer,
 )
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
@@ -28,8 +29,8 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
     def __init__(self, value: Any, title: str = 'View Value', parent: Optional[QWidget] = None):
         self._value = value
         self._visited: set[int] = set()
-        self._child_dialogs: list[ReadOnlyObjectDialog] = []
         super().__init__(title, parent=parent, filter_all_columns=True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._tree.setColumnCount(5)
         self._tree.setHeaderLabels(['Name', 'Type', 'Value', 'Comment', 'Actions'])
         self._tree.setColumnWidth(4, 140)
@@ -160,20 +161,33 @@ class ReadOnlyObjectDialog(_TreeDialogBase):
         self._tree.setItemWidget(item, 4, holder)
 
     def _execute_action(self, value: Any, action: str) -> None:
-        try:
-            method = getattr(value, action)
-            result = method()
-            if action in {'data', 'edit'}:
-                display_name = getattr(value, 'display_name', value.name)
-                dialog = ReadOnlyObjectDialog(result, title=f'View {display_name}', parent=self)
-                self._child_dialogs.append(dialog)
-                dialog.destroyed.connect(
-                    lambda _obj=None, dlg=dialog: self._child_dialogs.remove(dlg)
-                    if dlg in self._child_dialogs else None
-                )
-                dialog.show()
-        except Exception as exc:
-            QMessageBox.critical(self, 'Action Error', f"Failed to execute action '{action}':\n{exc}")
+        execute_value_action(value, action, self)
+
+
+def execute_value_action(
+    value: Any, action: str, parent: QWidget
+) -> None:
+    """Execute one advertised result action with uniform error handling."""
+    try:
+        if action in {"data", "edit"}:
+            result = value.data() if action == "data" else value()
+            display_name = getattr(
+                value, "display_name", getattr(value, "name", "Value")
+            )
+            show_readonly_object_dialog(
+                result,
+                title=f"View {display_name}",
+                parent=parent,
+            )
+            return
+        method = getattr(value, action)
+        method()
+    except Exception as exc:  # noqa: BLE001 - plugin action boundary
+        QMessageBox.critical(
+            parent,
+            "Action Error",
+            f"Failed to execute action '{action}':\n{exc}",
+        )
 
 
 def show_readonly_object_dialog(value: Any, title: str = 'View Value', parent: Optional[QWidget] = None) -> ReadOnlyObjectDialog:
