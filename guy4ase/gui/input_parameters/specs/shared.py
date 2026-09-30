@@ -229,12 +229,7 @@ def kkr_groups(is_2d: bool) -> tuple[GroupSpec, ...]:
 
 
 def single_site_mesh_enabled(context: PresentationContext) -> bool:
-    return bool(
-        context.value("ENERGY", "SPLITSS")
-        or context.value("CONTROL", "SPLITSS")
-        or context.value("CONTROL", "FSOHFF")
-        or str(getattr(context.parameters, "task_name", "")).upper() == "COMPTON"
-    )
+    return context.parameters.uses_separate_single_site_contour()
 
 
 def single_site_mesh_reason(_context: PresentationContext) -> str:

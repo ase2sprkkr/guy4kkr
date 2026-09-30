@@ -54,9 +54,13 @@ module paths and `calculation_setup` package have no compatibility wrappers.
 ## Parameter editing
 
 `input_parameters.session.InputParametersSession` owns the working parameters,
-initial snapshot, Undo/Redo and remembered single-site settings. Widgets must not
-keep a second authoritative parameter model. Invalid or incomplete input may
-remain in a widget's draft until committed or discarded.
+initial snapshot, Undo/Redo and generic non-serialized field state. Small
+Qt-independent transaction plugins may adjust a candidate and that dormant
+state before one atomic history command is created. Concrete SPR-KKR semantics,
+such as the optional second single-site contour, live in their own plugin and
+are explicitly composed by the guided dialog. Widgets must not keep a second
+authoritative parameter model. Invalid or incomplete input may remain in a
+widget's draft until committed or discarded.
 
 `input_parameters.bindings.InputParameterPath` is a tuple such as
 `("ENERGY", "EMIN")`. It is an option address, not a file-system path.
@@ -156,7 +160,8 @@ conversion belongs to the energy value editor rather than the storage binding.
 The field declaration selects a presentation explicitly with, for example,
 `editor="energy"`. Only `editor="auto"` invokes the deterministic grammar-MRO
 mapping in `editor_for_type()`.
-Dormant single-site mesh values remain owned by the session.
+Dormant indexed values remain owned and snapshotted by the session; the
+single-site contour plugin alone decides when its second mesh is active.
 `ParameterEditor` remains the
 session/tooltip/presentation shell and delegates `refresh()`, `commit()` and
 history focus without knowing any concrete Qt value-editor type.

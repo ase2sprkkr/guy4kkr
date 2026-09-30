@@ -1,9 +1,10 @@
 """Transactional editing state for the guided input-parameter dialog."""
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, MutableMapping
 from copy import deepcopy
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol, TypeAlias
 
 import numpy as np
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -16,17 +17,27 @@ from guy4ase.gui.input_parameters.bindings import (
     values_equal,
 )
 
-SPLIT_SWITCHES = (("ENERGY", "SPLITSS"), ("CONTROL", "SPLITSS"), ("CONTROL", "FSOHFF"))
+DormantKey: TypeAlias = tuple[InputParameterPath, int]
+DormantState: TypeAlias = MutableMapping[DormantKey, Any]
 
 
-def _split_enabled(parameters: InputParameters) -> bool:
-    for path in SPLIT_SWITCHES:
-        try:
-            if resolve_option(parameters, path)():
-                return True
-        except (KeyError, AttributeError):
-            pass
-    return parameters.task_name.upper() == "COMPTON"
+class SessionTransactionPlugin(Protocol):
+    """Adjust a candidate and its non-serialized editing state atomically."""
+
+    def apply(
+        self,
+        before_parameters: InputParameters,
+        candidate_parameters: InputParameters,
+        dormant: DormantState,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class _SessionSnapshot:
+    """The complete state restored by one undo/redo operation."""
+
+    parameters: InputParameters
+    dormant: dict[DormantKey, Any]
 
 
 def _parameters_equal(left: InputParameters, right: InputParameters) -> bool:
@@ -68,26 +79,22 @@ class _ReplaceParametersCommand(QUndoCommand):
     def __init__(
         self,
         session: "InputParametersSession",
-        before: InputParameters,
-        after: InputParameters,
+        before: _SessionSnapshot,
+        after: _SessionSnapshot,
         *,
         text: str,
         source_page: str | None,
         path: InputParameterPath | None,
         field_index: int | None,
-        before_single_site: dict,
-        after_single_site: dict,
     ) -> None:
         super().__init__(text)
         self._session = session
         self._before = before
         self._after = after
-        self._before_single_site = before_single_site
-        self._after_single_site = after_single_site
         self.source_page = source_page
         self.path = path
         self.field_index = field_index
-        self.changes = _changed_values(before, after)
+        self.changes = _changed_values(before.parameters, after.parameters)
         self._first_redo = True
 
     def description(self, *, undo: bool) -> str:
@@ -121,12 +128,15 @@ class _ReplaceParametersCommand(QUndoCommand):
         self._session.historyApplied.emit(paths, self.source_page, indices)
 
     def undo(self) -> None:
-        self._session._install(self._before, self.path, self._before_single_site, reset=True)
+        self._session._install(self._before, self.path, reset=True)
         self._notify_navigation()
 
     def redo(self) -> None:
-        self._session._install(self._after, self.path, self._after_single_site,
-                               reset=not self._first_redo or self.path is None)
+        self._session._install(
+            self._after,
+            self.path,
+            reset=not self._first_redo or self.path is None,
+        )
         # QUndoStack.push() calls redo too. Ordinary edits must not navigate.
         if not self._first_redo:
             self._notify_navigation()
@@ -142,14 +152,20 @@ class InputParametersSession(QObject):
     modifiedChanged = pyqtSignal(bool)
     historyApplied = pyqtSignal(object, object, object)
 
-    def __init__(self, parameters: InputParameters, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parameters: InputParameters,
+        parent: QObject | None = None,
+        *,
+        plugins: Iterable[SessionTransactionPlugin] = (),
+    ) -> None:
         super().__init__(parent)
         self._initial = parameters.copy(copy_values=True)
         self._working = parameters.copy(copy_values=True)
-        # Dormant single-site settings are editing state, not active input.
-        # Commands snapshot them too, so branching after Undo cannot reuse
-        # settings from the abandoned future.
-        self._single_site = {}
+        self._plugins = tuple(plugins)
+        # Non-serialized field values belong to editing state. Commands retain
+        # them with the parameter snapshot, including across history branches.
+        self._dormant: dict[DormantKey, Any] = {}
         self._modified = False
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(100)
@@ -178,27 +194,17 @@ class InputParametersSession(QObject):
         """Read the complete option, including global and per-type overrides."""
         return self.option(path)(all_values=True)
 
-    def single_site_value(self, path: InputParameterPath) -> Any:
-        """Display a remembered, disabled mesh without writing it to input."""
-        return self._single_site.get(path)
-
     def display_value(self, path: InputParameterPath, index: int | None = None) -> Any:
-        """Return one displayed field value, including dormant editing state.
-
-        Dormant single-site mesh components are deliberately not written into
-        InputParameters while their mode is disabled. The field binding asks
-        the session for that presentation value rather than knowing which
-        concrete ENERGY options participate in this mechanism.
-        """
+        """Return an active component or its non-serialized displayed value."""
         value = self.value(path)
         if index is None:
             return value
         try:
             if value is not None and len(value) > index:
                 return value[index]
-        except TypeError:
-            return None
-        return self._single_site.get(path) if index == 1 else None
+        except (TypeError, IndexError):
+            pass
+        return self._dormant.get((path, index))
 
     def history_description(self, *, undo: bool) -> str:
         """Describe the next history command, with old/new values for its tooltip."""
@@ -211,7 +217,8 @@ class InputParametersSession(QObject):
 
     def is_changed(self, path: InputParameterPath) -> bool:
         left = resolve_option(self._initial, path)(all_values=True)
-        right = resolve_option(self._working, path)(all_values=True)
+        current = resolve_option(self._working, path)
+        right = current(all_values=True)
         try:
             return not current._definition.type.is_the_same_value(right, left)
         except Exception:
@@ -274,29 +281,6 @@ class InputParametersSession(QObject):
         candidate = parameters.copy(copy_values=True)
         return self._push(candidate, text=text, source_page=source_page, path=None)
 
-    def _sync_single_site(self, candidate: InputParameters) -> dict:
-        """Resize meshes on split-mode transitions and return dormant settings.
-
-        Disabling the second mesh remembers it outside the serialized input.
-        That cache is snapshotted with each command, including undo branches.
-        Unrelated edits intentionally do not repair incomplete imported meshes.
-        """
-        remembered = deepcopy(self._single_site)
-        before, after = _split_enabled(self._working), _split_enabled(candidate)
-        # Do not repair imported incomplete input as a side effect of unrelated
-        # edits. Only a transition of the effective switch changes array lengths.
-        if before != after:
-            for name in ("GRID", "NE"):
-                path = ("ENERGY", name)
-                option = resolve_option(candidate, path)
-                values = list(option())
-                if after and len(values) == 1:
-                    option.set(values + [remembered.get(path, values[0])])
-                elif not after and len(values) > 1:
-                    remembered[path] = deepcopy(values[1])
-                    option.set(values[:1])
-        return remembered
-
     def _push(
         self,
         candidate: InputParameters,
@@ -306,30 +290,41 @@ class InputParametersSession(QObject):
         path: InputParameterPath | None,
         field_index: int | None = None,
     ) -> bool:
-        remembered = self._sync_single_site(candidate)
-        if _parameters_equal(candidate, self._working):
+        dormant = deepcopy(self._dormant)
+        for plugin in self._plugins:
+            plugin.apply(self._working, candidate, dormant)
+        if (
+            _parameters_equal(candidate, self._working)
+            and values_equal(dormant, self._dormant)
+        ):
             return False
+        before = _SessionSnapshot(self._working, deepcopy(self._dormant))
+        after = _SessionSnapshot(candidate, deepcopy(dormant))
         command = _ReplaceParametersCommand(
             self,
-            self._working,
-            candidate,
+            before,
+            after,
             text=text,
             source_page=source_page,
             path=path,
             field_index=field_index,
-            before_single_site=self._single_site,
-            after_single_site=remembered,
         )
         self.undo_stack.push(command)
         return True
 
-    def _install(self, parameters: InputParameters, path: InputParameterPath | None, single_site: dict, *, reset=False) -> None:
+    def _install(
+        self,
+        snapshot: _SessionSnapshot,
+        path: InputParameterPath | None,
+        *,
+        reset: bool = False,
+    ) -> None:
         """Install an immutable-by-convention snapshot and notify all editors."""
         # Snapshots placed on the undo stack are never mutated: every user edit
         # starts from a fresh copy.  Reusing the snapshot here is therefore safe.
-        changes = tuple(_changed_values(self._working, parameters))
-        self._working = parameters
-        self._single_site = single_site
+        changes = tuple(_changed_values(self._working, snapshot.parameters))
+        self._working = snapshot.parameters
+        self._dormant = snapshot.dormant
         self.editApplied.emit(changes, reset)
         if path is not None:
             self.valueChanged.emit(path)
