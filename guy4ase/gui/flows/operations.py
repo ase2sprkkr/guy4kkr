@@ -27,6 +27,7 @@ from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup_from_prototype,
 )
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.physics.lattice import detect_structure_kind
 
 
 class GuiOperations(QObject):
@@ -79,13 +80,30 @@ class GuiOperations(QObject):
         )
         if atoms is not None:
             self.controller.set_structure(atoms)
+            self._warn_if_structure_kind_is_unknown(atoms, parent)
         return atoms
 
     def download_structure(self, parent: QWidget) -> Any | None:
         atoms = select_online_structure(parent=parent)
         if atoms is not None:
             self.controller.set_structure(atoms)
+            self._warn_if_structure_kind_is_unknown(atoms, parent)
         return atoms
+
+    @staticmethod
+    def _warn_if_structure_kind_is_unknown(
+        atoms: Any, parent: QWidget
+    ) -> None:
+        if detect_structure_kind(atoms) != "unknown":
+            return
+        QMessageBox.warning(
+            parent,
+            "Unknown Structure Type",
+            "The loaded structure could not be recognized as a supported "
+            "3D bulk or SPR-KKR 2D layered structure. Check its periodic "
+            "boundary conditions and, for a 2D structure, its left, central, "
+            "and right regions before calculating.",
+        )
 
     def choose_structure(self, parent: QWidget) -> bool:
         from ase.io.formats import ioformats
@@ -113,6 +131,7 @@ class GuiOperations(QObject):
                 atoms,
                 potential_path=str(resolved) if is_potential else None,
             )
+            self._warn_if_structure_kind_is_unknown(atoms, parent)
             self.remember_recent("structure", file_path)
         except Exception as exc:  # noqa: BLE001 - backend readers vary
             QMessageBox.critical(
