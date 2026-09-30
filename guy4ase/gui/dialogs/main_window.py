@@ -273,7 +273,25 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('structure', p))
 
     def _build_ui(self) -> None:
-        """Build the main UI layout."""
+        """Build the main UI layout from its visual sections."""
+        self._build_menu_bar()
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+
+        splitter.addWidget(self._build_structure_view())
+        splitter.addWidget(self._build_actions_panel())
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        try:
+            splitter.setSizes([1000, 350])
+        except Exception:
+            pass
+
+    def _build_menu_bar(self) -> None:
         # Menu bar
         menubar = self.menuBar()
 
@@ -357,23 +375,17 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
 
-        # Central widget with splitter
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
-
-        # Left/center panel: structure viewer
+    def _build_structure_view(self) -> QWidget:
         viewer_widget = QWidget()
         viewer_layout = QVBoxLayout(viewer_widget)
-
-        # Stack left panel: welcome vs loaded-structure content
         self._left_stack = QStackedWidget(viewer_widget)
         viewer_layout.addWidget(self._left_stack, 1)
+        self._build_welcome_page()
+        self._build_structure_info_panel()
+        self._left_stack.setCurrentWidget(self.welcome_widget)
+        return viewer_widget
 
-        # Welcome page (shown when no structure loaded)
+    def _build_welcome_page(self) -> None:
         self.welcome_widget = QWidget(self._left_stack)
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -460,7 +472,7 @@ class MainWindow(QMainWindow):
 
         self._left_stack.addWidget(self.welcome_widget)
 
-        # Content page (shown when a structure is loaded)
+    def _build_structure_info_panel(self) -> None:
         self._left_content_widget = QWidget(self._left_stack)
         content_layout = QVBoxLayout(self._left_content_widget)
 
@@ -567,44 +579,48 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(positions_group, 1)
 
         self._left_stack.addWidget(self._left_content_widget)
-        self._left_stack.setCurrentWidget(self.welcome_widget)
 
-        splitter.addWidget(viewer_widget)
-
-        # Right panel: actions
+    def _build_actions_panel(self) -> QWidget:
         actions_widget = QWidget()
         actions_layout = QVBoxLayout(actions_widget)
         actions_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
         actions_group = QWidget()
         actions_group_layout = QVBoxLayout(actions_group)
+        self._build_input_panel(actions_group_layout)
+        self._build_calculation_panel(actions_group_layout)
+        actions_layout.addWidget(actions_group)
+        actions_layout.addWidget(self._build_results_panel(), 1)
+        actions_widget.setMaximumWidth(350)
+        return actions_widget
 
-        actions_group_layout.addSpacing(5)
+    def _build_input_panel(self, layout: QVBoxLayout) -> None:
+        layout.addSpacing(5)
 
         sprkkr_label = QLabel("SPRKKR Tools:")
         sprkkr_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        actions_group_layout.addWidget(sprkkr_label)
+        layout.addWidget(sprkkr_label)
 
         self.create_input_btn = QPushButton("Create SPRKKR Input File...")
         self.create_input_btn.clicked.connect(self._on_edit_sprkkr_input)
-        actions_group_layout.addWidget(self.create_input_btn)
+        layout.addWidget(self.create_input_btn)
 
         self.load_input_btn = QPushButton("Load SPRKKR Input File...")
         self.load_input_btn.clicked.connect(self._on_load_sprkkr_input)
-        actions_group_layout.addWidget(self.load_input_btn)
+        layout.addWidget(self.load_input_btn)
 
         self.save_input_btn = QPushButton("Save SPRKKR Input File...")
         self.save_input_btn.setEnabled(False)
         self.save_input_btn.clicked.connect(self._on_save_sprkkr_input)
-        actions_group_layout.addWidget(self.save_input_btn)
+        layout.addWidget(self.save_input_btn)
 
         self.input_params_preview = QPlainTextEdit()
         self.input_params_preview.setReadOnly(True)
         self.input_params_preview.mouseDoubleClickEvent = self._on_input_preview_double_click
         self.input_params_preview.setPlaceholderText("SPRKKR input parameters preview")
         self.input_params_preview.setMinimumHeight(120)
-        actions_group_layout.addWidget(self.input_params_preview)
+        layout.addWidget(self.input_params_preview)
 
+    def _build_calculation_panel(self, layout: QVBoxLayout) -> None:
         dir_row = QWidget()
         dir_row_l = QHBoxLayout(dir_row)
         dir_row_l.setContentsMargins(0, 0, 0, 0)
@@ -619,7 +635,7 @@ class MainWindow(QMainWindow):
         self._directory_choose_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self._directory_choose_btn.clicked.connect(self._choose_directory)
         dir_row_l.addWidget(self._directory_choose_btn, 0)
-        actions_group_layout.addWidget(dir_row)
+        layout.addWidget(dir_row)
 
         potential_row = QWidget()
         potential_row_l = QHBoxLayout(potential_row)
@@ -629,21 +645,20 @@ class MainWindow(QMainWindow):
         self._potential_path_label = QLabel("—")
         self._potential_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         potential_row_l.addWidget(self._potential_path_label, 1)
-        actions_group_layout.addWidget(potential_row)
+        layout.addWidget(potential_row)
 
         self._update_directory_label()
 
         self.run_calc_btn = QPushButton("Run SPRKKR Calculation...")
         self.run_calc_btn.setEnabled(False)
         self.run_calc_btn.clicked.connect(self._on_run_sprkkr_calculation)
-        actions_group_layout.addWidget(self.run_calc_btn)
+        layout.addWidget(self.run_calc_btn)
 
         self.load_output_btn = QPushButton("Load SPRKKR Output File...")
         self.load_output_btn.clicked.connect(self.load_sprkkr_output)
-        actions_group_layout.addWidget(self.load_output_btn)
+        layout.addWidget(self.load_output_btn)
 
-        actions_layout.addWidget(actions_group)
-
+    def _build_results_panel(self) -> QGroupBox:
         self._result_group = QGroupBox("Calculation Result")
         result_layout = QVBoxLayout(self._result_group)
         self._result_actions_widget = ResultActionsWidget(
@@ -652,19 +667,7 @@ class MainWindow(QMainWindow):
             parent=self._result_group,
         )
         result_layout.addWidget(self._result_actions_widget, 1)
-
-        actions_layout.addWidget(self._result_group, 1)
-
-        actions_widget.setMaximumWidth(350)
-        splitter.addWidget(actions_widget)
-
-        # Set splitter sizes
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        try:
-            splitter.setSizes([1000, 350])
-        except Exception:
-            pass
+        return self._result_group
 
     def create_structure(self) -> None:
         """Start the shared structure-creation workflow."""

@@ -155,8 +155,29 @@ class OnlineStructureDialog(QDialog):
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(8)
         root.addWidget(splitter, 1)
+        splitter.addWidget(self._build_filter_panel(providers, splitter))
+        splitter.addWidget(self._build_results_panel(splitter))
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([400, 700])
 
-        filters = QFrame(splitter)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel, parent=self
+        )
+        self._open_button = buttons.addButton(
+            "Open Structure", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        self._open_button.setEnabled(False)
+        buttons.accepted.connect(self._accept_downloaded)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _build_filter_panel(
+        self,
+        providers: Sequence[StructureDatabaseProvider],
+        parent: QSplitter,
+    ) -> QWidget:
+        filters = QFrame(parent)
         filters.setFrameShape(QFrame.Shape.StyledPanel)
         filters.setMinimumWidth(340)
         filters.setMaximumWidth(480)
@@ -284,9 +305,11 @@ class OnlineStructureDialog(QDialog):
         self._search_button.clicked.connect(self._start_new_search)
         search_buttons.addWidget(self._search_button)
         filters_layout.addLayout(search_buttons)
-        splitter.addWidget(filters)
 
-        results = QWidget(splitter)
+        return filters
+
+    def _build_results_panel(self, parent: QSplitter) -> QWidget:
+        results = QWidget(parent)
         results_layout = QVBoxLayout(results)
         results_layout.setContentsMargins(8, 0, 0, 0)
 
@@ -361,7 +384,14 @@ class OnlineStructureDialog(QDialog):
         self._results_stack.addWidget(table_panel)
         result_splitter.addWidget(self._results_stack)
 
-        detail_panel = QWidget(result_splitter)
+        result_splitter.addWidget(self._build_detail_panel(result_splitter))
+        result_splitter.setStretchFactor(0, 3)
+        result_splitter.setStretchFactor(1, 2)
+        result_splitter.setSizes([390, 260])
+        return results
+
+    def _build_detail_panel(self, parent: QSplitter) -> QWidget:
+        detail_panel = QWidget(parent)
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(0, 4, 0, 0)
         detail_heading = QLabel("Selected structure", detail_panel)
@@ -391,26 +421,8 @@ class OnlineStructureDialog(QDialog):
         detail_content.setStretchFactor(0, 1)
         detail_content.setStretchFactor(1, 1)
         detail_layout.addWidget(detail_content, 1)
-        result_splitter.addWidget(detail_panel)
-        result_splitter.setStretchFactor(0, 3)
-        result_splitter.setStretchFactor(1, 2)
-        result_splitter.setSizes([390, 260])
 
-        splitter.addWidget(results)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([400, 700])
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Cancel, parent=self
-        )
-        self._open_button = buttons.addButton(
-            "Open Structure", QDialogButtonBox.ButtonRole.AcceptRole
-        )
-        self._open_button.setEnabled(False)
-        buttons.accepted.connect(self._accept_downloaded)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        return detail_panel
 
     def _provider(self) -> StructureDatabaseProvider:
         provider_id = self._provider_combo.currentData()
