@@ -195,6 +195,32 @@ def test_guided_dialog_delegates_field_anatomy_to_form_views():
     assert "navigation_tint" not in renderer
 
 
+def test_expert_dialog_delegates_parameter_tree_rendering():
+    dialog = (GUI / "dialogs" / "expert_input.py").read_text()
+    renderer = (
+        GUI / "widgets" / "input_parameters" / "expert_tree.py"
+    ).read_text()
+
+    assert "ExpertInputTreeEditor(" in dialog
+    for tree_detail in (
+        "QTreeWidgetItem",
+        "GrammarSequence",
+        "_build_section",
+        "_build_option",
+        "_rebuild_compound_option",
+        "_update_table_cell",
+    ):
+        assert tree_detail not in dialog
+
+    # The modal shell owns the one isolated draft. The reusable tree only
+    # accesses the current externally owned document through its getter.
+    assert "copy(copy_values=True)" in dialog
+    assert "copy(copy_values=True)" not in renderer
+    assert "self._params" not in renderer
+    assert "create_editor(" in renderer
+    assert "ParameterValueEditor" in renderer
+
+
 def test_workflow_and_guided_renderer_use_shared_visual_primitives():
     """Shared styling belongs below dialogs; semantic colors remain local."""
     workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
@@ -309,14 +335,18 @@ def test_field_placement_has_one_editor_selector_and_one_registry():
     assert "EDITORS" not in (GUI / "widgets" / "input_parameters" / "bsf.py").read_text()
     assert "EDITORS" not in (GUI / "widgets" / "input_parameters" / "common.py").read_text()
 
-    expert = (GUI / "dialogs" / "expert_input.py").read_text()
-    assert "create_editor(" in expert
-    assert "EnergyEditor" not in expert
-    assert "RelativisticScalingEditor" not in expert
+    expert_tree = (
+        GUI / "widgets" / "input_parameters" / "expert_tree.py"
+    ).read_text()
+    assert "create_editor(" in expert_tree
+    assert "EnergyEditor" not in expert_tree
+    assert "RelativisticScalingEditor" not in expert_tree
 
 
 def test_expert_dialog_commits_only_explicitly_registered_value_editors():
-    source = (GUI / "dialogs" / "expert_input.py").read_text()
+    source = (
+        GUI / "widgets" / "input_parameters" / "expert_tree.py"
+    ).read_text()
     assert "item.setData(0, self._VALUE_EDITOR_ROLE, True)" in source
     assert "if not editor.commit():" in source
     assert "isinstance(editor, ParameterValueEditor) and not editor.commit()" not in source

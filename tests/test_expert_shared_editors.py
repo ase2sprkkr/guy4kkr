@@ -21,8 +21,9 @@ def application():
 
 
 def scaling(dialog, name='SOC'):
-    item, = dialog._tree.findItems(name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
-    return dialog._tree.itemWidget(item, 2), item
+    tree = dialog.tree_editor.tree
+    item, = tree.findItems(name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+    return tree.itemWidget(item, 2), item
 
 
 @pytest.mark.parametrize('task', ['scf', 'bsf'])
@@ -48,7 +49,7 @@ def test_expert_uses_same_scaling_widget_and_preserves_type_values(application, 
     control.table.setCurrentCell(1, 0)
     control.remove_button.click()
     assert parameters.MODE[name](all_values=True) == {'def': .6, 5: .2}
-    assert item.data(0, dialog._CHANGED_ROLE)
+    assert item.font(0).bold()
     dialog.close()
 
 
@@ -60,10 +61,10 @@ def test_invalid_scaling_blocks_expert_accept_and_keeps_draft(application):
     dialog._on_ok()
     assert dialog.isVisible()
     assert control.table.item(0, 0).text() == 'bad'
-    assert 'MODE.SOC' in dialog._editor_error.text()
+    assert 'MODE.SOC' in dialog.tree_editor.error_text
     assert dialog.result().MODE.SOC(all_values=True) == {'def': 1.}
     control.table.item(0, 0).setData(Qt.ItemDataRole.EditRole, .5)
-    assert not dialog._editor_error.text()
+    assert not dialog.tree_editor.error_text
     dialog._on_ok()
     assert not dialog.isVisible()
     assert dialog.result().MODE.SOC(all_values=True) == {'def': .5}

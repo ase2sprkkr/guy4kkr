@@ -118,9 +118,10 @@ def test_expert_combines_pair_and_uses_identical_control(application):
     dialog = InputParametersDialog(parameters)
     parameters = dialog.result()  # Expert edits an isolated copy.
     flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
-    item, = dialog._tree.findItems('EMIN / EMINEV', flags, 0)
-    assert not dialog._tree.findItems('EMINEV', flags, 0)
-    editor = dialog._tree.itemWidget(item, 2)
+    tree = dialog.tree_editor.tree
+    item, = tree.findItems('EMIN / EMINEV', flags, 0)
+    assert not tree.findItems('EMINEV', flags, 0)
+    editor = tree.itemWidget(item, 2)
     assert isinstance(editor, EnergyEditor)
     editor.relative.setChecked(True)
     editor.units.setCurrentText('eV')
@@ -128,7 +129,7 @@ def test_expert_combines_pair_and_uses_identical_control(application):
     assert editor.commit()
     assert parameters.ENERGY.EMINEV() == -5.
     assert parameters.ENERGY.EMIN() is None
-    assert item.data(0, dialog._CHANGED_ROLE)
+    assert item.font(0).bold()
     editor.relative.setChecked(False)
     assert parameters.ENERGY.EMIN() == pytest.approx(convert_energy(-5., 'eV', 'Ry'))
     assert parameters.ENERGY.EMINEV() is None
@@ -144,8 +145,9 @@ def test_arpes_absolute_bounds_and_relative_defaults(application, expert):
         parameters = dialog.result()  # Expert edits an isolated copy.
         flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
         def editor_for(name):
-            item, = dialog._tree.findItems(f'{name} / {name}EV', flags, 0)
-            return dialog._tree.itemWidget(item, 2)
+            tree = dialog.tree_editor.tree
+            item, = tree.findItems(f'{name} / {name}EV', flags, 0)
+            return tree.itemWidget(item, 2)
         current = lambda: parameters
     else:
         dialog = GuidedInputParametersDialog('arpes', parameters)

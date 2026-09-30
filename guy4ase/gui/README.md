@@ -58,6 +58,12 @@ The guided dialog uses the session's corresponding access methods, preserving
 Undo/Redo. The getter follows replacement of the object after loading text input.
 
 The expert dialog also edits a copy: Cancel never modifies its caller's input.
+`dialogs.expert_input.InputParametersDialog` owns that draft, input-file and
+working-directory workflow, overall validation, and modal acceptance. The
+reusable `widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
+searchable tree, changed-only presentation, value editors, compound-value rows,
+and editor-error aggregation. It receives a getter for the dialog-owned draft,
+so replacing a parsed input does not create a second authoritative model.
 Ordinary scalar controls use `widgets.input_parameters.commit.EditorCommit`
 internally to contain validation exceptions and avoid writing unchanged,
 rounded display values back into the model. It is an implementation helper,

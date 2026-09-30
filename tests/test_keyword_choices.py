@@ -271,8 +271,9 @@ def test_expert_dialog_passes_structure_to_keyword_editor(application):
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 1}})
     dialog = InputParametersDialog(parameters, atoms=bulk("Fe", "sc", a=2.8))
     from PyQt6.QtCore import Qt
-    item, = dialog._tree.findItems("KPATH", Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
-    combo = dialog._tree.itemWidget(item, 2)
+    tree = dialog.tree_editor.tree
+    item, = tree.findItems("KPATH", Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+    combo = tree.itemWidget(item, 2)
     assert choices(combo) == {None, "1", "2", "3", "4", "5"}
     assert combo.currentData() == "1"
     assert combo.itemText(combo.findData(None)) == "Custom path"
