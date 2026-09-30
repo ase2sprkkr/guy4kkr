@@ -29,11 +29,6 @@ def _split_enabled(parameters: InputParameters) -> bool:
     return parameters.task_name.upper() == "COMPTON"
 
 
-def _option_value(option: Any) -> Any:
-    # Preserve per-type overrides (DEFAULTDICT), not just their default value.
-    return option(all_values=True)
-
-
 def _parameters_equal(left: InputParameters, right: InputParameters) -> bool:
     """Compare effective editable values, excluding derived/generated options."""
     if left.task_name.upper() != right.task_name.upper():
@@ -181,7 +176,7 @@ class InputParametersSession(QObject):
 
     def value(self, path: InputParameterPath) -> Any:
         """Read the complete option, including global and per-type overrides."""
-        return _option_value(self.option(path))
+        return self.option(path)(all_values=True)
 
     def single_site_value(self, path: InputParameterPath) -> Any:
         """Display a remembered, disabled mesh without writing it to input."""
@@ -215,10 +210,8 @@ class InputParametersSession(QObject):
         return command.description(undo=undo)
 
     def is_changed(self, path: InputParameterPath) -> bool:
-        initial = resolve_option(self._initial, path)
-        current = resolve_option(self._working, path)
-        left = _option_value(initial)
-        right = _option_value(current)
+        left = resolve_option(self._initial, path)(all_values=True)
+        right = resolve_option(self._working, path)(all_values=True)
         try:
             return not current._definition.type.is_the_same_value(right, left)
         except Exception:
