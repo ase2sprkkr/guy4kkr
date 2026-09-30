@@ -44,11 +44,10 @@ class BsfMeshEditor(ParameterValueEditorWidget):
         "Switching resets mode-specific settings (undoable)."
     )
 
-    def __init__(self, session, placement, page_id, atoms=None, parent=None):
+    def __init__(self, binding, placement, atoms=None, parent=None):
         super().__init__(parent)
-        self.session = session
+        self.binding = binding
         self.placement = placement
-        self.page_id = page_id
         self.atoms = atoms
         self._refreshing = False
 
@@ -74,9 +73,8 @@ class BsfMeshEditor(ParameterValueEditorWidget):
 
     def _set_points(self, points: int) -> bool:
         try:
-            self.session.mutate(
+            self.binding.mutate(
                 lambda parameters: set_energy_points(parameters, points, atoms=self.atoms),
-                source_page=self.page_id,
                 path=self.placement.path,
                 field_index=0,
                 text="Change BSF mode / energy points",
@@ -99,9 +97,9 @@ class BsfMeshEditor(ParameterValueEditorWidget):
     def refresh(self) -> None:
         self._refreshing = True
         try:
-            values = self.session.value(self.placement.path)
+            values = self.binding.value_at(self.placement.path)
             points = int(values[self.placement.index or 0])
-            mode = EK if bsf_mode(self.session.working_parameters) == EK else "KK"
+            mode = EK if bsf_mode(self.binding.parameters) == EK else "KK"
             self.mode_combo.setCurrentIndex(self.mode_combo.findData(mode))
             self.energy_count.setValue(points)
             self.energy_count.setEnabled(points > 1)
@@ -124,11 +122,10 @@ class BsfKPathEditor(ParameterValueEditorWidget):
     # summary. Mode transitions that replace KPATH already touch its own path.
     dependencies = (("TASK", "KA"),)
 
-    def __init__(self, session, placement, page_id, atoms=None, parent=None):
+    def __init__(self, binding, placement, atoms=None, parent=None):
         super().__init__(parent)
-        self.session = session
+        self.binding = binding
         self.placement = placement
-        self.page_id = page_id
         self.atoms = atoms
         self._refreshing = False
 
@@ -137,7 +134,7 @@ class BsfKPathEditor(ParameterValueEditorWidget):
         row = QHBoxLayout()
         self.path_combo = QComboBox(self)
         for value, description in keyword_items(
-            session.option(placement.path), atoms=atoms
+            binding.option, atoms=atoms
         ):
             if value is None:
                 label = description
@@ -175,9 +172,9 @@ class BsfKPathEditor(ParameterValueEditorWidget):
             QMessageBox.warning(parent, "K-path", "A structure is required to edit the Brillouin-zone path.")
             return
         try:
-            self.session.mutate(
+            self.binding.mutate(
                 lambda parameters: parameters.TASK.k_path_gui(self.atoms, parent=parent),
-                text="Edit custom K-path", source_page=self.page_id,
+                text="Edit custom K-path",
                 path=self.placement.path,
             )
         except Exception as error:
@@ -188,10 +185,9 @@ class BsfKPathEditor(ParameterValueEditorWidget):
             return
         value = self.path_combo.currentData()
         try:
-            self.session.mutate(
+            self.binding.mutate(
                 lambda parameters: select_path(parameters, value),
                 path=self.placement.path,
-                source_page=self.page_id,
                 text=(
                     "Select custom K-path"
                     if value is None
@@ -206,14 +202,14 @@ class BsfKPathEditor(ParameterValueEditorWidget):
     def refresh(self) -> None:
         self._refreshing = True
         try:
-            value = self.session.value(self.placement.path)
+            value = self.binding.value_at(self.placement.path)
             self._set_combo_value(value)
             self.path_edit.setEnabled(value is None)
             if value is not None:
                 summary = self.path_combo.currentText()
             else:
                 try:
-                    count = len(self.session.value(("TASK", "KA")))
+                    count = len(self.binding.value_at(("TASK", "KA")))
                     summary = f"Custom path, {count} segment(s)"
                 except (KeyError, TypeError):
                     summary = "No path selected"
@@ -262,12 +258,11 @@ class BsfVectorsEditor(ParameterValueEditorWidget):
     dependencies = (("ENERGY", "NE"), ("TASK", "KPATH"))
     full_width = True
 
-    def __init__(self, session, placement, page_id, atoms=None, parent=None):
+    def __init__(self, binding, placement, atoms=None, parent=None):
         del atoms
         super().__init__(parent)
-        self.session = session
+        self.binding = binding
         self.placement = placement
-        self.page_id = page_id
         self._refreshing = False
         self._ek = True
 
@@ -314,9 +309,9 @@ class BsfVectorsEditor(ParameterValueEditorWidget):
         return button
 
     def refresh(self) -> None:
-        self._ek = bsf_mode(self.session.working_parameters) == EK
-        starts = self.session.value(("TASK", "KA"))
-        ends = self.session.value(("TASK", "KE")) if self._ek else None
+        self._ek = bsf_mode(self.binding.parameters) == EK
+        starts = self.binding.value_at(("TASK", "KA"))
+        ends = self.binding.value_at(("TASK", "KE")) if self._ek else None
         count = (
             max(len(starts) if starts is not None else 0, len(ends) if ends is not None else 0)
             if self._ek
@@ -372,10 +367,9 @@ class BsfVectorsEditor(ParameterValueEditorWidget):
             if self._ek:
                 updates["KE"] = [values[3:] for values in rows] or None
             path = ("TASK", "KE" if column >= 3 else "KA")
-            self.session.mutate(
+            self.binding.mutate(
                 lambda parameters: parameters.TASK.set(updates),
                 text=text,
-                source_page=self.page_id,
                 path=path,
                 field_index=row,
             )
@@ -428,10 +422,9 @@ class BsfVectorsEditor(ParameterValueEditorWidget):
         self._apply("Move K-path segment", target)
 
     def clear_origin(self) -> None:
-        self.session.set_value(
+        self.binding.set_path_value(
             ("TASK", "KA"),
             None,
-            source_page=self.page_id,
             text="Use default plane origin",
         )
         self.validationChanged.emit("")
@@ -493,10 +486,3 @@ class BsfVectorsEditor(ParameterValueEditorWidget):
     def set_editor_tooltip(self, text: str) -> None:
         self.setToolTip(text)
         self.table.setToolTip(text)
-
-
-EDITORS: dict[str, type[ParameterValueEditorWidget]] = {
-    "bsf_mesh": BsfMeshEditor,
-    "bsf_kpath": BsfKPathEditor,
-    "bsf_vectors": BsfVectorsEditor,
-}

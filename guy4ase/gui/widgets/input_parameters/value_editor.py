@@ -22,6 +22,18 @@ class ParameterValueEditor:
     full_width = False
     help_text = ""
 
+    @classmethod
+    def from_binding(
+        cls,
+        binding: Any,
+        placement: Any,
+        *,
+        atoms: Any = None,
+        parent: QWidget | None = None,
+    ) -> "ParameterValueEditor":
+        """Construct an editor from the common model adapter."""
+        return cls(binding, placement, atoms=atoms, parent=parent)
+
     def refresh(self) -> None:
         """Replace the displayed draft from the bound value source."""
         raise NotImplementedError

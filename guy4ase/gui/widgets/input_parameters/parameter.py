@@ -15,8 +15,7 @@ from guy4ase.gui.input_parameters.field_binding import create_field_binding
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
 from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
-from guy4ase.gui.widgets.input_parameters.registry import create_registered_editor
-from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
+from guy4ase.gui.widgets.input_parameters.registry import create_editor
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 
 EDITOR_WIDTH = 280
@@ -86,32 +85,12 @@ class ParameterEditor(QWidget):
             self.refresh()
 
     def _create_control(self) -> QWidget:
-        spec = self.placement
-        if spec.editor:
-            return create_registered_editor(
-                spec.editor,
-                self.session,
-                spec,
-                self.page_id,
-                atoms=self.atoms,
-                parent=self,
-            )
-        current_value = self.binding.read().value
-        control = create_option_editor(
-            self.binding.value_type,
-            current_value,
-            on_value=self.binding.set_value,
-            editor_kind=spec.kind,
-            placement=spec,
-            option=self.binding.option,
+        return create_editor(
+            self.binding,
+            self.placement,
             atoms=self.atoms,
             parent=self,
-            session=self.session,
-            path=self.path,
-            page_id=self.page_id,
-            read_state=self.binding.read,
         )
-        return control
 
     def _connect_control(self) -> None:
         self.control.validationChanged.connect(self._set_error)

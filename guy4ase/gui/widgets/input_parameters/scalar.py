@@ -9,7 +9,6 @@ import numpy as np
 from ase2sprkkr.common.grammar_types import (
     Array,
     Boolean,
-    Energy,
     Flag,
     Integer,
     Keyword,
@@ -22,7 +21,6 @@ from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QWidget
 
 from guy4ase.gui.input_parameters.defaults import default_text
-from guy4ase.gui.input_parameters.energy import EnergyState, convert_energy
 from guy4ase.gui.input_parameters.field_binding import FieldValue
 from guy4ase.gui.input_parameters.keyword_choices import (
     keyword_allows_unset,
@@ -30,8 +28,6 @@ from guy4ase.gui.input_parameters.keyword_choices import (
 )
 from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
 from guy4ase.gui.widgets.input_parameters.commit import EditorCommit
-from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
-from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 from guy4ase.gui.widgets.nullable_spinbox import (
     NullableDoubleSpinBox,
@@ -130,6 +126,28 @@ class IntegerEditor(NullableSpinBox, _ScalarValueEditor):
         super().__init__(parent)
         self._nullable = nullable
 
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        del atoms
+        nullable = binding.allows_unset
+        editor = cls(nullable=nullable, parent=parent)
+        grammar_type = binding.value_type
+        minimum = coalesce(placement.minimum, getattr(grammar_type, "min", None), -2147483647)
+        maximum = coalesce(placement.maximum, getattr(grammar_type, "max", None), 2147483647)
+        step = placement.step or 1
+        lower = minimum - int(step) if nullable else minimum
+        editor.setRange(lower, maximum)
+        editor.setSingleStep(int(step))
+        if placement.special_value_text:
+            editor.setSpecialValueText(placement.special_value_text)
+        if nullable:
+            editor.set_unset_value(editor.minimum())
+        editor.setReadOnly(binding.read_only)
+        editor.setKeyboardTracking(False)
+        editor.bind(binding.read, binding.set_value)
+        editor.valueChanged.connect(editor.commit)
+        return editor
+
     def _draft(self) -> int | None:
         if (
             self._nullable
@@ -157,6 +175,28 @@ class RealEditor(NullableDoubleSpinBox, _ScalarValueEditor):
         super().__init__(parent)
         self._nullable = nullable
 
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        del atoms
+        nullable = binding.allows_unset
+        editor = cls(nullable=nullable, parent=parent)
+        grammar_type = binding.value_type
+        lo = coalesce(placement.minimum, getattr(grammar_type, "min", None), -1e16)
+        hi = coalesce(placement.maximum, getattr(grammar_type, "max", None), 1e16)
+        step = placement.step or 0.1
+        editor.setDecimals(placement.decimals)
+        editor.setSingleStep(float(step))
+        editor.setRange(lo - float(step) if nullable else lo, hi)
+        if placement.special_value_text:
+            editor.setSpecialValueText(placement.special_value_text)
+        if nullable:
+            editor.set_unset_value(editor.minimum())
+        editor.setReadOnly(binding.read_only)
+        editor.setKeyboardTracking(False)
+        editor.bind(binding.read, binding.set_value)
+        editor.valueChanged.connect(editor.commit)
+        return editor
+
     def _draft(self) -> float | None:
         if (
             self._nullable
@@ -180,6 +220,15 @@ class RealEditor(NullableDoubleSpinBox, _ScalarValueEditor):
 class BooleanEditor(QCheckBox, _ScalarValueEditor):
     """Boolean/flag value editor."""
 
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        del placement, atoms
+        editor = cls(parent)
+        editor.setEnabled(not binding.read_only)
+        editor.bind(binding.read, binding.set_value)
+        editor.toggled.connect(editor.commit)
+        return editor
+
     def _draft(self) -> bool:
         return self.isChecked()
 
@@ -201,6 +250,21 @@ class ChoiceEditor(QComboBox, _ScalarValueEditor):
         self._normalize = normalize
         self._unavailable_unknown = unavailable_unknown
 
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        del atoms
+        editor = cls(
+            normalize=lambda state: state.value,
+            unavailable_unknown=False,
+            parent=parent,
+        )
+        for index, choice in enumerate(placement.choices):
+            editor.addItem(choice.label, choice.value)
+            editor.setItemData(index, choice.label, Qt.ItemDataRole.ToolTipRole)
+        editor.setEnabled(not binding.read_only)
+        editor.bind(binding.read, binding.set_value)
+        editor.currentIndexChanged.connect(editor.commit)
+        return editor
     def _draft(self) -> Any:
         return self.currentData()
 
@@ -232,7 +296,6 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
         self,
         grammar_type: Any,
         *,
-        kind: str,
         nullable: bool,
         allow_empty: bool,
         option: Any,
@@ -240,10 +303,26 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
     ) -> None:
         super().__init__(parent)
         self._grammar_type = grammar_type
-        self._kind = kind
         self._nullable = nullable
         self._allow_empty = allow_empty
         self._option = option
+
+    literal = False
+
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        del atoms
+        editor = cls(
+            binding.value_type,
+            nullable=binding.allows_unset,
+            allow_empty=binding.allow_empty,
+            option=binding.option,
+            parent=parent,
+        )
+        editor.setReadOnly(binding.read_only)
+        editor.bind(binding.read, binding.set_value)
+        editor.editingFinished.connect(editor.commit)
+        return editor
 
     def _draft(self) -> str:
         return self.text().strip()
@@ -258,7 +337,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
                 return
             option_name = getattr(self._option, "name", "Value")
             raise ValueError(f"{option_name} must have a value")
-        if self._kind == "literal":
+        if self.literal:
             value = self._grammar_type.convert(ast.literal_eval(text))
         elif isinstance(self._grammar_type, String):
             value = self._grammar_type.convert(text)
@@ -270,7 +349,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
 
     def _show_state(self, state: FieldValue) -> None:
         value = None if state.implicit_default else state.value
-        if self._kind == "literal" and value is not None:
+        if self.literal and value is not None:
             text = repr(_plain_literal(value))
         else:
             text = _stringify_value(
@@ -282,249 +361,41 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
         self.setPlaceholderText(default_text(state.default))
 
 
-def create_option_editor(
-    grammar_type: Any,
-    current_value: Any,
-    on_value: Callable[[Any], None] | None = None,
-    *,
-    editor_kind: str = "auto",
-    placement: FieldPlacement | None = None,
-    read_only: bool = False,
-    allow_empty: bool = False,
-    option: Any = None,
-    atoms: Any = None,
-    parent: QWidget | None = None,
-    session: Any = None,
-    path: tuple[str, ...] | None = None,
-    page_id: str | None = None,
-    read_state: Callable[[], FieldValue] | None = None,
-    energy_state: Callable[[], EnergyState] | None = None,
-    energy_apply: Callable[[float | None, str, bool], None] | None = None,
-) -> ParameterValueEditor:
-    """Create the sole lifecycle-aware editor selected for one grammar value."""
-    if grammar_type is None:
-        grammar_type = String()
+class LiteralEditor(TextEditor):
+    """Python-literal presentation for structured option values."""
 
-    kind = editor_kind
-    if kind == "energy":
-        read_energy_state = energy_state
-        if read_energy_state is None:
+    literal = True
 
-            def read_energy_state():
-                state = read_state() if read_state is not None else None
-                source_value = state.value if state is not None else current_value
-                if isinstance(source_value, (list, tuple)) and len(source_value) == 2:
-                    value, unit = source_value
-                else:
-                    value, unit = source_value, "Ry"
-                if hasattr(value, "to_value"):
-                    value, unit = value.to_value("Ry"), "Ry"
-                return EnergyState(
-                    None if value is None else float(value),
-                    str(unit),
-                    explicit=state.explicit if state is not None else True,
-                )
 
-        if energy_apply is None:
-            if on_value is None:
-                raise ValueError("Energy editors require an on_value callback")
+class KeywordEditor(ChoiceEditor):
+    """Keyword choices supplied by the option grammar and current atoms."""
 
-            def energy_apply(value, unit, _relative):
-                if value is None:
-                    converted = None
-                elif isinstance(grammar_type, Energy):
-                    converted = (value, unit)
-                else:
-                    converted = convert_energy(value, unit, "Ry")
-                on_value(converted)
-        editor = EnergyEditor(
-            read_energy_state,
-            energy_apply,
-            parent,
-            with_reference=False,
-            minimum=(
-                placement.minimum
-                if placement is not None and placement.minimum is not None
-                else -1e9
-            ),
-        )
-        editor.number.setReadOnly(read_only)
-        editor.units.setEnabled(not read_only)
-        return editor
-
-    if kind == "vector":
-        if session is None or path is None or page_id is None:
-            raise ValueError("Vector editors require a session, path, and page id")
-        return VectorEditor(session, path, page_id, parent)
-
-    if on_value is None:
-        raise ValueError("Scalar editors require an on_value callback")
-
-    whole_option = (
-        placement is None
-        and option is not None
-        and option._definition.type is grammar_type
-    )
-    nullable = placement is not None
-    if whole_option:
-        optional = option._definition.is_optional
-        nullable = (
-            bool(optional(option) if callable(optional) else optional)
-            or option.default_value is not None
-        )
-
-    current = [current_value]
-
-    def apply_value(value: Any) -> None:
-        on_value(value)
-        current[0] = value
-
-    if read_state is None:
-
-        def read_state() -> FieldValue:
-            if whole_option:
-                value = option(all_values=True)
-                return FieldValue(
-                    value,
-                    option.default_value,
-                    implicit_default=not option.is_set() and value is not None,
-                    explicit=option.is_set(),
-                )
-            return FieldValue(current[0])
-
-    if kind == "integer" or isinstance(grammar_type, Integer):
-        editor = IntegerEditor(nullable=nullable, parent=parent)
-        if placement is not None:
-            minimum = coalesce(
-                placement.minimum,
-                getattr(grammar_type, "min", None),
-                -2147483647,
-            )
-            maximum = coalesce(
-                placement.maximum,
-                getattr(grammar_type, "max", None),
-                2147483647,
-            )
-            step = placement.step or 1
-            if nullable:
-                minimum -= int(step)
-            editor.setSingleStep(int(step))
-            if placement.special_value_text:
-                editor.setSpecialValueText(placement.special_value_text)
-        else:
-            minimum = coalesce(
-                getattr(grammar_type, "min", None),
-                np.iinfo(np.int32).min + int(nullable),
-            )
-            maximum = coalesce(
-                getattr(grammar_type, "max", None), np.iinfo(np.int32).max
-            )
-        editor.setRange(
-            minimum - int(nullable) if placement is None else minimum,
-            maximum,
-        )
-        if nullable:
-            editor.set_unset_value(editor.minimum())
-        editor.setReadOnly(read_only)
-        editor.setKeyboardTracking(False)
-        editor.bind(read_state, apply_value)
-        editor.valueChanged.connect(editor.commit)
-        return editor
-
-    if kind == "real" or isinstance(grammar_type, Real):
-        editor = RealEditor(nullable=nullable, parent=parent)
-        lo = coalesce(
-            placement.minimum if placement is not None else None,
-            getattr(grammar_type, "min", None),
-            -1e16,
-        )
-        hi = coalesce(
-            placement.maximum if placement is not None else None,
-            getattr(grammar_type, "max", None),
-            1e16,
-        )
-        editor.setDecimals(placement.decimals if placement is not None else 8)
-        if placement is not None:
-            step = placement.step or 0.1
-            lower = lo - float(step) if nullable else lo
-            editor.setSingleStep(float(step))
-            if placement.special_value_text:
-                editor.setSpecialValueText(placement.special_value_text)
-        else:
-            lower = lo - max(1.0, abs(lo) * 1e-12) if nullable else lo
-            editor.setSingleStep((hi - lo) / 1000.0 if hi - lo < 1e6 else 1.0)
-        editor.setRange(lower, hi)
-        if nullable:
-            editor.set_unset_value(editor.minimum())
-        editor.setReadOnly(read_only)
-        editor.setKeyboardTracking(False)
-        editor.bind(read_state, apply_value)
-        editor.valueChanged.connect(editor.commit)
-        return editor
-
-    if kind == "boolean" or isinstance(grammar_type, (Boolean, Flag)):
-        editor = BooleanEditor(parent)
-        editor.setEnabled(not read_only)
-        editor.bind(read_state, apply_value)
-        editor.toggled.connect(editor.commit)
-        return editor
-
-    if kind in {"choice", "keyword"} or isinstance(grammar_type, Keyword):
-        uses_keyword = isinstance(grammar_type, Keyword)
-        allows_unset = uses_keyword and keyword_allows_unset(option, grammar_type)
-        editor = ChoiceEditor(
-            normalize=(
-                lambda state: None
+    @classmethod
+    def from_binding(cls, binding, placement, *, atoms=None, parent=None):
+        grammar_type = binding.value_type
+        allows_unset = keyword_allows_unset(binding.option, grammar_type)
+        editor = cls(
+            normalize=lambda state: (
+                None
                 if allows_unset and state.explicit is False
                 else state.value
             ),
-            unavailable_unknown=uses_keyword,
+            unavailable_unknown=True,
             parent=parent,
         )
-        if kind == "choice" and placement is not None:
-            items = ((choice.value, choice.label) for choice in placement.choices)
-        else:
-            keyword_values = keyword_items(
-                option, value_type=grammar_type, atoms=atoms
+        labels = {choice.value: choice.label for choice in placement.choices}
+        for index, (keyword, info) in enumerate(
+            keyword_items(binding.option, value_type=grammar_type, atoms=atoms)
+        ):
+            label = labels.get(
+                keyword,
+                info if keyword is None else f"{keyword}: {info}" if info else str(keyword),
             )
-            labels = (
-                {choice.value: choice.label for choice in placement.choices}
-                if placement is not None
-                else {}
-            )
-            items = (
-                (
-                    keyword,
-                    labels.get(
-                        keyword,
-                        info
-                        if keyword is None
-                        else f"{keyword}: {info}"
-                        if info
-                        else str(keyword),
-                    ),
-                )
-                for keyword, info in keyword_values
-            )
-        for index, (keyword, label) in enumerate(items):
             editor.addItem(label, keyword)
             editor.setItemData(index, label, Qt.ItemDataRole.ToolTipRole)
-        editor.setEnabled(not read_only)
-        if placement is not None and placement.descriptions:
+        editor.setEnabled(not binding.read_only)
+        if placement.descriptions:
             editor.view().setMinimumWidth(560)
-        editor.bind(read_state, apply_value)
+        editor.bind(binding.read, binding.set_value)
         editor.currentIndexChanged.connect(editor.commit)
         return editor
-
-    editor = TextEditor(
-        grammar_type,
-        kind=kind,
-        nullable=nullable,
-        allow_empty=allow_empty,
-        option=option,
-        parent=parent,
-    )
-    editor.setReadOnly(read_only)
-    editor.bind(read_state, apply_value)
-    editor.editingFinished.connect(editor.commit)
-    return editor

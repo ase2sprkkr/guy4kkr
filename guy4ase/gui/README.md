@@ -115,14 +115,15 @@ field("TASK", "KA", "Path segments:", editor="bsf_vectors",
       related_paths=(("TASK", "KE"),))
 ```
 
-Factories are collected in `widgets.input_parameters.registry`. Scalar,
-energy, vector and registered task-specific controls all implement the single
+All implementations are collected in the single `EDITORS` mapping in
+`widgets.input_parameters.registry`. Scalar, energy, vector and task-specific
+controls all implement the single
 `ParameterValueEditor` lifecycle. `ParameterValueEditorWidget` is only a
 convenient QWidget base for controls composed from child widgets; it is not a
 separate editor category. The contract supplies defaults for optional
 capabilities. Task-specific
 implementations such as BSF mode, path selection and path vectors live in
-`widgets.input_parameters.bsf`; shared session adapters for energy bounds and
+`widgets.input_parameters.bsf`; shared binding adapters for energy bounds and
 relativistic scaling live in `widgets.input_parameters.common`. Such a control
 implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
 `validationChanged(str)`, and may declare `dependencies` and `full_width`.
@@ -133,8 +134,9 @@ option to its value, default and atomic session write. An explicitly indexed
 placement uses `IndexedFieldBinding`; the option's array type alone does not
 imply indexing because fields such as `MSPIN` edit the whole array. Energy-unit
 conversion belongs to the energy value editor rather than the storage binding.
-The field declaration selects that presentation explicitly with
-`kind="energy"`; it is not inferred from the option's grammar type.
+The field declaration selects a presentation explicitly with, for example,
+`editor="energy"`. Only `editor="auto"` invokes the deterministic grammar-MRO
+mapping in `editor_for_type()`.
 Dormant single-site mesh values remain owned by the session.
 `ParameterEditor` remains the
 session/tooltip/presentation shell and delegates `refresh()`, `commit()` and
@@ -153,9 +155,14 @@ The smallest new editor therefore only needs the lifecycle methods:
 
 ```python
 class MyEditor(ParameterValueEditorWidget):
+    def __init__(self, binding, placement, atoms=None, parent=None): ...
     def refresh(self): ...
     def commit(self) -> bool: ...
 ```
+
+`create_editor(binding, placement, ...)` is the only construction path. It
+resolves `placement.editor`, looks up `EDITORS`, and calls the common
+`from_binding()` constructor. The factory contains no widget-specific setup.
 
 Override `focus_for_history()`, `set_editor_tooltip()`, `dependencies`,
 `full_width` or `help_text` only when their defaults are insufficient.

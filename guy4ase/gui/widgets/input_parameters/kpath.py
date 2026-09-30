@@ -1,4 +1,4 @@
-"""Reusable numeric vector editor backed by the shared session."""
+"""Reusable numeric vector parameter editor."""
 
 
 from PyQt6.QtCore import Qt
@@ -13,9 +13,11 @@ from guy4ase.gui.widgets.input_parameters.value_editor import (
 
 class VectorEditor(ParameterValueEditorWidget):
     """A three-component vector with full-precision editing and optional unset state."""
-    def __init__(self, session, path, page_id, parent=None):
+    def __init__(self, binding, placement, atoms=None, parent=None):
+        del atoms
         super().__init__(parent)
-        self.session, self.path, self.page_id = session, path, page_id
+        self.binding = binding
+        self.path = placement.path
         self._refreshing = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -33,7 +35,7 @@ class VectorEditor(ParameterValueEditorWidget):
     def refresh(self):
         self._refreshing = True
         try:
-            value = self.session.value(self.path)
+            value = self.binding.read().value
             for column in range(3):
                 item = QTableWidgetItem()
                 if value is not None:
@@ -51,8 +53,7 @@ class VectorEditor(ParameterValueEditorWidget):
         try:
             cells = [self.table.item(0, c).data(Qt.ItemDataRole.EditRole) for c in range(3)]
             value = None if all(v is None or str(v).strip() == "" for v in cells) else [coordinate_value(v) for v in cells]
-            self.session.set_value(self.path, value, source_page=self.page_id,
-                                   text=f"Edit {self.path[-1]} vector")
+            self.binding.set_value(value)
             self.validationChanged.emit("")
             return True
         except (ValueError, TypeError, ZeroDivisionError, OverflowError) as exc:

@@ -10,7 +10,6 @@ from ase2sprkkr.common.configuration_containers import (
 )
 from ase2sprkkr.common.grammar_types import (  # type: ignore
     Array,
-    Energy,
     SetOf,
     String,
     Table,
@@ -38,18 +37,13 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.dialogs._tree_base import _TreeDialogBase
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParametersBinding
-from guy4ase.gui.input_parameters.energy import (
-    EnergyState,
-    bound_energy_state,
-    reference_selectable,
-    set_bound_energy,
+from guy4ase.gui.input_parameters.field_binding import (
+    DirectFieldBinding,
+    FieldValue,
 )
+from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
 from guy4ase.gui.input_parameters.validation import validate_setup
-from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
-from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
-    RelativisticScalingEditor,
-)
-from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
+from guy4ase.gui.widgets.input_parameters.registry import create_editor
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 
 
@@ -77,24 +71,6 @@ def _option_value(opt: Any) -> Any:
         return opt.get()
     except Exception:
         return getattr(opt, '_value', None)
-
-
-class _TreeEditorBinding(InputParametersBinding):
-    """Presentation adapter; parameter access stays in InputParametersBinding."""
-
-    def __init__(self, dialog, item):
-        self.dialog, self.item = dialog, item
-        self.editor = None
-        super().__init__(lambda: dialog._params, self._value_changed)
-
-    def _value_changed(self, path):
-        self.dialog._update_changed_style(self.option(path), self.item)
-        self.refresh()
-
-    def refresh(self):
-        self.editor.refresh()
-        self.item.setSizeHint(2, self.editor.sizeHint())
-        self.dialog._tree.doItemsLayout()
 
 
 class InputParametersDialog(_TreeDialogBase):
@@ -218,11 +194,9 @@ class InputParametersDialog(_TreeDialogBase):
 
         path = tuple(opt._get_path().split('.'))
         if path[0] == 'ENERGY' and opt.name in ('EMIN', 'EMAX') and opt.name + 'EV' in opt._container:
-            self._build_energy_option(opt, item, path, paired=True)
-        elif isinstance(grammar_type, Energy):
-            self._build_energy_option(opt, item, path)
+            self._build_special_option(opt, item, path, "energy_bound", minimum=-1e9)
         elif path in {('MODE', 'C'), ('MODE', 'SOC')}:
-            self._build_scaling_option(opt, item, path)
+            self._build_special_option(opt, item, path, "scaling")
         elif isinstance(grammar_type, (Array, SetOf)):
             self._build_array_option(opt, item, grammar_type)
         elif isinstance(grammar_type, GrammarSequence):
@@ -230,72 +204,99 @@ class InputParametersDialog(_TreeDialogBase):
         elif isinstance(grammar_type, Table):
             self._build_table_option(opt, item, grammar_type)
         else:
-            value = _option_value(opt)
-            editor = create_option_editor(
-                grammar_type,
-                value,
-                lambda new_value, o=opt, option_item=item: self._set_option_value(o, option_item, new_value),
-                option=opt,
-                atoms=self._atoms,
+            self._install_value_editor(
+                opt,
+                item,
+                FieldPlacement(path, opt.name),
+                error_label='.'.join(path),
             )
-            self._set_editor(item, editor, '.'.join(path))
 
-    def _build_energy_option(self, opt, item, path, paired=False):
-        binding = _TreeEditorBinding(self, item)
-        if paired:
+    def _direct_binding(
+        self,
+        opt,
+        item,
+        placement,
+        *,
+        read_value=None,
+        apply_value=None,
+        value_type=None,
+        allows_unset=None,
+        read_only=False,
+        allow_empty=False,
+    ):
+        def changed(_path):
+            self._update_changed_style(opt, item)
+            self._refresh_special_editors()
+
+        model = InputParametersBinding(lambda: self._params, changed)
+        return DirectFieldBinding(
+            model,
+            placement,
+            read_value=read_value,
+            apply_value=apply_value,
+            value_type=value_type,
+            allows_unset=allows_unset,
+            read_only=read_only,
+            allow_empty=allow_empty,
+        )
+
+    def _install_value_editor(
+        self,
+        opt,
+        item,
+        placement,
+        *,
+        read_value=None,
+        apply_value=None,
+        value_type=None,
+        allows_unset=None,
+        read_only=False,
+        allow_empty=False,
+        error_label=None,
+        special=False,
+    ):
+        binding = self._direct_binding(
+            opt,
+            item,
+            placement,
+            read_value=read_value,
+            apply_value=apply_value,
+            value_type=value_type,
+            allows_unset=allows_unset,
+            read_only=read_only,
+            allow_empty=allow_empty,
+        )
+        editor = create_editor(binding, placement, atoms=self._atoms, parent=self._tree)
+        self._set_editor(item, editor, error_label)
+        item.setSizeHint(2, editor.sizeHint())
+        if special:
+            self._special_editors[placement.path] = (editor, item)
+        return editor
+
+    def _build_special_option(self, opt, item, path, editor_name, **placement_options):
+        if editor_name == "energy_bound":
             name = opt.name
             item.setText(0, f'{name} / {name}EV')
             item.setData(0, Qt.ItemDataRole.UserRole + 1, ('ENERGY', name + 'EV'))
             item.setText(1, 'Energy')
             item.setToolTip(3, opt.info + '\n' + opt._container[name + 'EV'].info)
-            def apply(value, unit, relative):
-                set_bound_energy(self._params, name, value, unit, relative)
-                self._update_changed_style(binding.option(path), item)
-                self._refresh_energy_editors()
-            editor = EnergyEditor(lambda: bound_energy_state(self._params, name), apply, self._tree,
-                                  reference_selectable=lambda: reference_selectable(self._params, name))
-        else:
-            def state():
-                value = binding.value(path)
-                return EnergyState(None if value is None else float(value.to_value('Ry')), 'Ry',
-                                   explicit=binding.option(path).is_set())
-            def apply(value, unit, _relative):
-                binding.set_value(path, None if value is None else (value, unit))
-            editor = create_option_editor(
-                opt._definition.type,
-                None,
-                editor_kind="energy",
-                parent=self._tree,
-                energy_state=state,
-                energy_apply=apply,
-            )
-        binding.editor = editor
-        editor.setMinimumWidth(320)
-        self._special_editors[path] = (binding, item)
-        self._set_editor(item, editor, '.'.join(path))
-        self._tree.setColumnWidth(2, max(320, self._tree.columnWidth(2)))
-        binding.refresh()
+        placement = FieldPlacement(path, item.text(0), editor=editor_name, **placement_options)
+        editor = self._install_value_editor(
+            opt,
+            item,
+            placement,
+            error_label='.'.join(path),
+            special=True,
+        )
+        width = 320 if editor_name == "energy_bound" else 280
+        editor.setMinimumWidth(width)
+        self._tree.setColumnWidth(2, max(width, self._tree.columnWidth(2)))
+        editor.refresh()
         self._update_changed_style(opt, item, refresh_filter=False)
 
-    def _refresh_energy_editors(self):
-        for binding, _item in self._special_editors.values():
-            if isinstance(binding.editor, EnergyEditor):
-                binding.refresh()
-
-    def _build_scaling_option(self, opt, item, path):
-        binding = _TreeEditorBinding(self, item)
-        editor = RelativisticScalingEditor(binding, path, 'expert', self._tree)
-        binding.editor = editor
-        editor.setMinimumWidth(280)
-        self._special_editors[path] = (binding, item)
-        self._set_editor(item, editor, '.'.join(path))
-        self._tree.setColumnWidth(2, max(280, self._tree.columnWidth(2)))
-        binding.refresh()
-
-    def _set_option_value(self, opt: Any, item: QTreeWidgetItem, value: Any) -> None:
-        opt.set(value)
-        self._update_changed_style(opt, item)
-        self._refresh_energy_editors()
+    def _refresh_special_editors(self):
+        for editor, _item in self._special_editors.values():
+            editor.refresh()
 
     def _update_changed_style(
         self,
@@ -338,9 +339,15 @@ class InputParametersDialog(_TreeDialogBase):
             opt.set(value)
             self._update_changed_style(opt, item)
             self._rebuild_compound_option(opt, item)
-        editor = create_option_editor(grammar_type, _option_value(opt), apply,
-                          option=opt, atoms=self._atoms, read_only=not editable)
-        self._set_editor(item, editor)
+        placement = FieldPlacement(tuple(opt._get_path().split('.')), opt.name)
+        editor = self._install_value_editor(
+            opt,
+            item,
+            placement,
+            apply_value=apply,
+            value_type=grammar_type,
+            read_only=not editable,
+        )
         item.setToolTip(2, editor.text())
 
     def _set_editor(self, item, editor, error_label=None):
@@ -389,28 +396,32 @@ class InputParametersDialog(_TreeDialogBase):
         for index, value in enumerate(values):
             child = QTreeWidgetItem([f'[{index}]', str(grammar_type.type), '', ''])
             self._add_child(item, child)
-            editor = create_option_editor(
-                grammar_type.type,
-                value,
-                lambda new_value, idx=index, o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
-                option=opt,
-                atoms=self._atoms,
+            placement = FieldPlacement(tuple(opt._get_path().split('.')), child.text(0))
+            self._install_value_editor(
+                opt,
+                child,
+                placement,
+                read_value=lambda value=value: FieldValue(value),
+                apply_value=lambda new_value, idx=index, o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
+                value_type=grammar_type.type,
+                allows_unset=False,
             )
-            self._set_editor(child, editor)
 
         max_length = getattr(grammar_type, 'max_length', None)
         if max_length is None or len(values) < max_length:
             append_item = QTreeWidgetItem([f'[{len(values)}]', str(grammar_type.type), '', 'Append new item'])
             self._add_child(item, append_item)
-            editor = create_option_editor(
-                grammar_type.type,
-                None,
-                lambda new_value, idx=len(values), o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
+            placement = FieldPlacement(tuple(opt._get_path().split('.')), append_item.text(0))
+            self._install_value_editor(
+                opt,
+                append_item,
+                placement,
+                read_value=lambda: FieldValue(None),
+                apply_value=lambda new_value, idx=len(values), o=opt, parent_item=item: self._update_array_value(o, parent_item, idx, new_value),
+                value_type=grammar_type.type,
+                allows_unset=False,
                 allow_empty=True,
-                option=opt,
-                atoms=self._atoms,
             )
-            self._set_editor(append_item, editor)
 
     def _update_array_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
         values = _mutable_sequence(_option_value(opt))
@@ -421,7 +432,7 @@ class InputParametersDialog(_TreeDialogBase):
         opt.set(values)
         self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
-        self._refresh_energy_editors()
+        self._refresh_special_editors()
 
     def _build_sequence_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: GrammarSequence) -> None:
         self._build_summary_editor(opt, item, grammar_type, editable=True)
@@ -431,12 +442,16 @@ class InputParametersDialog(_TreeDialogBase):
             value = values[index] if index < len(values) else None
             child = QTreeWidgetItem([labels[index], str(subtype), '', ''])
             self._add_child(item, child)
-            editor = create_option_editor(
-                subtype,
-                value,
-                lambda new_value, idx=index, o=opt, parent_item=item: self._update_sequence_value(o, parent_item, idx, new_value),
+            placement = FieldPlacement(tuple(opt._get_path().split('.')), child.text(0))
+            self._install_value_editor(
+                opt,
+                child,
+                placement,
+                read_value=lambda value=value: FieldValue(value),
+                apply_value=lambda new_value, idx=index, o=opt, parent_item=item: self._update_sequence_value(o, parent_item, idx, new_value),
+                value_type=subtype,
+                allows_unset=False,
             )
-            self._set_editor(child, editor)
 
     def _update_sequence_value(self, opt: Any, item: QTreeWidgetItem, index: int, value: Any) -> None:
         current = _mutable_sequence(_option_value(opt))
@@ -480,12 +495,16 @@ class InputParametersDialog(_TreeDialogBase):
                         cell_value = cell_value.item()
                     cell_item = QTreeWidgetItem([str(column_name), str(subtype), '', ''])
                     self._add_child(row_item, cell_item)
-                    editor = create_option_editor(
-                        subtype,
-                        cell_value,
-                        lambda new_value, r=row_index, c=column_name, o=opt, parent_item=item: self._update_table_field(o, parent_item, r, c, new_value),
+                    placement = FieldPlacement(tuple(opt._get_path().split('.')), cell_item.text(0))
+                    self._install_value_editor(
+                        opt,
+                        cell_item,
+                        placement,
+                        read_value=lambda value=cell_value: FieldValue(value),
+                        apply_value=lambda new_value, r=row_index, c=column_name, o=opt, parent_item=item: self._update_table_field(o, parent_item, r, c, new_value),
+                        value_type=subtype,
+                        allows_unset=False,
                     )
-                    self._set_editor(cell_item, editor)
             return
 
         array = np.asarray(value)
@@ -511,12 +530,16 @@ class InputParametersDialog(_TreeDialogBase):
                 name = column_names[col_index] if col_index < len(column_names) else f'[{col_index}]'
                 cell_item = QTreeWidgetItem([str(name), str(subtype), '', ''])
                 self._add_child(row_item, cell_item)
-                editor = create_option_editor(
-                    subtype,
-                    cell_value,
-                    lambda new_value, r=row_index, c=col_index, o=opt, parent_item=item: self._update_table_cell(o, parent_item, r, c, new_value),
+                placement = FieldPlacement(tuple(opt._get_path().split('.')), cell_item.text(0))
+                self._install_value_editor(
+                    opt,
+                    cell_item,
+                    placement,
+                    read_value=lambda value=cell_value: FieldValue(value),
+                    apply_value=lambda new_value, r=row_index, c=col_index, o=opt, parent_item=item: self._update_table_cell(o, parent_item, r, c, new_value),
+                    value_type=subtype,
+                    allows_unset=False,
                 )
-                self._set_editor(cell_item, editor)
 
     def _update_table_field(self, opt: Any, item: QTreeWidgetItem, row_index: int, column_name: str, value: Any) -> None:
         current = np.array(_option_value(opt), copy=True)

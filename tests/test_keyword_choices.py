@@ -12,9 +12,10 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.field_binding import FieldValue, create_field_binding
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
-from guy4ase.gui.input_parameters.specs.schema import field, main_energy_mesh_field
-from guy4ase.gui.widgets.input_parameters.scalar import create_option_editor
+from guy4ase.gui.input_parameters.specs.schema import Choice, field, main_energy_mesh_field
+from guy4ase.gui.widgets.input_parameters.registry import create_editor
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
 
@@ -26,6 +27,11 @@ def application():
 
 def choices(combo):
     return {combo.itemData(index) for index in range(combo.count())}
+
+
+def value_editor(session, placement, *, atoms=None):
+    binding = create_field_binding(session, placement, "test")
+    return create_editor(binding, placement, atoms=atoms)
 
 
 def test_generic_atom_choices_apply_to_guided_and_expert_keywords(application, monkeypatch):
@@ -42,8 +48,7 @@ def test_generic_atom_choices_apply_to_guided_and_expert_keywords(application, m
     session = InputParametersSession(parameters)
     editor = ParameterEditor(session, field("SCF", "VXC", "XC", "keyword"), "physical", atoms=atoms)
     option = session.option(("SCF", "VXC"))
-    generic = create_option_editor(option._definition.type, option(), lambda value: None,
-                                   option=option, atoms=atoms)
+    generic = value_editor(session, field("SCF", "VXC", "XC", "keyword"), atoms=atoms)
     for combo in (editor.control, generic):
         assert choices(combo) == {"PBE"}
         assert combo.itemText(combo.findData("PBE")) == "PBE: Structure-dependent choice"
@@ -82,6 +87,23 @@ def test_required_keyword_and_array_elements_have_no_unset_choice(application, m
         editor.close()
 
 
+def test_explicit_editor_overrides_grammar_default(application):
+    session = InputParametersSession(InputParameters.create("scf"))
+    placement = field(
+        "SCF",
+        "NITER",
+        "Iterations",
+        editor="choice",
+        choices=(Choice("Short", 10), Choice("Long", 200)),
+    )
+
+    editor = ParameterEditor(session, placement, "test")
+
+    assert isinstance(editor.control, QComboBox)
+    assert choices(editor.control) == {10, 200}
+    editor.close()
+
+
 @pytest.mark.parametrize("path, default", [
     (("SCF", "VXC"), "VWN"),
     (("MODE", "OP"), "NONE"),
@@ -92,7 +114,7 @@ def test_optional_keyword_with_default_selects_default_without_unset(application
     option = session.option(path)
     assert option._definition.is_optional and not option.is_set()
     editor = ParameterEditor(session, field(*path, "Value", "keyword"), "test")
-    generic = create_option_editor(option._definition.type, option(), lambda value: None, option=option)
+    generic = value_editor(session, field(*path, "Value", "keyword"))
     for combo in (editor.control, generic):
         assert None not in choices(combo)
         assert combo.currentData() == default
@@ -114,9 +136,9 @@ def test_undo_to_keyword_default_does_not_display_unset(application):
 
 
 def test_expert_optional_keyword_without_default_retains_unset(application):
-    parameters = InputParameters.create("scf")
-    option = parameters.TAU.KKRMODE
-    editor = create_option_editor(option._definition.type, option(), option.set, option=option)
+    session = InputParametersSession(InputParameters.create("scf"))
+    option = session.option(("TAU", "KKRMODE"))
+    editor = value_editor(session, field("TAU", "KKRMODE", "Representation"))
     assert editor.currentData() is None
     assert editor.currentText() == "Not set"
     editor.setCurrentIndex(editor.findData("TB"))
@@ -139,7 +161,22 @@ def test_generic_text_editor_uses_grammar_conversion_not_parser(application, mon
 
     monkeypatch.setattr(grammar_type, "convert", convert)
     monkeypatch.setattr(grammar_type, "parse", unexpected_parse)
-    editor = create_option_editor(grammar_type, "initial", applied.append)
+    class Binding:
+        value_type = grammar_type
+        option = None
+        allows_unset = False
+        read_only = False
+        allow_empty = False
+
+        @staticmethod
+        def read():
+            return FieldValue("initial")
+
+        @staticmethod
+        def set_value(value):
+            applied.append(value)
+
+    editor = create_editor(Binding(), field("TEST", "VALUE", "Value"))
     editor.setText("entered_text")
     editor.editingFinished.emit()
     assert converted == ["entered_text"]

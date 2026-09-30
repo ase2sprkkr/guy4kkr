@@ -26,12 +26,13 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
     A scalar/one-element array applies to all orbitals. Array-capable option
     types expose s, p, d, f, ... columns without rewriting values on refresh.
     """
-    def __init__(self, session, path, page_id, parent=None):
+    def __init__(self, binding, placement, atoms=None, parent=None):
+        del atoms
         super().__init__(parent)
-        self.session, self.path, self.page_id = session, path, page_id
+        self.binding, self.path = binding, placement.path
         self._refreshing = False
         self._keys = []
-        self.orbital_resolved = isinstance(session.option(path)._definition.type, Array)
+        self.orbital_resolved = isinstance(binding.value_type, Array)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(self)
@@ -63,13 +64,13 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         """Render defaults and broadcast short orbital arrays without expanding storage."""
         self._refreshing = True
         try:
-            values = self.session.value(self.path) or {}
+            values = self.binding.read().value or {}
             self._keys = ["def"] + sorted(key for key in values if key != "def")
             columns = 1
             if self.orbital_resolved:
                 columns = max(4, max((np.size(value) for value in values.values()), default=1))
                 try:
-                    columns = max(columns, int(np.max(self.session.value(("SITES", "NL")))))
+                    columns = max(columns, int(np.max(self.binding.value_at(("SITES", "NL")))))
                 except (KeyError, TypeError, ValueError):
                     pass
             self.table.setColumnCount(columns)
@@ -102,15 +103,14 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         try:
             # Keep untouched rows in their original representation, including
             # absent global defaults and short arrays.
-            values = dict(self.session.value(self.path) or {})
+            values = dict(self.binding.read().value or {})
             for row, key in enumerate(self._keys):
                 cells = [coordinate_value(self.table.item(row, column).data(Qt.ItemDataRole.EditRole))
                          for column in range(self.table.columnCount())]
                 previous = np.atleast_1d(values.get(key, 1.0))
                 if any(value != previous[min(i, len(previous) - 1)] for i, value in enumerate(cells)):
                     values[key] = cells if self.orbital_resolved else cells[0]
-            self.session.set_value(self.path, values, source_page=self.page_id,
-                                   text=f"Edit {self.path[-1]} scaling")
+            self.binding.set_value(values)
             self.validationChanged.emit("")
             return True
         except (ValueError, TypeError, ZeroDivisionError, OverflowError) as exc:
@@ -121,12 +121,15 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         """Commit the draft, then add a unity override or focus an existing type."""
         if not self.commit():
             return
-        values = dict(self.session.value(self.path) or {})
+        values = dict(self.binding.read().value or {})
         index = self.type_index.value()
         if index not in values:
             values[index] = [1.0] if self.orbital_resolved else 1.0
-            self.session.set_value(self.path, values, source_page=self.page_id,
-                                   text=f"Add {self.path[-1]} for type {index}")
+            self.binding.set_path_value(
+                self.path,
+                values,
+                text=f"Add {self.path[-1]} for type {index}",
+            )
         self.table.setCurrentCell(self._keys.index(index), 0)
 
     def remove_type(self):
@@ -134,9 +137,12 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         row = self.table.currentRow()
         if row <= 0:
             return
-        values = dict(self.session.value(self.path) or {})
+        values = dict(self.binding.read().value or {})
         index = self._keys[row]
         del values[index]
-        self.session.set_value(self.path, values, source_page=self.page_id,
-                               text=f"Remove {self.path[-1]} for type {index}")
+        self.binding.set_path_value(
+            self.path,
+            values,
+            text=f"Remove {self.path[-1]} for type {index}",
+        )
         self.validationChanged.emit("")

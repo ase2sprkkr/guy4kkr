@@ -64,6 +64,10 @@ class InputParametersBinding:
     def option(self, path: InputParameterPath):
         return resolve_option(self._get_parameters(), path)
 
+    @property
+    def parameters(self) -> InputParameters:
+        return self._get_parameters()
+
     def value(self, path: InputParameterPath):
         return self.option(path)(all_values=True)
 
@@ -77,5 +81,11 @@ class InputParametersBinding:
         if values_equal(option(all_values=True), value):
             return False
         option.set(value)
+        self._on_changed(path)
+        return True
+
+    def mutate(self, callback, *, path: InputParameterPath):
+        """Apply an atomic direct edit and notify the owning view."""
+        callback(self._get_parameters())
         self._on_changed(path)
         return True

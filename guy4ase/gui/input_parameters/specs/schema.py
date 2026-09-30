@@ -45,14 +45,14 @@ class FieldPlacement:
     """Describe a view of an option, not an additional stored parameter value.
 
     ``index`` selects one array element; ``related_paths`` belong to the same
-    composite editor. ``editor`` names an optional registered value editor;
-    it is unrelated to the field's page or group. Defaults come exclusively
+    value editor. ``editor`` names its presentation or requests ``"auto"``
+    inference from the grammar type. It is unrelated to the field's page or
+    group. Defaults come exclusively
     from InputParameters and are shown as placeholders, not duplicated here.
     """
     path: InputParameterPath
     label: str
-    kind: str = "auto"
-    editor: str | None = None
+    editor: str = "auto"
     role: FieldRole = FieldRole.PRIMARY
     minimum: float | int | None = None
     maximum: float | int | None = None
@@ -151,16 +151,16 @@ class TaskDialogSpec:
         ))
 
 
-def field(section: str, option: str, label: str, kind: str = "auto", **kwargs: Any) -> FieldPlacement:
+def field(section: str, option: str, label: str, editor: str = "auto", **kwargs: Any) -> FieldPlacement:
     """Declare one view of an input-parameter option."""
-    return FieldPlacement((section, option), label, kind, **kwargs)
+    return FieldPlacement((section, option), label, editor, **kwargs)
 
 
-def main_energy_mesh_field(option: str, label: str, kind: str = "auto", **kwargs: Any) -> FieldPlacement:
+def main_energy_mesh_field(option: str, label: str, editor: str = "auto", **kwargs: Any) -> FieldPlacement:
     """Declare the main (index-zero) component of ``ENERGY.GRID`` or ``NE``."""
     if option not in {"GRID", "NE"}:
         raise ValueError(f"{option} is not an energy-mesh option")
-    return field("ENERGY", option, label, kind, index=0, **kwargs)
+    return field("ENERGY", option, label, editor, index=0, **kwargs)
 
 
 def mirror(value: FieldPlacement) -> FieldPlacement:

@@ -12,6 +12,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 import numpy as np
 import pytest
 from ase import Atoms
+from ase2sprkkr.common.grammar_types import Energy, Real
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
@@ -23,7 +24,6 @@ from guy4ase.gui.input_parameters.field_binding import (
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.widgets.input_parameters.value_editor import (
     ParameterValueEditor,
-    ParameterValueEditorWidget,
 )
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
@@ -34,7 +34,7 @@ from guy4ase.gui.widgets.input_parameters.scalar import (
     RealEditor,
     TextEditor,
 )
-from guy4ase.gui.widgets.input_parameters.registry import EDITOR_FACTORIES
+from guy4ase.gui.widgets.input_parameters.registry import EDITORS, editor_for_type
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 
@@ -229,10 +229,10 @@ def test_generic_parameter_adapter_has_no_registered_editor_implementations():
 
 
 def test_all_parameter_value_editors_share_one_explicit_contract():
-    assert EDITOR_FACTORIES
+    assert EDITORS
     assert all(
-        issubclass(factory, ParameterValueEditorWidget)
-        for factory in EDITOR_FACTORIES.values()
+        issubclass(editor, ParameterValueEditor)
+        for editor in EDITORS.values()
     )
     assert all(
         issubclass(editor, ParameterValueEditor)
@@ -289,12 +289,30 @@ def test_indexing_is_the_only_specialized_field_binding_capability():
     assert 'placement.kind == "energy"' not in source
 
 
-def test_energy_editor_selection_is_explicit_not_inferred_from_grammar():
-    source = (GUI / "widgets" / "input_parameters" / "scalar.py").read_text()
-    assert "def _editor_kind" not in source
-    assert 'if kind == "energy" or isinstance(grammar_type, Energy)' not in source
+def test_field_placement_has_one_editor_selector_and_one_registry():
+    schema = (GUI / "input_parameters" / "specs" / "schema.py").read_text()
+    assert "kind: str" not in schema
+    assert 'editor: str = "auto"' in schema
     parameter = (GUI / "widgets" / "input_parameters" / "parameter.py").read_text()
-    assert "editor_kind=spec.kind" in parameter
+    assert "create_editor(" in parameter
+    assert "create_registered_editor" not in parameter
+    assert "create_option_editor" not in parameter
+    assert editor_for_type(Energy()) == "energy"
+    assert editor_for_type(Real()) == "real"
+
+    registry = (GUI / "widgets" / "input_parameters" / "registry.py").read_text()
+    assert "def editor_for_type" in registry
+    assert "def create_editor" in registry
+    assert "EnergyState" not in registry
+    assert "convert_energy" not in registry
+    assert "create_option_editor" not in registry
+    assert "EDITORS" not in (GUI / "widgets" / "input_parameters" / "bsf.py").read_text()
+    assert "EDITORS" not in (GUI / "widgets" / "input_parameters" / "common.py").read_text()
+
+    expert = (GUI / "dialogs" / "expert_input.py").read_text()
+    assert "create_editor(" in expert
+    assert "EnergyEditor" not in expert
+    assert "RelativisticScalingEditor" not in expert
 
 
 def test_expert_dialog_commits_only_explicitly_registered_value_editors():
