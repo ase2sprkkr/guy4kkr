@@ -1,5 +1,28 @@
-"""Pure lattice transformations."""
+"""Pure lattice queries and transformations."""
+from __future__ import annotations
+
+from typing import Any, Literal
+
 import numpy as np
+from ase2sprkkr import SPRKKRAtoms
+
+StructureKind = Literal["2d", "3d", "unknown"]
+
+
+def detect_structure_kind(atoms: Any | None) -> StructureKind | None:
+    """Classify structures supported by the bulk and layered workflows."""
+    if atoms is None:
+        return None
+    periodic = sum(atoms.get_pbc())
+    if periodic == 3:
+        return "3d"
+    if (
+        periodic == 2
+        and isinstance(atoms, SPRKKRAtoms)
+        and {"left", "central", "right"}.issubset(atoms.regions)
+    ):
+        return "2d"
+    return "unknown"
 
 
 def scale_lattice_to_lengths(lattice, lengths):

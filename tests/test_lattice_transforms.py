@@ -2,8 +2,38 @@
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.build import bulk
+from ase2sprkkr.sprkkr.build import semiinfinite_system
 
-from guy4ase.physics.lattice import match_structure_axis_length
+from guy4ase.physics.lattice import (
+    detect_structure_kind,
+    match_structure_axis_length,
+)
+
+
+@pytest.mark.parametrize(
+    'pbc, expected',
+    [
+        ((False, False, False), 'unknown'),
+        ((True, False, False), 'unknown'),
+        ((True, True, False), 'unknown'),
+        ((True, True, True), '3d'),
+    ],
+)
+def test_structure_kind_is_derived_from_periodicity(pbc, expected):
+    atoms = Atoms('H', cell=[1.0, 1.0, 1.0], pbc=pbc)
+
+    assert detect_structure_kind(atoms) == expected
+
+
+def test_structure_kind_recognizes_sprkkr_layered_regions():
+    atoms = semiinfinite_system(bulk("Cu", "sc", a=2.0), (0, 0))
+
+    assert detect_structure_kind(atoms) == "2d"
+
+
+def test_structure_kind_handles_missing_structure():
+    assert detect_structure_kind(None) is None
 
 
 def test_match_structure_axis_length_preserves_direction_and_inputs():

@@ -4,11 +4,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
+from ase.build import bulk as build_bulk
+from ase2sprkkr.sprkkr.build import semiinfinite_system
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from guy4ase.main import GuiApplication
 from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.main import GuiApplication
 
 
 def _workflow(tmp_path, *, workspace=None):
@@ -98,6 +100,41 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     assert workspace.atoms is not None
     expert.close()
     window.close()
+
+
+def test_structure_kind_follows_external_workspace_changes(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    gui, workflow = _workflow(tmp_path)
+    expert = gui.create_main_window()
+    bulk = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
+    layer = semiinfinite_system(build_bulk("Fe", "bcc", a=2.8), (0, 0))
+
+    expert.controller.set_structure(bulk)
+    application.processEvents()
+    assert 'Create a 2D Surface' in _action_titles(workflow)
+    assert _action_widget(
+        workflow, workflow._GROUP_CALCULATE, 'Converge SCF'
+    ).accessibleDescription() == 'Prepare and run a self-consistent calculation'
+
+    expert.controller.set_structure(layer)
+    application.processEvents()
+    assert 'Create a 2D Surface' not in _action_titles(workflow)
+    assert _action_widget(
+        workflow, workflow._GROUP_CALCULATE, 'Converge SCF'
+    ).accessibleDescription() == (
+        'Converge bulk region(s), then the interaction zone'
+    )
+
+    expert.controller.set_structure(bulk)
+    application.processEvents()
+    assert 'Create a 2D Surface' in _action_titles(workflow)
+
+    expert.controller.set_structure(None)
+    application.processEvents()
+    assert 'Create a 3D Structure' in _action_titles(workflow)
+
+    expert.close()
+    workflow.close()
 
 
 def test_start_actions_are_grouped_with_section_labels(tmp_path):

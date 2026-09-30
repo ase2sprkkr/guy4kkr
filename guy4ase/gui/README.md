@@ -16,7 +16,8 @@
   `schema` defines fields/groups/pages, `shared` contains common definitions,
   individual task modules expose `build_spec`, and `registry.task_dialog_spec`
   selects and validates a layout.
-- `plots`: Matplotlib rendering. Pure lattice transformations belong in
+- `plots`: Matplotlib rendering. Pure lattice queries and transformations,
+  including structure dimensionality derived from `Atoms.pbc`, belong in
   `guy4ase.physics.lattice`, not in the GUI.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.

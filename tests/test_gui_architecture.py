@@ -167,6 +167,17 @@ def test_workspace_mutation_and_history_persistence_are_outside_main_window():
     assert "def _save_recent_files" not in source
 
 
+def test_workflow_does_not_cache_derived_structure_kind():
+    workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
+    lattice = (ROOT / "guy4ase" / "physics" / "lattice.py").read_text()
+
+    assert "self._structure_kind" not in workflow
+    assert "_detect_structure_kind" not in workflow
+    assert "detect_structure_kind(atoms)" in workflow
+    assert "def detect_structure_kind" in lattice
+    assert "PyQt" not in lattice
+
+
 def test_run_dialog_reports_completion_through_an_explicit_callback():
     source = (GUI / "dialogs" / "run_calculation.py").read_text()
     assert "handle_sprkkr_finished_result" not in source

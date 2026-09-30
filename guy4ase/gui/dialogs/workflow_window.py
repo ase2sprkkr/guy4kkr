@@ -39,6 +39,8 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.physics.lattice import detect_structure_kind
+
 
 def _set_action_button_content(
     button: QPushButton | QToolButton,
@@ -126,8 +128,6 @@ class WorkflowWindow(QMainWindow):
         self.recent_history = recent_files
         self.operations = operations
         self._open_expert = open_expert
-        self._structure_kind: Optional[str] = None
-
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.resultChanged.connect(lambda _result: self._refresh())
         self.operations.recentFilesChanged.connect(self._refresh)
@@ -423,6 +423,7 @@ class WorkflowWindow(QMainWindow):
             return
 
         formula = atoms.get_chemical_formula()
+        structure_kind = detect_structure_kind(atoms)
         status = self._scf_status(atoms)
         stage_names = {
             "ITR-L-BULK": "converging left bulk",
@@ -441,7 +442,7 @@ class WorkflowWindow(QMainWindow):
                 scf_label = "Converge SCF"
                 scf_description = (
                     "Converge bulk region(s), then the interaction zone"
-                    if self._structure_kind == "2d"
+                    if structure_kind == "2d"
                     else "Prepare and run a self-consistent calculation"
                 )
             self._add_action(
@@ -480,7 +481,7 @@ class WorkflowWindow(QMainWindow):
                 icon='run-build-clean.svg',
             )
 
-        if self._structure_kind == "3d":
+        if structure_kind == "3d":
             self._add_action(
                 "Create a 2D Surface",
                 "Derive a surface from the current 3D structure",
@@ -501,70 +502,43 @@ class WorkflowWindow(QMainWindow):
             icon=QStyle.StandardPixmap.SP_BrowserReload,
         )
 
-    def _on_structure_changed(self, atoms: Any) -> None:
-        if atoms is None:
-            self._structure_kind = None
-            self._refresh()
-            return
-        if self._structure_kind is None:
-            self._structure_kind = self._detect_structure_kind(atoms)
+    def _on_structure_changed(self, _atoms: Any) -> None:
         self._refresh()
 
-    @staticmethod
-    def _detect_structure_kind(atoms: Any) -> str:
-        try:
-            return "3d" if all(bool(periodic) for periodic in atoms.get_pbc()) else "2d"
-        except Exception:
-            return "3d"
-
     def _create_3d(self) -> None:
-        self._structure_kind = "3d"
         self.operations.create_structure(self)
 
     def _create_from_database(self) -> None:
-        self._structure_kind = "3d"
         self.operations.create_structure_from_database(self)
 
     def _download_structure(self) -> None:
-        self._structure_kind = None
         self.operations.download_structure(self)
 
     def _create_surface(self) -> None:
-        self._structure_kind = "3d"
         self.operations.create_structure(self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
-        self._structure_kind = "3d"
         self.operations.create_structure(self)
         if self.workspace.atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
-        self._structure_kind = None
         self.operations.choose_structure(self)
 
     def _load_output(self) -> None:
-        self._structure_kind = None
         self.operations.choose_output(self)
 
     def _load_recent(self, kind: RecentKind, file_path: str) -> None:
-        self._structure_kind = None
         self.operations.open_recent(kind, file_path, self)
         if self.workspace.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        original_atoms = self.workspace.atoms
         self.operations.build_2d_structure(
             self, surface_mode=surface_mode
         )
-        if self.workspace.atoms is not None and self.workspace.atoms is not original_atoms:
-            self._structure_kind = "2d"
-        else:
-            self._structure_kind = "3d"
-        self._refresh()
 
     def _prepare_task(self, task: str) -> None:
         try:
@@ -601,7 +575,6 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._structure_kind = None
         self.controller.reset()
 
     def _open_expert_mode(self) -> None:
