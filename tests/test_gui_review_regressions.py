@@ -23,6 +23,7 @@ from guy4ase.gui.dialogs.guided_input import (
 )
 from guy4ase.gui.input_parameters.specs import bsf, scf
 from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.main import GuiApplication
 
 
 @pytest.fixture
@@ -260,8 +261,9 @@ def test_expert_cancel_is_isolated(app):
 
 
 @pytest.mark.parametrize('accept', [False, True])
-def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept):
-    window = main_window.MainWindow()
+def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept, tmp_path):
+    gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
+    window = gui.create_main_window()
     p = InputParameters.create('dos')
     p.SITES.NL = [3, 4]
     window.controller.set_input_parameters(p)
@@ -289,8 +291,9 @@ def test_corrupt_recent_history_is_ignored(tmp_path):
     assert recent.last_kind is None
 
 
-def test_reset_workspace_clears_the_document_and_views(app):
-    window = main_window.MainWindow()
+def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
+    gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
+    window = gui.create_main_window()
     window.workspace.atoms = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
     window.workspace.input_parameters = InputParameters.create('scf')
     window.workspace.directory = '/tmp/calculation'

@@ -53,22 +53,18 @@ class MainWindow(QMainWindow):
 
     def __init__(
         self,
-        controller: WorkspaceController | None = None,
-        recent_files: RecentFiles | None = None,
-        operations: GuiOperations | None = None,
-    ):
+        controller: WorkspaceController,
+        recent_files: RecentFiles,
+        operations: GuiOperations,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
         self.resize(1400, 800)
 
-        self.controller = controller or WorkspaceController(parent=self)
+        self.controller = controller
         self.workspace = self.controller.workspace
-        self.recent_history = recent_files or RecentFiles()
-        if recent_files is None:
-            self.recent_history.load()
-        self.operations = operations or GuiOperations(
-            self.controller, self.recent_history, parent=self
-        )
+        self.recent_history = recent_files
+        self.operations = operations
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None

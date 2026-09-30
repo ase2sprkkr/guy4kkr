@@ -7,9 +7,16 @@ from ase import Atoms
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
+from guy4ase.main import GuiApplication
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
+
+
+def _workflow(tmp_path, *, workspace=None):
+    gui = GuiApplication(
+        workspace=workspace,
+        recent_files_path=tmp_path / 'recent.json',
+    )
+    return gui, gui.create_workflow_window()
 
 
 def _action_title(widget):
@@ -59,10 +66,9 @@ def _action_widget(window, group, title):
     )
 
 
-def test_load_output_is_only_available_on_the_start_screen():
+def test_load_output_is_only_available_on_the_start_screen(tmp_path):
     application = QApplication.instance() or QApplication([])
-    window = WorkflowWindow()
-    assert window._expert is None
+    _gui, window = _workflow(tmp_path)
 
     assert "Load SPR-KKR Output" in _action_titles(window)
 
@@ -75,25 +81,28 @@ def test_load_output_is_only_available_on_the_start_screen():
     window.close()
 
 
-def test_workflow_and_expert_share_one_workspace():
+def test_workflow_and_expert_share_one_workspace(tmp_path):
     application = QApplication.instance() or QApplication([])
     workspace = WorkspaceState()
-    controller = WorkspaceController(workspace)
-    window = WorkflowWindow(controller)
+    gui, window = _workflow(tmp_path, workspace=workspace)
 
-    assert window._expert is None
-    assert window.expert_window.workspace is workspace
-    assert window.expert_window.operations is window.operations
-    assert window._expert is not None
+    assert gui._main_window is None
+    window._open_expert_mode()
+    expert = gui.create_main_window()
+    assert expert.workspace is workspace
+    assert expert.controller is window.controller is gui.controller
+    assert expert.recent_history is window.recent_history is gui.recent_files
+    assert expert.operations is window.operations is gui.operations
     window.controller.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
     application.processEvents()
     assert workspace.atoms is not None
+    expert.close()
     window.close()
 
 
-def test_start_actions_are_grouped_with_section_labels():
+def test_start_actions_are_grouped_with_section_labels(tmp_path):
     _application = QApplication.instance() or QApplication([])
-    window = WorkflowWindow()
+    _gui, window = _workflow(tmp_path)
 
     assert _group_titles(window) == [
         "Create structure",
@@ -124,7 +133,7 @@ def test_start_actions_are_grouped_with_section_labels():
     window.close()
 
 
-def test_group_labels_follow_dark_and_light_palette_text_color():
+def test_group_labels_follow_dark_and_light_palette_text_color(tmp_path):
     application = QApplication.instance() or QApplication([])
     original_palette = application.palette()
     try:
@@ -136,7 +145,7 @@ def test_group_labels_follow_dark_and_light_palette_text_color():
             palette.setColor(QPalette.ColorRole.Window, window_color)
             palette.setColor(QPalette.ColorRole.WindowText, text_color)
             application.setPalette(palette)
-            window = WorkflowWindow()
+            _gui, window = _workflow(tmp_path)
             labels = window._actions.findChildren(
                 QLabel, "workflowActionGroupLabel"
             )
@@ -152,9 +161,9 @@ def test_group_labels_follow_dark_and_light_palette_text_color():
         application.setPalette(original_palette)
 
 
-def test_structure_actions_follow_requested_group_order():
+def test_structure_actions_follow_requested_group_order(tmp_path):
     application = QApplication.instance() or QApplication([])
-    window = WorkflowWindow()
+    _gui, window = _workflow(tmp_path)
     window.controller.set_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )

@@ -103,26 +103,38 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
         visit(module, ())
 
 
-def test_workflow_uses_shared_operations_instead_of_expert_as_backend():
-    """Expert mode is another view, not Workflow's service object."""
-    source = (GUI / "dialogs" / "workflow_window.py").read_text()
-    tree = ast.parse(source)
-    workflow = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "WorkflowWindow"
-    )
-    constructor = next(
-        node
-        for node in workflow.body
-        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
-    )
-    assert not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "MainWindow"
-        for node in ast.walk(constructor)
-    )
+def test_composition_root_owns_services_and_top_level_windows():
+    """The two sibling views receive one session assembled in main.py."""
+    workflow_source = (GUI / "dialogs" / "workflow_window.py").read_text()
+    main_window_source = (GUI / "dialogs" / "main_window.py").read_text()
+    composition_source = (ROOT / "guy4ase" / "main.py").read_text()
+
+    for source in (workflow_source, main_window_source):
+        tree = ast.parse(source)
+        constructed = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        }
+        assert not constructed & {
+            "WorkspaceController",
+            "RecentFiles",
+            "GuiOperations",
+            "MainWindow",
+            "WorkflowWindow",
+        }
+    assert "main_window" not in workflow_source
+    assert "expert_window" not in workflow_source
+    for dependency in (
+        "WorkspaceController(",
+        "RecentFiles(",
+        "GuiOperations(",
+        "WorkflowWindow(",
+        "MainWindow(",
+    ):
+        assert composition_source.count(dependency) == 1
+
     for operation in (
         "create_structure",
         "download_structure",
@@ -132,8 +144,8 @@ def test_workflow_uses_shared_operations_instead_of_expert_as_backend():
         "execute_output_value_action",
         "open_recent_file",
     ):
-        assert f"self._expert.{operation}" not in source
-    assert "self.operations." in source
+        assert f"self._expert.{operation}" not in workflow_source
+    assert "self.operations." in workflow_source
 
     operations_source = (GUI / "flows" / "operations.py").read_text()
     assert "dialogs.main_window" not in operations_source

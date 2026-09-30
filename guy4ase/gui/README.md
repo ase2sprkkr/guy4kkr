@@ -34,8 +34,13 @@
 - `flows`: shared Qt orchestration such as structure selection, file loading,
   guided task setup, calculation windows and result actions. A flow may compose
   leaf dialogs and update `application`, but it does not depend on
-  `MainWindow` or `WorkflowWindow`. Both window shells use the same
-  `GuiOperations` instance; Expert Mode is created lazily as another view.
+  `MainWindow` or `WorkflowWindow`.
+
+`guy4ase.main.GuiApplication` is the single composition root. It creates and
+owns one `WorkspaceController`, `RecentFiles` and `GuiOperations`, then injects
+those same instances into the sibling `WorkflowWindow` and `MainWindow` views.
+It also owns their top-level lifetime and lazy expert-window creation.
+Neither window constructs application services or another top-level window.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import Any, Callable, Optional
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QColor, QIcon, QPalette
@@ -39,10 +39,6 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-
-if TYPE_CHECKING:
-    from guy4ase.gui.dialogs.main_window import MainWindow
-
 
 def _set_action_button_content(
     button: QPushButton | QToolButton,
@@ -114,18 +110,22 @@ class WorkflowWindow(QMainWindow):
         _GROUP_DIFFERENT,
     )
 
-    def __init__(self, controller: WorkspaceController | None = None):
+    def __init__(
+        self,
+        controller: WorkspaceController,
+        recent_files: RecentFiles,
+        operations: GuiOperations,
+        *,
+        open_expert: Callable[[], None],
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
         self.resize(980, 680)
-        self.controller = controller or WorkspaceController(parent=self)
+        self.controller = controller
         self.workspace = self.controller.workspace
-        self.recent_history = RecentFiles()
-        self.recent_history.load()
-        self.operations = GuiOperations(
-            self.controller, self.recent_history, parent=self
-        )
-        self._expert: MainWindow | None = None
+        self.recent_history = recent_files
+        self.operations = operations
+        self._open_expert = open_expert
         self._structure_kind: Optional[str] = None
 
         self.controller.structureChanged.connect(self._on_structure_changed)
@@ -133,18 +133,6 @@ class WorkflowWindow(QMainWindow):
         self.operations.recentFilesChanged.connect(self._refresh)
         self._build_ui()
         self._refresh()
-
-    @property
-    def expert_window(self) -> MainWindow:
-        if self._expert is None:
-            from guy4ase.gui.dialogs.main_window import MainWindow
-
-            self._expert = MainWindow(
-                self.controller,
-                self.recent_history,
-                self.operations,
-            )
-        return self._expert
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -617,10 +605,7 @@ class WorkflowWindow(QMainWindow):
         self.controller.reset()
 
     def _open_expert_mode(self) -> None:
-        expert = self.expert_window
-        expert.show()
-        expert.raise_()
-        expert.activateWindow()
+        self._open_expert()
 
     @staticmethod
     def _scf_status(atoms: Any) -> Optional[str]:
@@ -634,8 +619,3 @@ class WorkflowWindow(QMainWindow):
     @staticmethod
     def _is_converged(status: Optional[str]) -> bool:
         return status in {"CONVERGED", "SCF-CONVERGED", "DONE", "FINISHED"}
-
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._expert is not None:
-            self._expert.close()
-        super().closeEvent(event)
