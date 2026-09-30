@@ -200,6 +200,9 @@ def test_expert_dialog_delegates_parameter_tree_rendering():
     renderer = (
         GUI / "widgets" / "input_parameters" / "expert_tree.py"
     ).read_text()
+    field_specs = (
+        GUI / "input_parameters" / "expert_fields.py"
+    ).read_text()
 
     assert "ExpertInputTreeEditor(" in dialog
     for tree_detail in (
@@ -219,6 +222,17 @@ def test_expert_dialog_delegates_parameter_tree_rendering():
     assert "self._params" not in renderer
     assert "create_editor(" in renderer
     assert "ParameterValueEditor" in renderer
+    for option_semantic in (
+        "('ENERGY', 'EMIN')",
+        "('ENERGY', 'EMAX')",
+        "('MODE', 'C')",
+        "('MODE', 'SOC')",
+        "energy_bound",
+        "scaling",
+    ):
+        assert option_semantic not in renderer
+        assert option_semantic in field_specs
+    assert "PyQt6" not in field_specs
 
 
 def test_workflow_and_guided_renderer_use_shared_visual_primitives():
@@ -357,7 +371,9 @@ def test_packages_and_specs_do_not_load_dialogs_or_qt():
 import sys
 import guy4ase.gui.dialogs
 import guy4ase.gui.widgets.input_parameters
+from guy4ase.gui.input_parameters.expert_fields import EXPERT_FIELDS
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+assert EXPERT_FIELDS
 assert task_dialog_spec('scf').task == 'scf'
 assert not any(name.startswith('PyQt6') for name in sys.modules)
 assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)

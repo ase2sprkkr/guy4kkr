@@ -64,6 +64,9 @@ reusable `widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
 searchable tree, changed-only presentation, value editors, compound-value rows,
 and editor-error aggregation. It receives a getter for the dialog-owned draft,
 so replacing a parsed input does not create a second authoritative model.
+Specialized expert fields are declared without Qt in
+`input_parameters.expert_fields`; their paths, registered editor names, related
+options and presentation metadata do not leak into the generic tree renderer.
 Ordinary scalar controls use `widgets.input_parameters.commit.EditorCommit`
 internally to contain validation exceptions and avoid writing unchanged,
 rounded display values back into the model. It is an implementation helper,

@@ -24,7 +24,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.input_parameters.bindings import InputParametersBinding
+from guy4ase.gui.input_parameters.bindings import (
+    InputParametersBinding,
+    resolve_option,
+)
+from guy4ase.gui.input_parameters.expert_fields import (
+    ExpertFieldSpec,
+    applicable_expert_fields,
+)
 from guy4ase.gui.input_parameters.field_binding import DirectFieldBinding, FieldValue
 from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
 from guy4ase.gui.widgets.input_parameters.registry import create_editor
@@ -62,6 +69,7 @@ class ExpertInputTreeEditor(QWidget):
 
     validationChanged = pyqtSignal(bool)
     _CHANGED_ROLE = Qt.ItemDataRole.UserRole
+    _RELATED_PATHS_ROLE = Qt.ItemDataRole.UserRole + 1
     _VALUE_EDITOR_ROLE = Qt.ItemDataRole.UserRole + 2
 
     def __init__(
@@ -75,7 +83,7 @@ class ExpertInputTreeEditor(QWidget):
         super().__init__(parent)
         self._parameters_getter = parameters_getter
         self._atoms = atoms
-        self._special_editors = {}
+        self._declared_editors = {}
         self._editor_errors = {}
 
         layout = QVBoxLayout(self)
@@ -171,7 +179,13 @@ class ExpertInputTreeEditor(QWidget):
         return not self.has_errors
 
     def rebuild(self) -> None:
-        self._special_editors = {}
+        self._declared_editors = {}
+        self._field_specs = applicable_expert_fields(self.parameters)
+        self._suppressed_paths = frozenset(
+            related_path
+            for spec in self._field_specs.values()
+            for related_path in spec.related_paths
+        )
         self._editor_errors = {}
         self.error_label.clear()
         self.error_label.hide()
@@ -218,8 +232,6 @@ class ExpertInputTreeEditor(QWidget):
             return expert_parent
 
         for opt in parent:
-            if parent.name == 'ENERGY' and opt.name in ('EMINEV', 'EMAXEV') and opt.name[:-2] in parent:
-                continue  # One shared editor for each absolute/relative pair.
             if isinstance(opt, Section):
                 info = opt.info
                 sec_item = QTreeWidgetItem([opt.name, "", "", info])
@@ -231,13 +243,18 @@ class ExpertInputTreeEditor(QWidget):
                 self._build_section(opt, sec_item)
                 continue
 
+            path = tuple(opt._get_path().split('.'))
+            if path in self._suppressed_paths:
+                continue
+
             parent_item = get_expert_parent() if bool(getattr(opt._definition, 'expert', False)) else treeitem
-            self._build_option(opt, parent_item)
+            self._build_option(opt, parent_item, path)
 
     def _build_option(
         self,
         opt: Any,
         parent_item: QTreeWidgetItem | None,
+        path: tuple[str, ...],
     ) -> None:
         grammar_type = opt._definition.type
         info = opt.info
@@ -248,11 +265,9 @@ class ExpertInputTreeEditor(QWidget):
         self._add_child(parent_item, item)
         self._update_changed_style(opt, item, refresh_filter=False)
 
-        path = tuple(opt._get_path().split('.'))
-        if path[0] == 'ENERGY' and opt.name in ('EMIN', 'EMAX') and opt.name + 'EV' in opt._container:
-            self._build_special_option(opt, item, path, "energy_bound", minimum=-1e9)
-        elif path in {('MODE', 'C'), ('MODE', 'SOC')}:
-            self._build_special_option(opt, item, path, "scaling")
+        spec = self._field_specs.get(path)
+        if spec is not None:
+            self._build_declared_option(opt, item, path, spec)
         elif isinstance(grammar_type, (Array, SetOf)):
             self._build_array_option(opt, item, grammar_type)
         elif isinstance(grammar_type, GrammarSequence):
@@ -282,7 +297,7 @@ class ExpertInputTreeEditor(QWidget):
     ):
         def changed(_path):
             self._update_changed_style(opt, item)
-            self._refresh_special_editors()
+            self._refresh_declared_editors()
 
         model = InputParametersBinding(lambda: self.parameters, changed)
         return DirectFieldBinding(
@@ -309,7 +324,6 @@ class ExpertInputTreeEditor(QWidget):
         read_only=False,
         allow_empty=False,
         error_label=None,
-        special=False,
     ):
         binding = self._direct_binding(
             opt,
@@ -325,33 +339,45 @@ class ExpertInputTreeEditor(QWidget):
         editor = create_editor(binding, placement, atoms=self._atoms, parent=self.tree)
         self._set_editor(item, editor, error_label)
         item.setSizeHint(2, editor.sizeHint())
-        if special:
-            self._special_editors[placement.path] = (editor, item)
         return editor
 
-    def _build_special_option(self, opt, item, path, editor_name, **placement_options):
-        if editor_name == "energy_bound":
-            name = opt.name
-            item.setText(0, f'{name} / {name}EV')
-            item.setData(0, Qt.ItemDataRole.UserRole + 1, ('ENERGY', name + 'EV'))
-            item.setText(1, 'Energy')
-            item.setToolTip(3, opt.info + '\n' + opt._container[name + 'EV'].info)
-        placement = FieldPlacement(path, item.text(0), editor=editor_name, **placement_options)
+    def _build_declared_option(
+        self,
+        opt: Any,
+        item: QTreeWidgetItem,
+        path: tuple[str, ...],
+        spec: ExpertFieldSpec,
+    ) -> None:
+        """Apply Qt-independent expert metadata to one registered editor."""
+        placement = spec.placement(path, opt.name)
+        item.setText(0, placement.label)
+        item.setData(0, self._RELATED_PATHS_ROLE, placement.related_paths)
+        if spec.type_label is not None:
+            item.setText(1, spec.type_label)
+        descriptions = [opt.info]
+        descriptions.extend(
+            resolve_option(self.parameters, related_path).info
+            for related_path in placement.related_paths
+        )
+        item.setToolTip(3, '\n'.join(filter(None, descriptions)))
         editor = self._install_value_editor(
             opt,
             item,
             placement,
             error_label='.'.join(path),
-            special=True,
         )
-        width = 320 if editor_name == "energy_bound" else 280
-        editor.setMinimumWidth(width)
-        self.tree.setColumnWidth(2, max(width, self.tree.columnWidth(2)))
+        self._declared_editors[placement.path] = (editor, item)
+        if spec.minimum_width is not None:
+            editor.setMinimumWidth(spec.minimum_width)
+            self.tree.setColumnWidth(
+                2,
+                max(spec.minimum_width, self.tree.columnWidth(2)),
+            )
         editor.refresh()
         self._update_changed_style(opt, item, refresh_filter=False)
 
-    def _refresh_special_editors(self):
-        for editor, _item in self._special_editors.values():
+    def _refresh_declared_editors(self):
+        for editor, _item in self._declared_editors.values():
             editor.refresh()
 
     def _update_changed_style(
@@ -363,9 +389,11 @@ class ExpertInputTreeEditor(QWidget):
     ) -> None:
         try:
             changed = bool(opt.is_changed())
-            paired = item.data(0, Qt.ItemDataRole.UserRole + 1)
-            if paired:
-                changed = changed or self.parameters[paired[0]][paired[1]].is_changed()
+            related_paths = item.data(0, self._RELATED_PATHS_ROLE) or ()
+            changed = changed or any(
+                resolve_option(self.parameters, path).is_changed()
+                for path in related_paths
+            )
         except Exception:  # noqa: BLE001 - presentation must survive partial values.
             changed = False
         item.setData(0, self._CHANGED_ROLE, changed)
@@ -495,7 +523,7 @@ class ExpertInputTreeEditor(QWidget):
         opt.set(values)
         self._update_changed_style(opt, item)
         self._rebuild_compound_option(opt, item)
-        self._refresh_special_editors()
+        self._refresh_declared_editors()
 
     def _build_sequence_option(self, opt: Any, item: QTreeWidgetItem, grammar_type: GrammarSequence) -> None:
         self._build_summary_editor(opt, item, grammar_type, editable=True)
