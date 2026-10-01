@@ -11,18 +11,14 @@ from typing import Any
 
 @dataclass
 class WorkspaceState:
-    """Structure, calculation setup and result currently being worked on."""
+    """Passive data held by the application's semantic workspace controller.
+
+    Application code reads these facets directly but publishes changes only
+    through ``WorkspaceController`` document transitions.
+    """
 
     atoms: Any | None = None
     input_parameters: Any | None = None
     directory: str | None = None
     potential_path: str | None = None
     result: Any | None = None
-
-    def reset(self) -> None:
-        """Discard the current document without affecting persisted history."""
-        self.atoms = None
-        self.input_parameters = None
-        self.directory = None
-        self.potential_path = None
-        self.result = None

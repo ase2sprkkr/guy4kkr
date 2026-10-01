@@ -515,13 +515,13 @@ class WorkflowWindow(QMainWindow):
         structure_flows.download_structure(self.controller, self)
 
     def _create_surface(self) -> None:
-        structure_flows.create_structure(self.controller, self)
-        if self.workspace.atoms is not None:
+        atoms = structure_flows.create_structure(self.controller, self)
+        if atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
-        structure_flows.create_structure(self.controller, self)
-        if self.workspace.atoms is not None:
+        atoms = structure_flows.create_structure(self.controller, self)
+        if atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
@@ -568,8 +568,10 @@ class WorkflowWindow(QMainWindow):
             if selection is None:
                 return
             parameters, directory = selection
-            self.controller.set_directory(directory)
-            self.controller.set_input_parameters(parameters)
+            self.controller.replace_input_parameters(
+                parameters,
+                directory=directory,
+            )
             calculation_flow.run_calculation(
                 self.controller, self.recent_history, self
             )

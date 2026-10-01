@@ -175,6 +175,41 @@ def test_workspace_mutation_and_history_persistence_are_outside_main_window():
     assert "def _save_recent_files" not in main_source
 
 
+def test_workspace_low_level_mutation_is_confined_to_controller():
+    controller_path = GUI / "application" / "workspace_controller.py"
+    workspace_path = GUI / "application" / "workspace.py"
+    forbidden_assignments = (
+        "workspace.atoms =",
+        "workspace.input_parameters =",
+        "workspace.directory =",
+        "workspace.potential_path =",
+        "workspace.result =",
+    )
+    private_operations = (
+        "._set_structure(",
+        "._set_input_parameters(",
+        "._set_directory(",
+        "._set_result(",
+    )
+    retired_public_setters = (
+        ".set_structure(",
+        ".set_input_parameters(",
+        ".set_directory(",
+        ".adopt_result(",
+    )
+
+    for path in GUI.rglob("*.py"):
+        if path in {controller_path, workspace_path}:
+            continue
+        source = path.read_text()
+        assert not any(value in source for value in forbidden_assignments), path
+        assert not any(value in source for value in private_operations), path
+        assert not any(value in source for value in retired_public_setters), path
+
+    workspace_source = workspace_path.read_text()
+    assert "def reset(" not in workspace_source
+
+
 def test_result_actions_have_one_dialog_owned_execution_implementation():
     object_view = (GUI / "dialogs" / "object_view.py").read_text()
     main_window = (GUI / "dialogs" / "main_window.py").read_text()

@@ -95,10 +95,10 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     atoms = Atoms("Fe")
     parameters = object()
     result = object()
-    controller.set_structure(atoms, potential_path="Fe.pot")
-    controller.set_input_parameters(parameters)
-    controller.set_directory("calculation")
-    controller.adopt_result(result)
+    controller.change_working_directory("calculation")
+    controller.replace_structure(atoms, potential_path="Fe.pot")
+    controller.replace_input_parameters(parameters)
+    controller.adopt_calculation_result(result)
 
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
@@ -106,20 +106,73 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     assert workspace.potential_path == "Fe.pot"
     assert workspace.result is result
     assert changes == [
+        ("directory", "calculation"),
         ("structure", atoms),
         ("input", parameters),
-        ("directory", "calculation"),
         ("result", result),
     ]
 
     controller.reset()
     assert workspace == WorkspaceState()
     assert changes[-4:] == [
+        ("result", None),
         ("structure", None),
         ("input", None),
         ("directory", None),
-        ("result", None),
     ]
+
+
+def test_replacing_structure_invalidates_result_and_potential_source():
+    old_atoms = Atoms("Fe")
+    new_atoms = Atoms("Cu")
+    parameters = object()
+    workspace = WorkspaceState(
+        atoms=old_atoms,
+        input_parameters=parameters,
+        directory="calculation",
+        potential_path="Fe.pot",
+        result=object(),
+    )
+    controller = WorkspaceController(workspace)
+    results = []
+    result_seen_by_structure_observers = []
+    controller.resultChanged.connect(results.append)
+    controller.structureChanged.connect(
+        lambda _atoms: result_seen_by_structure_observers.append(
+            workspace.result
+        )
+    )
+
+    controller.replace_structure(new_atoms)
+
+    assert workspace.atoms is new_atoms
+    assert workspace.potential_path is None
+    assert workspace.result is None
+    assert workspace.input_parameters is parameters
+    assert workspace.directory == "calculation"
+    assert results == [None]
+    assert result_seen_by_structure_observers == [None]
+
+
+def test_replacing_input_parameters_invalidates_only_result():
+    atoms = Atoms("Fe")
+    parameters = object()
+    workspace = WorkspaceState(
+        atoms=atoms,
+        input_parameters=object(),
+        directory="calculation",
+        potential_path="Fe.pot",
+        result=object(),
+    )
+    controller = WorkspaceController(workspace)
+
+    controller.replace_input_parameters(parameters)
+
+    assert workspace.atoms is atoms
+    assert workspace.potential_path == "Fe.pot"
+    assert workspace.input_parameters is parameters
+    assert workspace.directory == "calculation"
+    assert workspace.result is None
 
 
 def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch):
@@ -130,7 +183,10 @@ def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch)
         "guy4ase.gui.application.workspace_controller.ase_read",
         lambda value: reads.append(value) or atoms,
     )
-    controller = WorkspaceController()
+    parameters = object()
+    controller = WorkspaceController(
+        WorkspaceState(input_parameters=parameters, result=object())
+    )
 
     loaded = controller.load_structure(path)
 
@@ -139,6 +195,29 @@ def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch)
     assert controller.workspace.atoms is atoms
     assert controller.workspace.directory == str(tmp_path.resolve())
     assert controller.workspace.potential_path == str(path.resolve())
+    assert controller.workspace.result is None
+    assert controller.workspace.input_parameters is parameters
+
+
+def test_loading_nonpotential_structure_drops_old_potential_source(
+    tmp_path, monkeypatch
+):
+    atoms = Atoms("Cu")
+    path = tmp_path / "Cu.xyz"
+    monkeypatch.setattr(controller_module, "ase_read", lambda _path: atoms)
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            potential_path="Fe.pot",
+            result=object(),
+        )
+    )
+
+    controller.load_structure(path)
+
+    assert controller.workspace.atoms is atoms
+    assert controller.workspace.potential_path is None
+    assert controller.workspace.result is None
 
 
 def test_controller_loads_input_parameters_and_directory(tmp_path, monkeypatch):
@@ -149,13 +228,24 @@ def test_controller_loads_input_parameters_and_directory(tmp_path, monkeypatch):
         "from_file",
         staticmethod(lambda value: parameters),
     )
-    controller = WorkspaceController()
+    atoms = Atoms("Fe")
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=atoms,
+            input_parameters=object(),
+            potential_path="Fe.pot",
+            result=object(),
+        )
+    )
 
     loaded = controller.load_input_parameters(path)
 
     assert loaded is parameters
     assert controller.workspace.input_parameters is parameters
     assert controller.workspace.directory == str(tmp_path.resolve())
+    assert controller.workspace.result is None
+    assert controller.workspace.atoms is atoms
+    assert controller.workspace.potential_path == "Fe.pot"
 
 
 def test_controller_saves_current_documents(tmp_path, monkeypatch):
@@ -182,17 +272,20 @@ def test_controller_saves_current_documents(tmp_path, monkeypatch):
     assert input_writes == [input_path.resolve()]
 
 
-def test_restart_scf_is_a_document_operation():
+def test_restart_scf_is_a_document_operation_and_invalidates_result():
     atoms = SimpleNamespace(
         potential=SimpleNamespace(
             SCF_INFO=SimpleNamespace(SCFSTATUS="CONVERGED")
         )
     )
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(
+        WorkspaceState(atoms=atoms, result=object())
+    )
 
     controller.restart_scf()
 
     assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
+    assert controller.workspace.result is None
 
 
 def _result(tmp_path):
@@ -204,7 +297,7 @@ def _result(tmp_path):
     return result
 
 
-def test_adopt_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch):
+def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch):
     output = tmp_path / "Fe.out"
     potential = tmp_path / "Fe.pot"
     potential.touch()
@@ -216,7 +309,7 @@ def test_adopt_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch)
     controller = WorkspaceController()
     result = _result(tmp_path)
 
-    adoption = controller.adopt_result(result)
+    adoption = controller.adopt_calculation_result(result)
 
     assert adoption.output_path == output
     assert adoption.potential_path == potential
@@ -227,7 +320,7 @@ def test_adopt_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch)
     assert controller.workspace.potential_path == str(potential.resolve())
 
 
-def test_adopt_result_keeps_result_when_potential_loading_fails(
+def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     tmp_path, monkeypatch
 ):
     potential = tmp_path / "Fe.pot"
@@ -241,15 +334,138 @@ def test_adopt_result_keeps_result_when_potential_loading_fails(
         "guy4ase.gui.application.workspace_controller.Potential.from_file",
         fail,
     )
-    controller = WorkspaceController()
+    current_atoms = Atoms("Cu")
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=current_atoms,
+            potential_path="Cu.pot",
+            directory=str(tmp_path),
+        )
+    )
     result = _result(tmp_path)
 
-    adoption = controller.adopt_result(result)
+    adoption = controller.adopt_calculation_result(result)
 
     assert adoption.potential_error is error
     assert controller.workspace.result is result
     assert controller.workspace.directory == str(tmp_path.resolve())
-    assert controller.workspace.atoms is None
+    assert controller.workspace.atoms is current_atoms
+    assert controller.workspace.potential_path == "Cu.pot"
+
+
+def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
+    current_atoms = Atoms("Cu")
+    result = SimpleNamespace(
+        files={"output": "Fe.out"},
+        directory=str(tmp_path),
+    )
+    result.path_to = lambda key: result.files[key]
+    workspace = WorkspaceState(
+        atoms=current_atoms,
+        potential_path="Cu.pot",
+        directory=str(tmp_path),
+    )
+    controller = WorkspaceController(workspace)
+
+    adoption = controller.adopt_calculation_result(result)
+
+    assert adoption.potential_path is None
+    assert adoption.potential_error is None
+    assert workspace.result is result
+    assert workspace.atoms is current_atoms
+    assert workspace.potential_path == "Cu.pot"
+
+
+def test_external_result_without_potential_clears_old_structure(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "external.out"
+    result = SimpleNamespace(files={}, directory=str(tmp_path))
+    monkeypatch.setattr(
+        controller_module.TaskResult,
+        "from_file",
+        staticmethod(lambda _path: result),
+    )
+    workspace = WorkspaceState(
+        atoms=Atoms("Fe"),
+        potential_path="Fe.pot",
+        result=object(),
+    )
+    controller = WorkspaceController(workspace)
+
+    adoption = controller.load_result(output)
+
+    assert adoption.output_path == output.resolve()
+    assert adoption.potential_path is None
+    assert adoption.potential_error is None
+    assert workspace.result is result
+    assert workspace.atoms is None
+    assert workspace.potential_path is None
+
+
+def test_external_result_with_unreadable_potential_clears_old_structure(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "external.out"
+    potential = tmp_path / "Fe.pot"
+    potential.touch()
+    result = _result(tmp_path)
+    error = ValueError("broken potential")
+    monkeypatch.setattr(
+        controller_module.TaskResult,
+        "from_file",
+        staticmethod(lambda _path: result),
+    )
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        staticmethod(lambda _path: (_ for _ in ()).throw(error)),
+    )
+    workspace = WorkspaceState(
+        atoms=Atoms("Cu"),
+        potential_path="Cu.pot",
+    )
+    controller = WorkspaceController(workspace)
+
+    adoption = controller.load_result(output)
+
+    assert adoption.potential_path == potential.resolve()
+    assert adoption.potential_error is error
+    assert workspace.result is result
+    assert workspace.atoms is None
+    assert workspace.potential_path is None
+
+
+def test_external_result_with_potential_replaces_old_structure(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "Fe.out"
+    potential = tmp_path / "Fe.pot"
+    potential.touch()
+    result = _result(tmp_path)
+    result_atoms = Atoms("Fe")
+    monkeypatch.setattr(
+        controller_module.TaskResult,
+        "from_file",
+        staticmethod(lambda _path: result),
+    )
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        staticmethod(lambda _path: SimpleNamespace(atoms=result_atoms)),
+    )
+    workspace = WorkspaceState(
+        atoms=Atoms("Cu"),
+        potential_path="Cu.pot",
+    )
+    controller = WorkspaceController(workspace)
+
+    adoption = controller.load_result(output)
+
+    assert adoption.potential_error is None
+    assert workspace.result is result
+    assert workspace.atoms is result_atoms
+    assert workspace.potential_path == str(potential.resolve())
 
 
 def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
@@ -414,7 +630,7 @@ def test_calculation_flow_adopts_result_and_remembers_output(
     )
     monkeypatch.setattr(
         controller,
-        "adopt_result",
+        "adopt_calculation_result",
         lambda value: ResultAdoption(output_path=output),
     )
     history = RecentFiles(tmp_path / "recent.json")

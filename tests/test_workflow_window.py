@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.dialogs import workflow_window as workflow_module
 from guy4ase.main import GuiApplication
 
 
@@ -74,7 +75,7 @@ def test_load_output_is_only_available_on_the_start_screen(tmp_path):
 
     assert "Load SPR-KKR Output" in _action_titles(window)
 
-    window.controller.set_structure(
+    window.controller.replace_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     application.processEvents()
@@ -94,7 +95,9 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     assert expert.workspace is workspace
     assert expert.controller is window.controller is gui.controller
     assert expert.recent_history is window.recent_history is gui.recent_files
-    window.controller.set_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
+    window.controller.replace_structure(
+        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    )
     application.processEvents()
     assert workspace.atoms is not None
     expert.close()
@@ -108,14 +111,14 @@ def test_structure_kind_follows_external_workspace_changes(tmp_path):
     bulk = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
     layer = semiinfinite_system(build_bulk("Fe", "bcc", a=2.8), (0, 0))
 
-    expert.controller.set_structure(bulk)
+    expert.controller.replace_structure(bulk)
     application.processEvents()
     assert 'Create a 2D Surface' in _action_titles(workflow)
     assert _action_widget(
         workflow, workflow._GROUP_CALCULATE, 'Converge SCF'
     ).accessibleDescription() == 'Prepare and run a self-consistent calculation'
 
-    expert.controller.set_structure(layer)
+    expert.controller.replace_structure(layer)
     application.processEvents()
     assert 'Create a 2D Surface' not in _action_titles(workflow)
     assert _action_widget(
@@ -124,11 +127,11 @@ def test_structure_kind_follows_external_workspace_changes(tmp_path):
         'Converge bulk region(s), then the interaction zone'
     )
 
-    expert.controller.set_structure(bulk)
+    expert.controller.replace_structure(bulk)
     application.processEvents()
     assert 'Create a 2D Surface' in _action_titles(workflow)
 
-    expert.controller.set_structure(None)
+    expert.controller.replace_structure(None)
     application.processEvents()
     assert 'Create a 3D Structure' in _action_titles(workflow)
 
@@ -200,7 +203,7 @@ def test_group_labels_follow_dark_and_light_palette_text_color(tmp_path):
 def test_structure_actions_follow_requested_group_order(tmp_path):
     application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
-    window.controller.set_structure(
+    window.controller.replace_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     window._scf_status = lambda _atoms: "CONVERGED"
@@ -231,4 +234,30 @@ def test_structure_actions_follow_requested_group_order(tmp_path):
     )
     assert "#b34444" in recalculate.styleSheet()
     assert "#b34444" in start_over.styleSheet()
+    window.close()
+
+
+def test_cancelled_surface_creation_does_not_reuse_previous_structure(
+    tmp_path, monkeypatch
+):
+    workspace = WorkspaceState(
+        atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    )
+    _gui, window = _workflow(tmp_path, workspace=workspace)
+    builds = []
+    monkeypatch.setattr(
+        workflow_module.structure_flows,
+        "create_structure",
+        lambda _controller, _parent: None,
+    )
+    monkeypatch.setattr(
+        workflow_module.structure_flows,
+        "build_2d_structure",
+        lambda *args, **kwargs: builds.append((args, kwargs)),
+    )
+
+    window._create_surface()
+
+    assert builds == []
+    assert workspace.atoms is not None
     window.close()

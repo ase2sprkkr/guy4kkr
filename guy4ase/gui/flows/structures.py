@@ -42,7 +42,7 @@ def create_structure(
         kwargs={"parent": parent},
     )
     if atoms is not None:
-        controller.set_structure(atoms)
+        controller.replace_structure(atoms)
     return atoms
 
 
@@ -57,7 +57,7 @@ def create_structure_from_database(
         kwargs={"parent": parent},
     )
     if atoms is not None:
-        controller.set_structure(atoms)
+        controller.replace_structure(atoms)
         warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
@@ -67,7 +67,7 @@ def download_structure(
 ) -> Any | None:
     atoms = select_online_structure(parent=parent)
     if atoms is not None:
-        controller.set_structure(atoms)
+        controller.replace_structure(atoms)
         warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
@@ -91,7 +91,7 @@ def build_2d_structure(
             surface_mode=surface_mode,
         )
         if result is not None:
-            controller.set_structure(result)
+            controller.replace_structure(result)
         return result
     except Exception as exc:  # noqa: BLE001 - dialog/backend boundary
         QMessageBox.critical(

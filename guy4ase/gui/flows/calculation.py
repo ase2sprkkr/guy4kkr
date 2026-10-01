@@ -23,7 +23,7 @@ def run_calculation(
         return None
 
     def finished(result) -> None:
-        adoption = controller.adopt_result(result)
+        adoption = controller.adopt_calculation_result(result)
         if adoption.output_path is not None:
             recent_files.remember("output", adoption.output_path)
         if adoption.potential_error is not None:

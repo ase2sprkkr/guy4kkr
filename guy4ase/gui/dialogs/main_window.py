@@ -169,7 +169,7 @@ class MainWindow(QMainWindow):
         chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
         if not chosen:
             return
-        self.controller.set_directory(str(chosen))
+        self.controller.change_working_directory(str(chosen))
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
         handlers = {
@@ -702,7 +702,7 @@ class MainWindow(QMainWindow):
         params = select_input_parameters(self.workspace.atoms, parent=self, task=task)
         if params is None:
             return
-        self.controller.set_input_parameters(params)
+        self.controller.replace_input_parameters(params)
 
     def _on_input_preview_double_click(self, event) -> None:
         self._on_edit_sprkkr_input()
@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
             return
         result = edit_input_parameters(self.workspace.input_parameters, parent=self, atoms=self.workspace.atoms)
         if result is not None:
-            self.controller.set_input_parameters(result)
+            self.controller.replace_input_parameters(result)
 
     def _on_load_sprkkr_input(self) -> None:
         loaded = file_flows.choose_and_load_input_parameters(
@@ -732,7 +732,7 @@ class MainWindow(QMainWindow):
             atoms=self.workspace.atoms,
         )
         if edited is not None:
-            self.controller.set_input_parameters(edited)
+            self.controller.replace_input_parameters(edited)
 
     def load_sprkkr_output(self) -> None:
         """Start the shared output-loading workflow."""
@@ -826,7 +826,7 @@ class MainWindow(QMainWindow):
             return
         if result is None:
             return
-        self.controller.set_structure(result)
+        self.controller.replace_structure(result)
 
     def _on_scale_structure(self) -> None:
         self._apply_structure_edit(scale_atoms, error_title="Scale Error")
@@ -847,7 +847,7 @@ class MainWindow(QMainWindow):
             atoms = editor(self.workspace.atoms, parent=self)
             if atoms is None:
                 return
-            self.controller.set_structure(atoms)
+            self.controller.replace_structure(atoms)
         except Exception as e:
             QMessageBox.critical(
                 self,

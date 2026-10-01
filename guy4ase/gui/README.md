@@ -28,10 +28,12 @@
   manager.
 - `application`: shared observable/document state, kept separate from windows
   and reusable widgets. `application.workspace.WorkspaceState` is the
-  Qt-independent current document. `WorkspaceController` is its single
-  mutation/signalling boundary and owns non-Qt document I/O and complete result
-  adoption. `RecentFiles` is observable persistent application state. Neither
-  object knows file choosers, messages or concrete windows.
+  Qt-independent current document. `WorkspaceController` is not a bag of
+  setters: it is the single mutation/signalling boundary and owns semantic
+  document transitions, non-Qt document I/O, and result adoption. It guarantees
+  consistency between structure, calculation setup, potential provenance and
+  the current result. `RecentFiles` is observable persistent application state.
+  Neither object knows file choosers, messages or concrete windows.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. `structures`, `files` and `calculation` are modules of ordinary
   functions, not service objects. They may show modal UI and publish changes
@@ -50,6 +52,24 @@ stateless flow function directly.
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat
 module paths and `calculation_setup` package have no compatibility wrappers.
+
+### Workspace lifecycle
+
+Windows and flows use named `WorkspaceController` transitions rather than
+assigning workspace facets independently. `replace_structure()` invalidates the
+current result and drops potential provenance unless a new source is explicit;
+`replace_input_parameters()` invalidates the result while retaining structure.
+File-loading transitions also select the source file's directory.
+
+`load_result(path)` means that the user opened an external output. Its atoms and
+potential source therefore come only from that result; if its potential is
+missing or unreadable, old unrelated atoms are cleared. Existing input
+parameters may remain as an independent editable setup, but are not considered
+the provenance of the external result. In contrast,
+`adopt_calculation_result(result)` accepts a calculation just run from the
+current workspace. If no converged potential can be read, the current atoms and
+their potential provenance remain valid. Both operations return
+`ResultAdoption`; views decide how to present its non-fatal potential error.
 
 ## Parameter editing
 

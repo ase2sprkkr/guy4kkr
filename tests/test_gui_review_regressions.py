@@ -266,7 +266,7 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept, tmp_
     window = gui.create_main_window()
     p = InputParameters.create('dos')
     p.SITES.NL = [3, 4]
-    window.controller.set_input_parameters(p)
+    window.controller.replace_input_parameters(p)
     result = p.copy(copy_values=True)
     result.ENERGY.NE = [42]
     def edit(current, **kwargs):

@@ -14,6 +14,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.workspace import WorkspaceState
 
+_KEEP_DIRECTORY = object()
+
 
 @dataclass(frozen=True)
 class ResultAdoption:
@@ -25,10 +27,13 @@ class ResultAdoption:
 
 
 class WorkspaceController(QObject):
-    """Mutate one workspace and publish its document-level changes.
+    """Own semantic document transitions and workspace consistency.
 
-    The controller deliberately knows neither dialogs nor concrete views.
-    File choosers, error presentation and widget refreshes remain UI concerns.
+    This is not a bag of public attribute setters. Structure and calculation
+    setup replacements invalidate stale results, transformed structures lose
+    unrelated potential sources, and external results never retain atoms from
+    an older document. The controller knows neither dialogs nor concrete views;
+    file choosers and error presentation remain UI concerns.
     """
 
     structureChanged = pyqtSignal(object)
@@ -44,29 +49,84 @@ class WorkspaceController(QObject):
         super().__init__(parent)
         self.workspace = workspace or WorkspaceState()
 
-    def set_structure(
-        self, atoms: Any, *, potential_path: str | None = None
+    def _set_structure(
+        self,
+        atoms: Any,
+        *,
+        potential_path: str | None = None,
+        force: bool = False,
     ) -> None:
+        """Set structure facets and publish their shared presentation signal."""
+        if (
+            not force
+            and self.workspace.atoms is atoms
+            and self.workspace.potential_path == potential_path
+        ):
+            return
         self.workspace.atoms = atoms
         self.workspace.potential_path = potential_path
         self.structureChanged.emit(atoms)
 
-    def set_input_parameters(self, parameters: Any) -> None:
+    def _set_input_parameters(self, parameters: Any) -> None:
+        if self.workspace.input_parameters is parameters:
+            return
         self.workspace.input_parameters = parameters
         self.inputParametersChanged.emit(parameters)
 
-    def set_directory(self, directory: str | None) -> None:
+    def _set_directory(self, directory: str | None) -> None:
         if self.workspace.directory == directory:
             return
         self.workspace.directory = directory
         self.directoryChanged.emit(directory)
 
+    def _set_result(self, result: Any) -> None:
+        if self.workspace.result is result:
+            return
+        self.workspace.result = result
+        self.resultChanged.emit(result)
+
+    def replace_structure(
+        self,
+        atoms: Any,
+        *,
+        potential_path: str | None = None,
+    ) -> None:
+        """Publish a user-selected or transformed structure.
+
+        The previous calculation result and, by default, potential provenance
+        no longer describe the replacement structure. Calculation setup and
+        working directory remain useful and are preserved.
+        """
+        self._set_result(None)
+        self._set_structure(atoms, potential_path=potential_path)
+
+    def replace_input_parameters(
+        self,
+        parameters: Any,
+        *,
+        directory: Any = _KEEP_DIRECTORY,
+    ) -> None:
+        """Publish an explicitly changed calculation setup.
+
+        Any current result belongs to the previous setup. The directory is
+        preserved unless the caller explicitly supplies a new one.
+        """
+        self._set_result(None)
+        if directory is not _KEEP_DIRECTORY:
+            self._set_directory(directory)
+        self._set_input_parameters(parameters)
+
+    def change_working_directory(self, directory: str | None) -> None:
+        """Select the directory used for subsequent document operations."""
+        self._set_directory(directory)
+
     def load_structure(self, file_path: str | Path) -> Any:
-        """Load a structure and publish it as the current document."""
+        """Load a structure document and invalidate the previous result."""
         resolved = Path(file_path).resolve()
         atoms = ase_read(resolved)
-        self.set_directory(str(resolved.parent))
-        self.set_structure(
+        self._set_result(None)
+        self._set_directory(str(resolved.parent))
+        self._set_structure(
             atoms,
             potential_path=(
                 str(resolved)
@@ -77,11 +137,12 @@ class WorkspaceController(QObject):
         return atoms
 
     def load_input_parameters(self, file_path: str | Path) -> InputParameters:
-        """Load input parameters and publish them as the current document."""
+        """Load calculation setup, its directory, and invalidate old results."""
         resolved = Path(file_path).resolve()
         parameters = InputParameters.from_file(resolved)
-        self.set_directory(str(resolved.parent))
-        self.set_input_parameters(parameters)
+        self._set_result(None)
+        self._set_directory(str(resolved.parent))
+        self._set_input_parameters(parameters)
         return parameters
 
     def save_structure(self, file_path: str | Path) -> Path:
@@ -101,20 +162,28 @@ class WorkspaceController(QObject):
         return resolved
 
     def load_result(self, file_path: str | Path) -> ResultAdoption:
-        """Load a result file and adopt its document-level state."""
+        """Load an external result without retaining unrelated old atoms.
+
+        Unlike :meth:`adopt_calculation_result`, failure to read the result's
+        potential clears the structure and its potential provenance. Existing
+        input parameters remain an independent editable setup; they are not
+        treated as provenance of the external result.
+        """
         resolved = Path(file_path).resolve()
         result = TaskResult.from_file(resolved)
-        adoption = self.adopt_result(
-            result,
-            fallback_directory=resolved.parent,
+        output, potential = self._result_artifacts(result, resolved.parent)
+        output = output or resolved
+        atoms, potential_error = self._load_result_potential(potential)
+
+        # Invalidate the old relationship before publishing any new facet.
+        self._set_result(None)
+        self._set_structure(
+            atoms,
+            potential_path=str(potential) if atoms is not None else None,
         )
-        if adoption.output_path is not None:
-            return adoption
-        return ResultAdoption(
-            output_path=resolved,
-            potential_path=adoption.potential_path,
-            potential_error=adoption.potential_error,
-        )
+        self._set_directory(str(output.parent.resolve()))
+        self._set_result(result)
+        return ResultAdoption(output, potential, potential_error)
 
     @staticmethod
     def _result_path(result: Any, key: str) -> Path | None:
@@ -143,18 +212,12 @@ class WorkspaceController(QObject):
                 resolved = Path(base) / resolved
         return resolved.resolve()
 
-    def adopt_result(
+    def _result_artifacts(
         self,
         result: Any,
-        *,
-        fallback_directory: str | Path | None = None,
-    ) -> ResultAdoption:
-        """Adopt a result, including any readable converged potential.
-
-        Result and directory changes are committed before potential loading.
-        A potential reader failure is returned to the UI without rolling back
-        the already adopted result.
-        """
+        fallback_directory: str | Path | None,
+    ) -> tuple[Path | None, Path | None]:
+        """Resolve output and potential artifacts exposed by a result adapter."""
         output = self._result_path(result, "output")
         if output is None:
             output = self._resolve_result_path(
@@ -172,39 +235,67 @@ class WorkspaceController(QObject):
             except Exception:  # noqa: BLE001 - optional backend property
                 potential = None
         potential = self._resolve_result_path(
-            potential, result, fallback_directory or self.workspace.directory
+            potential,
+            result,
+            fallback_directory or self.workspace.directory,
         )
+        return output, potential
 
-        self.workspace.result = result
-        self.resultChanged.emit(result)
-        directory = output.parent if output is not None else fallback_directory
-        if directory is not None:
-            self.set_directory(str(Path(directory).resolve()))
-
-        potential_error = None
+    @staticmethod
+    def _load_result_potential(
+        potential: Path | None,
+    ) -> tuple[Any | None, Exception | None]:
+        """Read result atoms, returning backend failures as non-fatal data."""
         if potential is not None and potential.is_file():
             try:
                 resolved_potential = potential.resolve()
                 atoms = Potential.from_file(str(resolved_potential)).atoms
-                self.set_structure(
-                    atoms,
-                    potential_path=str(resolved_potential),
-                )
+                return atoms, None
             except Exception as exc:  # noqa: BLE001 - backend reader boundary
-                potential_error = exc
+                return None, exc
+        return None, None
+
+    def adopt_calculation_result(self, result: Any) -> ResultAdoption:
+        """Adopt a result produced from the current workspace calculation.
+
+        A readable converged potential replaces the structure. If it is absent
+        or unreadable, current atoms and their provenance remain valid because
+        this result was calculated from that workspace.
+        """
+        output, potential = self._result_artifacts(
+            result,
+            self.workspace.directory,
+        )
+        atoms, potential_error = self._load_result_potential(potential)
+
+        self._set_result(None)
+        if atoms is not None:
+            self._set_structure(atoms, potential_path=str(potential.resolve()))
+        directory = (
+            output.parent
+            if output is not None
+            else getattr(result, "directory", None)
+        )
+        if directory is not None:
+            self._set_directory(str(Path(directory).resolve()))
+        self._set_result(result)
         return ResultAdoption(output, potential, potential_error)
 
     def reset(self) -> None:
         """Clear the document before publishing its cleared facets."""
-        self.workspace.reset()
-        self.structureChanged.emit(None)
-        self.inputParametersChanged.emit(None)
-        self.directoryChanged.emit(None)
-        self.resultChanged.emit(None)
+        self._set_result(None)
+        self._set_structure(None, potential_path=None)
+        self._set_input_parameters(None)
+        self._set_directory(None)
 
     def restart_scf(self) -> None:
-        """Mark the attached potential for a fresh SCF cycle."""
+        """Restart SCF state and invalidate the previous calculation result."""
         if self.workspace.atoms is None:
             raise ValueError("No structure is loaded.")
+        self._set_result(None)
         self.workspace.atoms.potential.SCF_INFO.SCFSTATUS = "START"
-        self.structureChanged.emit(self.workspace.atoms)
+        self._set_structure(
+            self.workspace.atoms,
+            potential_path=self.workspace.potential_path,
+            force=True,
+        )
