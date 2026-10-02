@@ -17,6 +17,15 @@ def test_expert_field_specs_create_registry_placements():
     assert placement.related_paths == (('ENERGY', 'EMINEV'),)
     assert placement.minimum == -1e9
 
+    scaling = EXPERT_FIELDS[('MODE', 'SOC')]
+    assert scaling.editor == 'scaling'
+    assert scaling.small_editor == 'auto'
+    assert scaling.placement(
+        ('MODE', 'SOC'),
+        'SOC',
+        editor=scaling.small_editor,
+    ).editor == 'auto'
+
 
 def test_only_fields_present_in_a_task_are_applicable():
     scf = applicable_expert_fields(InputParameters.create('scf'))

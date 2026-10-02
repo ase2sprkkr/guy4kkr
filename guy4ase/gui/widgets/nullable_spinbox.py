@@ -64,6 +64,23 @@ class _NullableSpinBox:
             return ''
         return super().textFromValue(value)
 
+    def keyPressEvent(self, event):
+        if (
+            self._unset_value is not None
+            and self.value() == self._unset_value
+            and self.cleanText() == self.specialValueText()
+            and event.text()
+        ):
+            self.lineEdit().setText('')
+            self._showing_default = False
+            self.lineEdit().insert(event.text())
+            try:
+                self.setValue(float(self.lineEdit().text()))
+            except ValueError:
+                pass
+            return
+        super().keyPressEvent(event)
+
 
 class NullableSpinBox(_NullableSpinBox, QSpinBox):
     pass

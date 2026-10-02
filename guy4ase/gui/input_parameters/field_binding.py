@@ -169,6 +169,7 @@ class DirectFieldBinding:
         allows_unset: bool | None = None,
         read_only: bool = False,
         allow_empty: bool = False,
+        cache_applied: bool = True,
     ) -> None:
         self.model = model
         self.placement = placement
@@ -179,6 +180,7 @@ class DirectFieldBinding:
         self._allows_unset = allows_unset
         self.read_only = read_only
         self.allow_empty = allow_empty
+        self._cache_applied = cache_applied
         self._last_applied = _MISSING
 
     @property
@@ -226,7 +228,7 @@ class DirectFieldBinding:
     def set_value(self, value: Any) -> Any:
         if self._apply_value is not None:
             result = self._apply_value(value)
-            self._last_applied = value
+            self._last_applied = value if self._cache_applied else _MISSING
             return result
         return self.model.set_value(self.path, value)
 
