@@ -20,6 +20,8 @@ from guy4ase.gui.application import workspace_controller as controller_module
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
+    Completed,
+    DocumentChange,
     ResultAdoption,
     WorkspaceController,
 )
@@ -98,7 +100,9 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     controller.change_working_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
-    controller.adopt_calculation_result(result)
+    controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    )
 
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
@@ -190,7 +194,7 @@ def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch)
 
     loaded = controller.load_structure(path)
 
-    assert loaded is atoms
+    assert loaded == Completed(atoms)
     assert reads == [path.resolve()]
     assert controller.workspace.atoms is atoms
     assert controller.workspace.directory == str(tmp_path.resolve())
@@ -240,7 +244,7 @@ def test_controller_loads_input_parameters_and_directory(tmp_path, monkeypatch):
 
     loaded = controller.load_input_parameters(path)
 
-    assert loaded is parameters
+    assert loaded == Completed(parameters)
     assert controller.workspace.input_parameters is parameters
     assert controller.workspace.directory == str(tmp_path.resolve())
     assert controller.workspace.result is None
@@ -266,8 +270,12 @@ def test_controller_saves_current_documents(tmp_path, monkeypatch):
         WorkspaceState(atoms=atoms, input_parameters=parameters)
     )
 
-    assert controller.save_structure(structure_path) == structure_path.resolve()
-    assert controller.save_input_parameters(input_path) == input_path.resolve()
+    assert controller.save_structure(structure_path) == Completed(
+        structure_path.resolve()
+    )
+    assert controller.save_input_parameters(input_path) == Completed(
+        input_path.resolve()
+    )
     assert structure_writes == [(structure_path.resolve(), atoms)]
     assert input_writes == [input_path.resolve()]
 
@@ -282,10 +290,18 @@ def test_restart_scf_is_a_document_operation_and_invalidates_result():
         WorkspaceState(atoms=atoms, result=object())
     )
 
-    controller.restart_scf()
+    generation = controller.generation
+    restarted = controller.restart_scf(expected_generation=generation)
 
+    assert restarted == Completed(DocumentChange.APPLIED)
     assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
     assert controller.workspace.result is None
+    assert controller.generation == generation + 1
+
+    restarted_again = controller.restart_scf(
+        expected_generation=controller.generation
+    )
+    assert restarted_again == Completed(DocumentChange.APPLIED)
 
 
 def _result(tmp_path):
@@ -309,7 +325,9 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
     controller = WorkspaceController()
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    ).value
 
     assert adoption.output_path == output
     assert adoption.potential_path == potential
@@ -344,7 +362,9 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     )
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    ).value
 
     assert adoption.potential_error is error
     assert controller.workspace.result is result
@@ -367,7 +387,9 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    ).value
 
     assert adoption.potential_path is None
     assert adoption.potential_error is None
@@ -393,7 +415,7 @@ def test_external_result_without_potential_clears_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    adoption = controller.load_result(output).value
 
     assert adoption.output_path == output.resolve()
     assert adoption.potential_path is None
@@ -427,7 +449,7 @@ def test_external_result_with_unreadable_potential_clears_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    adoption = controller.load_result(output).value
 
     assert adoption.potential_path == potential.resolve()
     assert adoption.potential_error is error
@@ -460,7 +482,7 @@ def test_external_result_with_potential_replaces_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    adoption = controller.load_result(output).value
 
     assert adoption.potential_error is None
     assert workspace.result is result
@@ -473,7 +495,9 @@ def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(controller, "load_structure", lambda _path: atoms)
+    monkeypatch.setattr(
+        controller, "load_structure", lambda _path: Completed(atoms)
+    )
 
     assert file_flows.load_structure(controller, history, path, object())
 
@@ -532,7 +556,9 @@ def test_loading_unknown_structure_from_file_warns_but_keeps_it(
     atoms = Atoms("Fe", cell=(2.8, 2.8, 8.0), pbc=(True, True, False))
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(controller, "load_structure", lambda _path: atoms)
+    monkeypatch.setattr(
+        controller, "load_structure", lambda _path: Completed(atoms)
+    )
     warnings = []
     monkeypatch.setattr(
         structure_flows.QMessageBox,
@@ -589,7 +615,9 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=object(),
+            input_parameters=SimpleNamespace(
+                copy=lambda **_kwargs: object()
+            ),
             directory=str(tmp_path),
         )
     )
@@ -624,14 +652,18 @@ def test_calculation_flow_adopts_result_and_remembers_output(
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=object(),
+            input_parameters=SimpleNamespace(
+                copy=lambda **_kwargs: object()
+            ),
             directory=str(tmp_path),
         )
     )
     monkeypatch.setattr(
         controller,
         "adopt_calculation_result",
-        lambda value: ResultAdoption(output_path=output),
+        lambda value, **_kwargs: Completed(
+            ResultAdoption(output_path=output)
+        ),
     )
     history = RecentFiles(tmp_path / "recent.json")
     parent = QWidget()

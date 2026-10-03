@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from functools import partial
 from pathlib import Path
 
 from ase.io.formats import ioformats
@@ -13,6 +14,7 @@ from guy4ase.gui.application.workspace_controller import (
     WorkspaceController,
 )
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
+from guy4ase.gui.misc.workspace_wait import wait_for_workspace
 
 
 def _structure_open_filter() -> str:
@@ -61,12 +63,18 @@ def load_structure(
     parent: QWidget,
 ) -> bool:
     try:
-        atoms = controller.load_structure(file_path)
+        outcome = wait_for_workspace(
+            parent, partial(controller.load_structure, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent, "Load Error", f"Failed to load structure:\n{exc}"
         )
         return False
+    if not outcome.completed:
+        return False
+    atoms = outcome.value
+    assert atoms is not None
     warn_if_structure_kind_is_unknown(atoms, parent)
     recent_files.remember("structure", file_path)
     return True
@@ -98,13 +106,17 @@ def load_input_parameters(
     parent: QWidget,
 ) -> bool:
     try:
-        controller.load_input_parameters(file_path)
+        outcome = wait_for_workspace(
+            parent, partial(controller.load_input_parameters, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - parser errors are presented
         QMessageBox.critical(
             parent,
             "Load Error",
             f"Failed to load input parameters:\n{exc}",
         )
+        return False
+    if not outcome.completed:
         return False
     recent_files.remember("input", file_path)
     return True
@@ -133,7 +145,9 @@ def load_output(
     parent: QWidget,
 ) -> bool:
     try:
-        adoption = controller.load_result(file_path)
+        outcome = wait_for_workspace(
+            parent, partial(controller.load_result, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent,
@@ -141,6 +155,10 @@ def load_output(
             f"Failed to load SPRKKR output:\n{exc}",
         )
         return False
+    if not outcome.completed:
+        return False
+    adoption = outcome.value
+    assert adoption is not None
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
     return True
@@ -171,11 +189,15 @@ def save_structure(
     if match and not file_path.lower().endswith(f".{match.group(1)}"):
         file_path += f".{match.group(1)}"
     try:
-        controller.save_structure(file_path)
+        outcome = wait_for_workspace(
+            parent, partial(controller.save_structure, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
             parent, "Save Error", f"Failed to save structure:\n{exc}"
         )
+        return False
+    if not outcome.completed:
         return False
     recent_files.remember("structure", file_path)
     return True
@@ -197,13 +219,17 @@ def save_input_parameters(
     if not file_path:
         return False
     try:
-        controller.save_input_parameters(file_path)
+        outcome = wait_for_workspace(
+            parent, partial(controller.save_input_parameters, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
             parent,
             "Save Error",
             f"Failed to save input parameters:\n{exc}",
         )
+        return False
+    if not outcome.completed:
         return False
     recent_files.remember("input", file_path)
     return True

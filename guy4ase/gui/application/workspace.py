@@ -13,8 +13,9 @@ from typing import Any
 class WorkspaceState:
     """Passive data held by the application's semantic workspace controller.
 
-    Application code reads these facets directly but publishes changes only
-    through ``WorkspaceController`` document transitions.
+    Values exposed here are borrowed references, not owned copies or read-only
+    proxies. Application code may render them directly, but confirmed changes
+    must be published through ``WorkspaceController`` document transitions.
     """
 
     atoms: Any | None = None

@@ -270,7 +270,8 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept, tmp_
     result = p.copy(copy_values=True)
     result.ENERGY.NE = [42]
     def edit(current, **kwargs):
-        assert current is p
+        assert current.task_name == p.task_name
+        assert current.SITES.NL().tolist() == p.SITES.NL().tolist()
         return result if accept else None
     monkeypatch.setattr(main_window, 'edit_input_parameters', edit)
     window._on_input_preview_double_click(None)

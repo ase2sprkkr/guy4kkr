@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -16,12 +15,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-
-@dataclass(frozen=True)
-class SprkkrRunInputs:
-    atoms: Any
-    input_parameters: Any
-    directory: str
+from guy4ase.gui.application.workspace_controller import (
+    CalculationRequest,
+    WorkspaceAccessGate,
+)
 
 
 class _SprkkrRunWorker(QObject):
@@ -29,33 +26,52 @@ class _SprkkrRunWorker(QObject):
     status = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)  # result
+    preparationFinished = pyqtSignal(object)  # borrowed atoms, lock is released
+    activityStarted = pyqtSignal(object)
+    activityEnded = pyqtSignal(object)
 
-    def __init__(self, inputs: SprkkrRunInputs):
+    def __init__(
+        self, request: CalculationRequest, access_gate: WorkspaceAccessGate
+    ):
         super().__init__()
-        self._inputs = inputs
-        self._process: Optional[Any] = None
+        self._request = request
+        self._access_gate = access_gate
+        self.run_id = object()
+        self._process: Any | None = None
         self._stop_requested = False
 
     @pyqtSlot()
     def run(self) -> None:
+        self.activityStarted.emit(self.run_id)
         try:
-            self.status.emit("Creating SPRKKR calculator…")
-
-            calc = SPRKKR()
-
             def read_callback(text: str, kind: str) -> None:
                 # Called from the runner while it produces output.
                 self.output.emit(text, kind)
 
-            self.status.emit("Preparing calculation…")
-            self._process = calc.calculate(
-                atoms=self._inputs.atoms,
-                input_parameters=self._inputs.input_parameters,
-                directory=self._inputs.directory,
-                run_async=True,
-                read_callback=read_callback,
-                print_output=False
-            )
+            self.status.emit("Waiting to prepare shared structure…")
+            # calculate(run_async=True) performs all shared-Atoms work and
+            # writes the input/potential files. KkrProcess.run() below only
+            # starts the prepared subprocess and parses its files.
+            try:
+                def prepare() -> Any:
+                    self.status.emit("Preparing calculation…")
+                    calc = SPRKKR()
+                    return calc.calculate(
+                        atoms=self._request.atoms,
+                        input_parameters=self._request.input_parameters,
+                        directory=self._request.directory,
+                        run_async=True,
+                        read_callback=read_callback,
+                        print_output=False,
+                    )
+
+                self._process = self._access_gate.call(
+                    "preparing a calculation", prepare
+                )
+            finally:
+                # A failed preparation may still have lazily materialized the
+                # shared structure. The lock is already released here.
+                self.preparationFinished.emit(self._request.atoms)
 
             if self._stop_requested:
                 raise RuntimeError("Stopped")
@@ -66,11 +82,12 @@ class _SprkkrRunWorker(QObject):
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            self.activityEnded.emit(self.run_id)
 
     @pyqtSlot()
     def stop(self) -> None:
         self._stop_requested = True
-        self._process
         try:
             if self._process is not None and hasattr(self._process, "stop_the_process"):
                 self._process.stop_the_process()
@@ -81,26 +98,45 @@ class _SprkkrRunWorker(QObject):
 class SprkkrRunWindow(QDialog):
     def __init__(
         self,
-        atoms: Any,
-        input_parameters: Any,
-        directory: str,
-        parent: Optional[Any] = None,
+        atoms: Any = None,
+        input_parameters: Any = None,
+        directory: str | None = None,
+        parent: Any | None = None,
         *,
+        request: CalculationRequest | None = None,
+        access_gate: WorkspaceAccessGate | None = None,
         on_finished: Callable[[Any], None] | None = None,
+        on_activity_started: Callable[[Any], None] | None = None,
+        on_activity_ended: Callable[[Any], None] | None = None,
+        on_prepared: Callable[[Any], None] | None = None,
     ):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("SPRKKR Run")
         self.resize(900, 600)
 
-        self._thread: Optional[QThread] = None
-        self._worker: Optional[_SprkkrRunWorker] = None
+        self._thread: QThread | None = None
+        self._worker: _SprkkrRunWorker | None = None
         self._finished_callback = on_finished
+        self._activity_started_callback = on_activity_started
+        self._activity_ended_callback = on_activity_ended
+        self._prepared_callback = on_prepared
         self._close_requested = False
 
         layout = QVBoxLayout(self)
 
-        header = QLabel(f"Directory: {directory}")
+        if request is None:
+            if directory is None:
+                raise ValueError("A calculation directory is required.")
+            request = CalculationRequest(
+                atoms=atoms,
+                input_parameters=input_parameters,
+                directory=directory,
+                generation=0,
+            )
+        self._access_gate = access_gate or WorkspaceAccessGate()
+
+        header = QLabel(f"Directory: {request.directory}")
         header.setWordWrap(True)
         layout.addWidget(header)
 
@@ -123,7 +159,7 @@ class SprkkrRunWindow(QDialog):
         btn_row.addWidget(self._close_btn)
         layout.addLayout(btn_row)
 
-        self._start(SprkkrRunInputs(atoms=atoms, input_parameters=input_parameters, directory=directory))
+        self._start(request)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._thread is not None and self._thread.isRunning():
@@ -134,9 +170,12 @@ class SprkkrRunWindow(QDialog):
             return
         super().closeEvent(event)
 
-    def _start(self, inputs: SprkkrRunInputs) -> None:
+    def _start(
+        self,
+        request: CalculationRequest,
+    ) -> None:
         thread = QThread(self)
-        worker = _SprkkrRunWorker(inputs)
+        worker = _SprkkrRunWorker(request, self._access_gate)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -144,6 +183,12 @@ class SprkkrRunWindow(QDialog):
         worker.status.connect(self._set_status)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
+        if self._activity_started_callback is not None:
+            worker.activityStarted.connect(self._activity_started_callback)
+        if self._activity_ended_callback is not None:
+            worker.activityEnded.connect(self._activity_ended_callback)
+        if self._prepared_callback is not None:
+            worker.preparationFinished.connect(self._prepared_callback)
 
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)

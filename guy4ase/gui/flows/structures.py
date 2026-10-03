@@ -1,6 +1,7 @@
 """Stateless Qt workflows for creating and transforming structures."""
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
@@ -15,7 +16,15 @@ from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup_from_prototype,
 )
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.gui.misc.workspace_wait import (
+    wait_for_document_change,
+    wait_for_workspace,
+)
 from guy4ase.physics.lattice import detect_structure_kind
+
+
+def _copy_optional_atoms(atoms: Any) -> Any:
+    return None if atoms is None else atoms.copy()
 
 
 def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
@@ -35,6 +44,7 @@ def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
 def create_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
+    generation = controller.generation
     atoms = chain_dialogs(
         select_spacegroup,
         select_site_elements,
@@ -42,13 +52,23 @@ def create_structure(
         kwargs={"parent": parent},
     )
     if atoms is not None:
-        controller.replace_structure(atoms)
+        completed = wait_for_document_change(
+            parent,
+            partial(
+                controller.replace_structure,
+                atoms,
+                expected_generation=generation,
+            ),
+        )
+        if not completed:
+            return None
     return atoms
 
 
 def create_structure_from_database(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
+    generation = controller.generation
     atoms = chain_dialogs(
         select_structure_prototype,
         select_spacegroup_from_prototype,
@@ -57,7 +77,16 @@ def create_structure_from_database(
         kwargs={"parent": parent},
     )
     if atoms is not None:
-        controller.replace_structure(atoms)
+        completed = wait_for_document_change(
+            parent,
+            partial(
+                controller.replace_structure,
+                atoms,
+                expected_generation=generation,
+            ),
+        )
+        if not completed:
+            return None
         warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
@@ -65,9 +94,19 @@ def create_structure_from_database(
 def download_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
+    generation = controller.generation
     atoms = select_online_structure(parent=parent)
     if atoms is not None:
-        controller.replace_structure(atoms)
+        completed = wait_for_document_change(
+            parent,
+            partial(
+                controller.replace_structure,
+                atoms,
+                expected_generation=generation,
+            ),
+        )
+        if not completed:
+            return None
         warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
@@ -78,7 +117,18 @@ def build_2d_structure(
     *,
     surface_mode: bool = False,
 ) -> Any | None:
-    atoms = controller.workspace.atoms
+    snapshot = wait_for_workspace(
+        parent,
+        partial(
+            controller.read_structure,
+            _copy_optional_atoms,
+            reason="reading the structure for the 2D editor",
+        ),
+    )
+    if not snapshot.completed:
+        return None
+    assert snapshot.value is not None
+    generation, atoms = snapshot.value
     if atoms is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."
@@ -91,7 +141,16 @@ def build_2d_structure(
             surface_mode=surface_mode,
         )
         if result is not None:
-            controller.replace_structure(result)
+            completed = wait_for_document_change(
+                parent,
+                partial(
+                    controller.replace_structure,
+                    result,
+                    expected_generation=generation,
+                ),
+            )
+            if not completed:
+                return None
         return result
     except Exception as exc:  # noqa: BLE001 - dialog/backend boundary
         QMessageBox.critical(
