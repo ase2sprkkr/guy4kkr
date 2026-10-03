@@ -143,14 +143,22 @@ class ElementAssignmentDialog(QDialog):
         root.addLayout(btns)
 
 
-    def setup(self, atoms: Atoms, back: bool = False) -> None:
+    def setup(
+        self,
+        atoms: Atoms | ElementAssignmentDraft,
+        back: bool = False,
+    ) -> None:
         # reset state
         self._allow_back = bool(back)
         self._site_errors.clear()
         self._update_error_label()
         for child in list(self._letter_widgets):
             child.setParent(None)
-        self._draft = ElementAssignmentDraft(atoms)
+        self._draft = (
+            atoms
+            if isinstance(atoms, ElementAssignmentDraft)
+            else ElementAssignmentDraft(atoms)
+        )
         cell = self._draft.cell
 
         # Update lattice vector spinboxes
@@ -241,7 +249,10 @@ class ElementAssignmentDialog(QDialog):
         draft = self._require_draft()
         if not draft.is_valid():
             return
-        self._result = draft.apply()
+        # Materialization may mutate its source Atoms in place. The dialog only
+        # confirms the isolated draft; an authoritative source is applied later
+        # by WorkspaceController while it owns the shared structure lock.
+        self._result = draft
         self.accept()
 
     def _on_back(self) -> None:
@@ -312,8 +323,13 @@ class ElementAssignmentDialog(QDialog):
         return self._draft
 
 
-def select_site_elements(atoms:Atoms, parent: Optional[QWidget] = None,
-                         back: bool = False) -> Optional[Atoms] | str:
+def select_site_elements(
+    atoms: Atoms | ElementAssignmentDraft,
+    parent: Optional[QWidget] = None,
+    back: bool = False,
+    *,
+    apply: bool = True,
+) -> Optional[Atoms | ElementAssignmentDraft] | str:
     """
     PyQt6 element assignment dialog.
 
@@ -338,5 +354,6 @@ def select_site_elements(atoms:Atoms, parent: Optional[QWidget] = None,
     if code == 42:
         return 'back'
     if code == QDialog.DialogCode.Accepted:
-        return dlg._result
+        draft = dlg._result
+        return draft.apply() if apply else draft
     return None

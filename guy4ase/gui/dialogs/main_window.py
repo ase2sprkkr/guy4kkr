@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -30,8 +31,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.ase.element_assignment import ElementAssignmentDraft
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.expert_input import (
     edit_input_parameters,
     select_input_parameters,
@@ -46,8 +49,17 @@ from guy4ase.gui.dialogs.structures.transforms import (
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
+from guy4ase.gui.misc.structure_wait import (
+    document_change_applied,
+    wait_for_structure,
+)
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+
+
+def _copy_optional_atoms(atoms: Any) -> Any:
+    return None if atoms is None else atoms.copy()
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +69,7 @@ class MainWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
+        active_runs: ActiveRunRegistry,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -64,7 +77,11 @@ class MainWindow(QMainWindow):
 
         self.controller = controller
         self.workspace = self.controller.workspace
+        self._structure_access = QtStructureAccess(
+            self.controller.structure_gate, self
+        )
         self.recent_history = recent_files
+        self.active_runs = active_runs
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -112,13 +129,24 @@ class MainWindow(QMainWindow):
             lambda _result: self._refresh_result_panel()
         )
 
-    def _workspace_structure_changed(self, atoms: Any) -> None:
+    def _workspace_structure_changed(self, _atoms: Any) -> None:
+        self._structure_access.retry(
+            self._workspace_structure_changed_locked,
+            reason="refreshing the structure view",
+        )
+
+    def _workspace_structure_changed_locked(self) -> None:
+        atoms = self.workspace.atoms
         self._update_potential_path_label()
         self._update_structure_view()
         self._enable_actions(atoms is not None)
         self._update_input_params_preview()
 
-    def _workspace_input_parameters_changed(self, parameters: Any) -> None:
+    def _workspace_input_parameters_changed(self, _parameters: Any) -> None:
+        self._refresh_input_parameters()
+
+    def _refresh_input_parameters(self) -> None:
+        parameters = self.workspace.input_parameters
         self._update_input_params_preview()
         self.enable_run_calculation()
         self.create_input_btn.setText(
@@ -128,6 +156,9 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_directory_changed(self) -> None:
+        self._refresh_directory()
+
+    def _refresh_directory(self) -> None:
         self._update_directory_label()
         self.enable_run_calculation()
 
@@ -699,10 +730,26 @@ class MainWindow(QMainWindow):
         # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
         if not isinstance(task, str):
             task = "scf"
-        params = select_input_parameters(self.workspace.atoms, parent=self, task=task)
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        params = select_input_parameters(atoms, parent=self, task=task)
         if params is None:
             return
-        self.controller.replace_input_parameters(params)
+        document_change_applied(
+            self,
+            self.controller.replace_input_parameters(
+                params, expected_generation=generation
+            ),
+        )
 
     def _on_input_preview_double_click(self, event) -> None:
         self._on_edit_sprkkr_input()
@@ -714,9 +761,31 @@ class MainWindow(QMainWindow):
         if self.workspace.input_parameters is None:
             self._on_create_sprkkr_input()
             return
-        result = edit_input_parameters(self.workspace.input_parameters, parent=self, atoms=self.workspace.atoms)
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        parameters = self.workspace.input_parameters
+        if parameters is None:
+            return
+        parameters = parameters.copy(copy_values=True)
+        result = edit_input_parameters(
+            parameters, parent=self, atoms=atoms
+        )
         if result is not None:
-            self.controller.replace_input_parameters(result)
+            document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    result, expected_generation=generation
+                ),
+            )
 
     def _on_load_sprkkr_input(self) -> None:
         loaded = file_flows.choose_and_load_input_parameters(
@@ -724,15 +793,34 @@ class MainWindow(QMainWindow):
         )
         if not loaded or self.workspace.input_parameters is None:
             return
-        candidate = self.workspace.input_parameters.copy(copy_values=True)
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the imported parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        candidate = self.workspace.input_parameters
+        if candidate is None:
+            return
+        candidate = candidate.copy(copy_values=True)
         edited = edit_input_parameters(
             candidate,
             parent=self,
             show_changed_only=True,
-            atoms=self.workspace.atoms,
+            atoms=atoms,
         )
         if edited is not None:
-            self.controller.replace_input_parameters(edited)
+            document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    edited, expected_generation=generation
+                ),
+            )
 
     def load_sprkkr_output(self) -> None:
         """Start the shared output-loading workflow."""
@@ -748,7 +836,7 @@ class MainWindow(QMainWindow):
     def _on_run_sprkkr_calculation(self) -> None:
         """Start the shared calculation workflow."""
         calculation_flow.run_calculation(
-            self.controller, self.recent_history, self
+            self.controller, self.recent_history, self.active_runs, self
         )
 
     def _refresh_result_panel(self) -> None:
@@ -808,25 +896,54 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        if self.workspace.atoms is None:
-            return
-        if row < 0 or row >= len(self.workspace.atoms):
-            return
-        if self._hovered_atom_index == row:
-            return
-        self._hovered_atom_index = row
-        self._update_visualization()
+        def update() -> None:
+            if self.workspace.atoms is None:
+                return
+            if row < 0 or row >= len(self.workspace.atoms):
+                return
+            if self._hovered_atom_index == row:
+                return
+            self._hovered_atom_index = row
+            self._update_visualization()
+
+        self._structure_access.retry(
+            update, reason="highlighting an atom"
+        )
 
     def _on_assign_elements(self) -> None:
         if self.workspace.atoms is None:
             return
-
-        result = select_site_elements(self.workspace.atoms, parent=self, back=False)
+        draft_result = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                ElementAssignmentDraft,
+                reason="reading the structure for element assignment",
+            ),
+        )
+        if isinstance(draft_result, Busy):
+            return
+        generation, draft = draft_result
+        result = select_site_elements(
+            draft, parent=self, back=False, apply=False
+        )
         if isinstance(result, str):
             return
         if result is None:
             return
-        self.controller.replace_structure(result)
+        def apply_draft(_atoms: Any) -> Any:
+            return result.apply()
+
+        change = wait_for_structure(
+            self,
+            partial(
+                self.controller.apply_structure_edit,
+                apply_draft,
+                expected_generation=generation,
+            ),
+        )
+        if not isinstance(change, Busy):
+            document_change_applied(self, change)
 
     def _on_scale_structure(self) -> None:
         self._apply_structure_edit(scale_atoms, error_title="Scale Error")
@@ -839,15 +956,35 @@ class MainWindow(QMainWindow):
 
     def _apply_structure_edit(self, editor, *, error_title: str) -> None:
         """Apply one expert-window modal structure transformation."""
-        if self.workspace.atoms is None:
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for an editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, source = snapshot
+        if source is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            atoms = editor(self.workspace.atoms, parent=self)
+            atoms = editor(source, parent=self)
             if atoms is None:
                 return
-            self.controller.replace_structure(atoms)
+            change = wait_for_structure(
+                self,
+                partial(
+                    self.controller.replace_structure,
+                    atoms,
+                    expected_generation=generation,
+                ),
+            )
+            if not isinstance(change, Busy):
+                document_change_applied(self, change)
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -865,8 +1002,14 @@ class MainWindow(QMainWindow):
             if event.type() == QEvent.Type.Leave:
                 if self._hovered_atom_index is not None:
                     self._hovered_atom_index = None
-                    self._update_visualization()
+                    self._update_visualization_nonblocking()
         return super().eventFilter(obj, event)
+
+    def _update_visualization_nonblocking(self) -> None:
+        self._structure_access.retry(
+            self._update_visualization,
+            reason="refreshing the structure visualization",
+        )
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""

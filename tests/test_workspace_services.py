@@ -17,9 +17,11 @@ from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application import workspace_controller as controller_module
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
+    DocumentChange,
     ResultAdoption,
     WorkspaceController,
 )
@@ -98,7 +100,9 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     controller.change_working_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
-    controller.adopt_calculation_result(result)
+    controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    )
 
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
@@ -188,7 +192,8 @@ def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch)
         WorkspaceState(input_parameters=parameters, result=object())
     )
 
-    loaded = controller.load_structure(path)
+    prepared = controller.prepare_structure_load(path)
+    loaded = controller.adopt_loaded_structure(prepared)
 
     assert loaded is atoms
     assert reads == [path.resolve()]
@@ -213,7 +218,8 @@ def test_loading_nonpotential_structure_drops_old_potential_source(
         )
     )
 
-    controller.load_structure(path)
+    prepared = controller.prepare_structure_load(path)
+    controller.adopt_loaded_structure(prepared)
 
     assert controller.workspace.atoms is atoms
     assert controller.workspace.potential_path is None
@@ -282,10 +288,18 @@ def test_restart_scf_is_a_document_operation_and_invalidates_result():
         WorkspaceState(atoms=atoms, result=object())
     )
 
-    controller.restart_scf()
+    generation = controller.generation
+    restarted = controller.restart_scf(expected_generation=generation)
 
+    assert restarted is DocumentChange.APPLIED
     assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
     assert controller.workspace.result is None
+    assert controller.generation == generation + 1
+
+    restarted_again = controller.restart_scf(
+        expected_generation=controller.generation
+    )
+    assert restarted_again is DocumentChange.APPLIED
 
 
 def _result(tmp_path):
@@ -309,7 +323,9 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
     controller = WorkspaceController()
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    )
 
     assert adoption.output_path == output
     assert adoption.potential_path == potential
@@ -344,7 +360,9 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     )
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    )
 
     assert adoption.potential_error is error
     assert controller.workspace.result is result
@@ -367,7 +385,9 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.adopt_calculation_result(result)
+    adoption = controller.adopt_calculation_result(
+        result, expected_generation=controller.generation
+    )
 
     assert adoption.potential_path is None
     assert adoption.potential_error is None
@@ -393,7 +413,8 @@ def test_external_result_without_potential_clears_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    prepared = controller.prepare_result_load(output)
+    adoption = controller.adopt_loaded_result(prepared)
 
     assert adoption.output_path == output.resolve()
     assert adoption.potential_path is None
@@ -427,7 +448,8 @@ def test_external_result_with_unreadable_potential_clears_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    prepared = controller.prepare_result_load(output)
+    adoption = controller.adopt_loaded_result(prepared)
 
     assert adoption.potential_path == potential.resolve()
     assert adoption.potential_error is error
@@ -460,7 +482,8 @@ def test_external_result_with_potential_replaces_old_structure(
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.load_result(output)
+    prepared = controller.prepare_result_load(output)
+    adoption = controller.adopt_loaded_result(prepared)
 
     assert adoption.potential_error is None
     assert workspace.result is result
@@ -473,7 +496,11 @@ def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(controller, "load_structure", lambda _path: atoms)
+    monkeypatch.setattr(
+        controller,
+        "prepare_structure_load",
+        lambda source: (Path(source).resolve(), atoms),
+    )
 
     assert file_flows.load_structure(controller, history, path, object())
 
@@ -488,7 +515,7 @@ def test_failed_file_flow_does_not_update_history(tmp_path, monkeypatch):
     def fail(_path):
         raise ValueError("broken")
 
-    monkeypatch.setattr(controller, "load_structure", fail)
+    monkeypatch.setattr(controller, "prepare_structure_load", fail)
     monkeypatch.setattr(file_flows.QMessageBox, "critical", lambda *args: None)
 
     assert not file_flows.load_structure(
@@ -532,7 +559,11 @@ def test_loading_unknown_structure_from_file_warns_but_keeps_it(
     atoms = Atoms("Fe", cell=(2.8, 2.8, 8.0), pbc=(True, True, False))
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(controller, "load_structure", lambda _path: atoms)
+    monkeypatch.setattr(
+        controller,
+        "prepare_structure_load",
+        lambda source: (Path(source).resolve(), atoms),
+    )
     warnings = []
     monkeypatch.setattr(
         structure_flows.QMessageBox,
@@ -589,13 +620,18 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=object(),
+            input_parameters=SimpleNamespace(
+                copy=lambda **_kwargs: object()
+            ),
             directory=str(tmp_path),
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
+    active_runs = ActiveRunRegistry()
 
-    window = calculation_flow.run_calculation(controller, history, parent)
+    window = calculation_flow.run_calculation(
+        controller, history, active_runs, parent
+    )
     assert window is not None
     assert window.parent() is parent
     reference = weakref.ref(window)
@@ -624,18 +660,23 @@ def test_calculation_flow_adopts_result_and_remembers_output(
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=object(),
+            input_parameters=SimpleNamespace(
+                copy=lambda **_kwargs: object()
+            ),
             directory=str(tmp_path),
         )
     )
     monkeypatch.setattr(
         controller,
         "adopt_calculation_result",
-        lambda value: ResultAdoption(output_path=output),
+        lambda value, **_kwargs: ResultAdoption(output_path=output),
     )
     history = RecentFiles(tmp_path / "recent.json")
+    active_runs = ActiveRunRegistry()
     parent = QWidget()
-    window = calculation_flow.run_calculation(controller, history, parent)
+    window = calculation_flow.run_calculation(
+        controller, history, active_runs, parent
+    )
 
     window._on_finished(result)
 

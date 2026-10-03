@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -25,6 +26,7 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
+        self.active_runs = ActiveRunRegistry(parent=self)
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,
@@ -39,6 +41,7 @@ class GuiApplication(QObject):
             self._workflow_window = WorkflowWindow(
                 self.controller,
                 self.recent_files,
+                self.active_runs,
                 open_expert=self.show_main_window,
             )
         return self._workflow_window
@@ -49,6 +52,7 @@ class GuiApplication(QObject):
             self._main_window = MainWindow(
                 self.controller,
                 self.recent_files,
+                self.active_runs,
             )
         return self._main_window
 

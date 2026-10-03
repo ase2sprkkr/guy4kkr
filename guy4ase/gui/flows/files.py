@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from functools import partial
 from pathlib import Path
 
 from ase.io.formats import ioformats
@@ -9,10 +10,12 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.workspace_controller import (
+    Busy,
     ResultAdoption,
     WorkspaceController,
 )
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
+from guy4ase.gui.misc.structure_wait import wait_for_structure
 
 
 def _structure_open_filter() -> str:
@@ -61,11 +64,16 @@ def load_structure(
     parent: QWidget,
 ) -> bool:
     try:
-        atoms = controller.load_structure(file_path)
+        prepared = controller.prepare_structure_load(file_path)
+        atoms = wait_for_structure(
+            parent, partial(controller.adopt_loaded_structure, prepared)
+        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent, "Load Error", f"Failed to load structure:\n{exc}"
         )
+        return False
+    if isinstance(atoms, Busy):
         return False
     warn_if_structure_kind_is_unknown(atoms, parent)
     recent_files.remember("structure", file_path)
@@ -133,13 +141,18 @@ def load_output(
     parent: QWidget,
 ) -> bool:
     try:
-        adoption = controller.load_result(file_path)
+        prepared = controller.prepare_result_load(file_path)
+        adoption = wait_for_structure(
+            parent, partial(controller.adopt_loaded_result, prepared)
+        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent,
             "Load Error",
             f"Failed to load SPRKKR output:\n{exc}",
         )
+        return False
+    if isinstance(adoption, Busy):
         return False
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
@@ -171,11 +184,15 @@ def save_structure(
     if match and not file_path.lower().endswith(f".{match.group(1)}"):
         file_path += f".{match.group(1)}"
     try:
-        controller.save_structure(file_path)
+        outcome = wait_for_structure(
+            parent, partial(controller.save_structure, file_path)
+        )
     except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
             parent, "Save Error", f"Failed to save structure:\n{exc}"
         )
+        return False
+    if isinstance(outcome, Busy):
         return False
     recent_files.remember("structure", file_path)
     return True

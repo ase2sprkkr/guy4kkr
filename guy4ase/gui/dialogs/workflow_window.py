@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -22,14 +23,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.misc.structure_wait import (
+    document_change_applied,
+    wait_for_structure,
+)
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -44,6 +51,10 @@ from guy4ase.gui.style import (
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.physics.lattice import detect_structure_kind
+
+
+def _copy_optional_atoms(atoms: Any) -> Any:
+    return None if atoms is None else atoms.copy()
 
 
 def _set_action_button_content(
@@ -120,6 +131,7 @@ class WorkflowWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
+        active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
     ) -> None:
@@ -128,7 +140,11 @@ class WorkflowWindow(QMainWindow):
         self.resize(980, 680)
         self.controller = controller
         self.workspace = self.controller.workspace
+        self._structure_access = QtStructureAccess(
+            self.controller.structure_gate, self
+        )
         self.recent_history = recent_files
+        self.active_runs = active_runs
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.resultChanged.connect(lambda _result: self._refresh())
@@ -382,6 +398,12 @@ class WorkflowWindow(QMainWindow):
         self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:
+        self._structure_access.retry(
+            self._refresh_locked,
+            reason="refreshing the workflow overview",
+        )
+
+    def _refresh_locked(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
         atoms = self.workspace.atoms
@@ -552,7 +574,19 @@ class WorkflowWindow(QMainWindow):
 
     def _prepare_task(self, task: str) -> None:
         try:
-            if self.workspace.atoms is None:
+            snapshot = wait_for_structure(
+                self,
+                partial(
+                    self.controller.read_structure,
+                    _copy_optional_atoms,
+                    reason="reading the structure for the task editor",
+                ),
+            )
+            if isinstance(snapshot, Busy):
+                return
+            generation, atoms = snapshot
+            directory = self.workspace.directory
+            if atoms is None:
                 QMessageBox.information(
                     self,
                     "No Structure",
@@ -562,24 +596,31 @@ class WorkflowWindow(QMainWindow):
             selection = select_guided_input_parameters(
                 task,
                 parent=self,
-                directory=self.workspace.directory,
-                atoms=self.workspace.atoms,
+                directory=directory,
+                atoms=atoms,
             )
             if selection is None:
                 return
             parameters, directory = selection
-            self.controller.replace_input_parameters(
-                parameters,
-                directory=directory,
+            completed = document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    parameters,
+                    directory=directory,
+                    expected_generation=generation,
+                ),
             )
+            if not completed:
+                return
             calculation_flow.run_calculation(
-                self.controller, self.recent_history, self
+                self.controller, self.recent_history, self.active_runs, self
             )
         except (ImportError, ModuleNotFoundError) as exc:
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return
 
     def _recalculate_scf(self) -> None:
+        generation = self.controller.generation
         answer = QMessageBox.question(
             self,
             "Recalculate SCF?",
@@ -590,7 +631,17 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self.controller.restart_scf()
+            change = wait_for_structure(
+                self,
+                partial(
+                    self.controller.restart_scf,
+                    expected_generation=generation,
+                ),
+            )
+            if isinstance(change, Busy) or not document_change_applied(
+                self, change
+            ):
+                return
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
             return
@@ -607,7 +658,7 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.controller.reset()
+        wait_for_structure(self, self.controller.reset)
 
     def _open_expert_mode(self) -> None:
         self._open_expert()
