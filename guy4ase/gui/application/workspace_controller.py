@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from threading import Lock
@@ -103,6 +103,7 @@ class ResultAdoption:
 
 PreparedStructureLoad = tuple[Path, Any]
 PreparedResultLoad = tuple[Any, ResultAdoption, Any, str]
+PreparedCalculationResult = tuple[Any, ResultAdoption, Any]
 
 
 class WorkspaceController(QObject):
@@ -262,9 +263,8 @@ class WorkspaceController(QObject):
         return DocumentChange.APPLIED
 
     def change_working_directory(self, directory: str | None) -> None:
-        """Change independent directory metadata without structure locking."""
+        """Change directory metadata without invalidating calculations."""
         self.workspace.directory = directory
-        self._changed()
         self.directoryChanged.emit(directory)
 
     @staticmethod
@@ -276,12 +276,17 @@ class WorkspaceController(QObject):
         return resolved, ase_read(resolved)
 
     def adopt_loaded_structure(
-        self, prepared: PreparedStructureLoad
-    ) -> Any | Busy:
+        self,
+        prepared: PreparedStructureLoad,
+        *,
+        expected_generation: int,
+    ) -> DocumentChange | Busy:
         """Commit an already parsed structure under the structure gate."""
         resolved, atoms = prepared
 
-        def commit() -> tuple[bool, str]:
+        def commit() -> tuple[DocumentChange, bool, str | None]:
+            if not self._generation_is_current(expected_generation):
+                return DocumentChange.STALE, False, None
             had_result = self.workspace.result is not None
             directory = str(resolved.parent)
             self.workspace.result = None
@@ -293,19 +298,22 @@ class WorkspaceController(QObject):
                 else None
             )
             self._changed()
-            return had_result, directory
+            return DocumentChange.APPLIED, had_result, directory
 
         attempt = self._structure_gate.try_call(
             "loading a structure from a file", commit
         )
         if isinstance(attempt, Busy):
             return attempt
-        had_result, directory = attempt
+        status, had_result, directory = attempt
+        if status is DocumentChange.STALE:
+            return status
         if had_result:
             self.resultChanged.emit(None)
+        assert directory is not None
         self.directoryChanged.emit(directory)
         self.structureChanged.emit(atoms)
-        return atoms
+        return status
 
     def load_input_parameters(self, file_path: str | Path) -> InputParameters:
         """Parse and commit input data without taking the structure lock."""
@@ -357,12 +365,17 @@ class WorkspaceController(QObject):
         return result, adoption, atoms, directory
 
     def adopt_loaded_result(
-        self, prepared: PreparedResultLoad
+        self,
+        prepared: PreparedResultLoad,
+        *,
+        expected_generation: int,
     ) -> ResultAdoption | Busy:
         """Commit one already parsed external result under the structure gate."""
         result, adoption, atoms, directory = prepared
 
-        def commit() -> None:
+        def commit() -> bool:
+            if not self._generation_is_current(expected_generation):
+                return False
             self.workspace.result = result
             self.workspace.atoms = atoms
             self.workspace.potential_path = (
@@ -370,12 +383,15 @@ class WorkspaceController(QObject):
             )
             self.workspace.directory = directory
             self._changed()
+            return True
 
         attempt = self._structure_gate.try_call(
             "loading a calculation result", commit
         )
         if isinstance(attempt, Busy):
             return attempt
+        if not attempt:
+            return replace(adoption, adopted=False)
         self.structureChanged.emit(atoms)
         self.directoryChanged.emit(directory)
         self.resultChanged.emit(result)
@@ -446,41 +462,46 @@ class WorkspaceController(QObject):
                 return None, exc
         return None, None
 
-    def adopt_calculation_result(
+    def prepare_calculation_result(
         self,
         result: Any,
         *,
         expected_generation: int,
-    ) -> ResultAdoption | Busy:
-        """Adopt only a result produced from the current document revision."""
+        fallback_directory: str | Path | None = None,
+    ) -> PreparedCalculationResult:
+        """Resolve and parse calculation artifacts exactly once."""
         if not self._generation_is_current(expected_generation):
             output, potential = self._result_artifacts(
-                result, getattr(result, "directory", None)
+                result, fallback_directory
             )
-            return ResultAdoption(output, potential, adopted=False)
+            return result, ResultAdoption(output, potential, adopted=False), None
 
-        output, potential = self._result_artifacts(result, self.workspace.directory)
+        output, potential = self._result_artifacts(result, fallback_directory)
         atoms, potential_error = self._load_result_potential(potential)
-        directory_value = (
-            output.parent if output is not None else getattr(result, "directory", None)
-        )
-        directory = (
-            str(Path(directory_value).resolve())
-            if directory_value is not None
-            else None
-        )
+        return result, ResultAdoption(output, potential, potential_error), atoms
+
+    def adopt_calculation_result(
+        self,
+        prepared: PreparedCalculationResult,
+        *,
+        expected_generation: int,
+    ) -> ResultAdoption | Busy:
+        """Adopt only a result produced from the current document revision."""
+        result, prepared_adoption, atoms = prepared
+        if not prepared_adoption.adopted:
+            return prepared_adoption
 
         def commit() -> ResultAdoption:
             if not self._generation_is_current(expected_generation):
-                return ResultAdoption(output, potential, adopted=False)
+                return replace(prepared_adoption, adopted=False)
             if atoms is not None:
                 self.workspace.atoms = atoms
-                self.workspace.potential_path = str(potential.resolve())
-            if directory is not None:
-                self.workspace.directory = directory
+                self.workspace.potential_path = str(
+                    prepared_adoption.potential_path
+                )
             self.workspace.result = result
             self._changed()
-            return ResultAdoption(output, potential, potential_error)
+            return prepared_adoption
 
         # Missing/unreadable potential preserves Atoms, so this is metadata-only.
         if atoms is None:
@@ -497,8 +518,6 @@ class WorkspaceController(QObject):
             return adoption
         if atoms is not None:
             self.structureChanged.emit(atoms)
-        if directory is not None:
-            self.directoryChanged.emit(directory)
         self.resultChanged.emit(result)
         return adoption
 

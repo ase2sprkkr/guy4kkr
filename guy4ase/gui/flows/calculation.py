@@ -71,11 +71,16 @@ def run_calculation(
             )
 
     def finished(result) -> None:
+        prepared_result = controller.prepare_calculation_result(
+            result,
+            expected_generation=request.generation,
+            fallback_directory=request.directory,
+        )
         adoption = wait_for_structure(
             parent,
             partial(
                 controller.adopt_calculation_result,
-                result,
+                prepared_result,
                 expected_generation=request.generation,
             ),
         )

@@ -11,11 +11,15 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.workspace_controller import (
     Busy,
+    DocumentChange,
     ResultAdoption,
     WorkspaceController,
 )
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
-from guy4ase.gui.misc.structure_wait import wait_for_structure
+from guy4ase.gui.misc.structure_wait import (
+    document_change_applied,
+    wait_for_structure,
+)
 
 
 def _structure_open_filter() -> str:
@@ -64,17 +68,24 @@ def load_structure(
     parent: QWidget,
 ) -> bool:
     try:
+        generation = controller.generation
         prepared = controller.prepare_structure_load(file_path)
-        atoms = wait_for_structure(
-            parent, partial(controller.adopt_loaded_structure, prepared)
+        change = wait_for_structure(
+            parent,
+            partial(
+                controller.adopt_loaded_structure,
+                prepared,
+                expected_generation=generation,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent, "Load Error", f"Failed to load structure:\n{exc}"
         )
         return False
-    if isinstance(atoms, Busy):
+    if isinstance(change, Busy) or not document_change_applied(parent, change):
         return False
+    _resolved, atoms = prepared
     warn_if_structure_kind_is_unknown(atoms, parent)
     recent_files.remember("structure", file_path)
     return True
@@ -141,9 +152,15 @@ def load_output(
     parent: QWidget,
 ) -> bool:
     try:
+        generation = controller.generation
         prepared = controller.prepare_result_load(file_path)
         adoption = wait_for_structure(
-            parent, partial(controller.adopt_loaded_result, prepared)
+            parent,
+            partial(
+                controller.adopt_loaded_result,
+                prepared,
+                expected_generation=generation,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
@@ -153,6 +170,9 @@ def load_output(
         )
         return False
     if isinstance(adoption, Busy):
+        return False
+    if not adoption.adopted:
+        document_change_applied(parent, DocumentChange.STALE)
         return False
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)

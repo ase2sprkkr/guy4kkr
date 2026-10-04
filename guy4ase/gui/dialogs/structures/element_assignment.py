@@ -337,7 +337,8 @@ def select_site_elements(
             - positions in Cartesian coordinates
             - symbols
             - array 'spacegroup_kinds' (int per atom; a->0, b->1, ...)
-            - array 'occupancy' (object array per atom: dict[AtomicType, float])
+            - atoms.info['occupancy'] (dict keyed by stringified
+              spacegroup kind, with occupancy mappings as values)
             - array 'labels' (str per atom: site labels like 'a', 'b.1', ...)
         Or 'back' or None.
     """

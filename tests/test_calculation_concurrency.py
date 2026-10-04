@@ -237,8 +237,11 @@ def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
     controller.replace_structure(replacement)
 
     result = SimpleNamespace(files={}, directory=str(tmp_path))
-    adoption = controller.adopt_calculation_result(
+    prepared_result = controller.prepare_calculation_result(
         result, expected_generation=request_generation
+    )
+    adoption = controller.adopt_calculation_result(
+        prepared_result, expected_generation=request_generation
     )
     assert not isinstance(adoption, Busy)
     assert not adoption.adopted
@@ -358,11 +361,16 @@ def test_structure_file_is_parsed_once_while_commit_retries(
 
     adopted = wait_for_structure(
         parent,
-        partial(controller.adopt_loaded_structure, prepared),
+        partial(
+            controller.adopt_loaded_structure,
+            prepared,
+            expected_generation=controller.generation,
+        ),
     )
     thread.join(5)
 
-    assert adopted is atoms
+    assert adopted is DocumentChange.APPLIED
+    assert controller.workspace.atoms is atoms
     assert reads == [(tmp_path / "Fe.cif").resolve()]
     parent.close()
 
@@ -403,7 +411,11 @@ def test_result_files_are_parsed_once_while_commit_retries(
 
     adoption = wait_for_structure(
         parent,
-        partial(controller.adopt_loaded_result, prepared),
+        partial(
+            controller.adopt_loaded_result,
+            prepared,
+            expected_generation=controller.generation,
+        ),
     )
     thread.join(5)
 
@@ -412,6 +424,118 @@ def test_result_files_are_parsed_once_while_commit_retries(
     assert potential_reads == [str(potential.resolve())]
     assert controller.workspace.atoms is result_atoms
     parent.close()
+
+
+def test_calculation_potential_is_parsed_once_while_adoption_retries(
+    monkeypatch, tmp_path
+):
+    _application = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    output = tmp_path / "Fe.out"
+    potential = tmp_path / "Fe.pot"
+    potential.touch()
+    result = SimpleNamespace(
+        files={"output": output.name, "converged": potential.name},
+        directory=str(tmp_path),
+    )
+    result.path_to = lambda key: result.files[key]
+    potential_reads = []
+    result_atoms = Atoms("Fe")
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        staticmethod(
+            lambda path: potential_reads.append(path)
+            or SimpleNamespace(atoms=result_atoms)
+        ),
+    )
+    controller = WorkspaceController(
+        WorkspaceState(atoms=Atoms("Cu"), directory=str(tmp_path))
+    )
+    generation = controller.generation
+    prepared = controller.prepare_calculation_result(
+        result,
+        expected_generation=generation,
+        fallback_directory=tmp_path,
+    )
+    release, thread = _hold_gate(controller)
+    QTimer.singleShot(75, release.set)
+
+    adoption = wait_for_structure(
+        parent,
+        partial(
+            controller.adopt_calculation_result,
+            prepared,
+            expected_generation=generation,
+        ),
+    )
+    thread.join(5)
+
+    assert adoption.adopted
+    assert potential_reads == [str(potential.resolve())]
+    assert controller.workspace.atoms is result_atoms
+    parent.close()
+
+
+def test_prepared_file_loads_reject_an_intervening_document_change(
+    monkeypatch, tmp_path
+):
+    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
+    original_atoms = controller.workspace.atoms
+    generation = controller.generation
+    loaded_atoms = Atoms("Fe")
+    monkeypatch.setattr(controller_module, "ase_read", lambda _path: loaded_atoms)
+    structure = controller.prepare_structure_load(tmp_path / "Fe.cif")
+
+    result = SimpleNamespace(files={}, directory=str(tmp_path))
+    monkeypatch.setattr(
+        controller_module.TaskResult,
+        "from_file",
+        staticmethod(lambda _path: result),
+    )
+    external_result = controller.prepare_result_load(tmp_path / "Fe.out")
+
+    controller.replace_input_parameters(object())
+
+    structure_change = controller.adopt_loaded_structure(
+        structure, expected_generation=generation
+    )
+    result_adoption = controller.adopt_loaded_result(
+        external_result, expected_generation=generation
+    )
+
+    assert structure_change is DocumentChange.STALE
+    assert not result_adoption.adopted
+    assert controller.workspace.atoms is original_atoms
+    assert controller.workspace.result is None
+
+
+def test_directory_change_does_not_invalidate_or_get_overwritten_by_result(
+    tmp_path,
+):
+    original_directory = tmp_path / "first"
+    next_directory = tmp_path / "next"
+    controller = WorkspaceController(
+        WorkspaceState(atoms=Atoms("Fe"), directory=str(original_directory))
+    )
+    generation = controller.generation
+    result = SimpleNamespace(files={}, directory=str(original_directory))
+    prepared = controller.prepare_calculation_result(
+        result,
+        expected_generation=generation,
+        fallback_directory=original_directory,
+    )
+
+    controller.change_working_directory(str(next_directory))
+    assert controller.generation == generation
+    adoption = controller.adopt_calculation_result(
+        prepared, expected_generation=generation
+    )
+
+    assert controller.generation == generation + 1
+    assert adoption.adopted
+    assert controller.workspace.result is result
+    assert controller.workspace.directory == str(next_directory)
 
 
 def test_background_structure_refresh_is_owned_and_eventually_runs():

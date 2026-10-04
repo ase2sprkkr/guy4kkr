@@ -882,6 +882,7 @@ class MainWindow(QMainWindow):
         if self._left_stack is not None:
             self._left_stack.setCurrentWidget(self.welcome_widget)
         self._site_colors = {}
+        self.converged_label.setText("")
 
         for lbl in self.lattice_labels.values():
             lbl.setText("–")
@@ -1104,18 +1105,18 @@ class MainWindow(QMainWindow):
 
     def _update_info_label(self) -> None:
         """Update structure information label."""
-        if self.workspace.atoms is None:
+        atoms = self.workspace.atoms
+        if atoms is None:
             return
-        if self.workspace.atoms and hasattr(self.workspace.atoms, 'has_potential') and \
-            self.workspace.atoms.has_potential():
-                status = self.workspace.atoms.potential.SCF_INFO.SCFSTATUS()
-                if status != 'START':
-                    self.converged_label.setText(f"SCF Status: {status}")
-        else:
-            self.converged_label.setText("")
+        status_text = ""
+        if hasattr(atoms, 'has_potential') and atoms.has_potential():
+            status = atoms.potential.SCF_INFO.SCFSTATUS()
+            if status and status != 'START':
+                status_text = f"SCF Status: {status}"
+        self.converged_label.setText(status_text)
 
-        n_atoms = len(self.workspace.atoms)
-        formula_raw = self.workspace.atoms.get_chemical_formula()
+        n_atoms = len(atoms)
+        formula_raw = atoms.get_chemical_formula()
         assigned_counts = self._collect_assigned_counts()
 
         if assigned_counts:
@@ -1132,7 +1133,7 @@ class MainWindow(QMainWindow):
                 info_text += f"  {element}: {count:.2f}\n"
         else:
             from collections import Counter
-            symbols = self.workspace.atoms.get_chemical_symbols()
+            symbols = atoms.get_chemical_symbols()
             species_count = Counter(symbols)
             for element, count in sorted(species_count.items()):
                 info_text += f"  {element}: {count}\n"
@@ -1155,14 +1156,20 @@ class MainWindow(QMainWindow):
         return ", ".join(parts) if parts else None
 
     def _collect_assigned_counts(self) -> Dict[str, float]:
-        arrays = getattr(self.workspace.atoms, 'arrays', {}) if self.workspace.atoms is not None else {}
-        occs = arrays.get('occupancy') if 'occupancy' in arrays else None
         counts: Dict[str, float] = {}
-        if occs is None or len(occs) == 0:
+        atoms = self.workspace.atoms
+        if atoms is None:
             return counts
-        for entry in occs:
+
+        occupancies = atoms.info.get('occupancy', {})
+        kinds = atoms.arrays.get('spacegroup_kinds')
+        if not occupancies or kinds is None:
+            return counts
+
+        for atom, kind in zip(atoms, kinds):
+            entry = occupancies.get(str(kind))
             if not isinstance(entry, dict):
-                continue
+                entry = {atom.symbol: 1.0}
             for species, value in entry.items():
                 sym = getattr(species, 'symbol', str(species))
                 try:

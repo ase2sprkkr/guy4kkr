@@ -100,8 +100,11 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     controller.change_working_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
-    controller.adopt_calculation_result(
+    prepared_result = controller.prepare_calculation_result(
         result, expected_generation=controller.generation
+    )
+    controller.adopt_calculation_result(
+        prepared_result, expected_generation=controller.generation
     )
 
     assert workspace.atoms is atoms
@@ -193,9 +196,11 @@ def test_controller_loads_structure_and_document_metadata(tmp_path, monkeypatch)
     )
 
     prepared = controller.prepare_structure_load(path)
-    loaded = controller.adopt_loaded_structure(prepared)
+    loaded = controller.adopt_loaded_structure(
+        prepared, expected_generation=controller.generation
+    )
 
-    assert loaded is atoms
+    assert loaded is DocumentChange.APPLIED
     assert reads == [path.resolve()]
     assert controller.workspace.atoms is atoms
     assert controller.workspace.directory == str(tmp_path.resolve())
@@ -219,7 +224,9 @@ def test_loading_nonpotential_structure_drops_old_potential_source(
     )
 
     prepared = controller.prepare_structure_load(path)
-    controller.adopt_loaded_structure(prepared)
+    controller.adopt_loaded_structure(
+        prepared, expected_generation=controller.generation
+    )
 
     assert controller.workspace.atoms is atoms
     assert controller.workspace.potential_path is None
@@ -320,11 +327,16 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
         "guy4ase.gui.application.workspace_controller.Potential.from_file",
         lambda path: SimpleNamespace(atoms=atoms),
     )
-    controller = WorkspaceController()
+    controller = WorkspaceController(
+        WorkspaceState(directory=str(tmp_path.resolve()))
+    )
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(
+    prepared = controller.prepare_calculation_result(
         result, expected_generation=controller.generation
+    )
+    adoption = controller.adopt_calculation_result(
+        prepared, expected_generation=controller.generation
     )
 
     assert adoption.output_path == output
@@ -360,8 +372,11 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     )
     result = _result(tmp_path)
 
-    adoption = controller.adopt_calculation_result(
+    prepared = controller.prepare_calculation_result(
         result, expected_generation=controller.generation
+    )
+    adoption = controller.adopt_calculation_result(
+        prepared, expected_generation=controller.generation
     )
 
     assert adoption.potential_error is error
@@ -385,8 +400,11 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     )
     controller = WorkspaceController(workspace)
 
-    adoption = controller.adopt_calculation_result(
+    prepared = controller.prepare_calculation_result(
         result, expected_generation=controller.generation
+    )
+    adoption = controller.adopt_calculation_result(
+        prepared, expected_generation=controller.generation
     )
 
     assert adoption.potential_path is None
@@ -414,7 +432,9 @@ def test_external_result_without_potential_clears_old_structure(
     controller = WorkspaceController(workspace)
 
     prepared = controller.prepare_result_load(output)
-    adoption = controller.adopt_loaded_result(prepared)
+    adoption = controller.adopt_loaded_result(
+        prepared, expected_generation=controller.generation
+    )
 
     assert adoption.output_path == output.resolve()
     assert adoption.potential_path is None
@@ -449,7 +469,9 @@ def test_external_result_with_unreadable_potential_clears_old_structure(
     controller = WorkspaceController(workspace)
 
     prepared = controller.prepare_result_load(output)
-    adoption = controller.adopt_loaded_result(prepared)
+    adoption = controller.adopt_loaded_result(
+        prepared, expected_generation=controller.generation
+    )
 
     assert adoption.potential_path == potential.resolve()
     assert adoption.potential_error is error
@@ -483,7 +505,9 @@ def test_external_result_with_potential_replaces_old_structure(
     controller = WorkspaceController(workspace)
 
     prepared = controller.prepare_result_load(output)
-    adoption = controller.adopt_loaded_result(prepared)
+    adoption = controller.adopt_loaded_result(
+        prepared, expected_generation=controller.generation
+    )
 
     assert adoption.potential_error is None
     assert workspace.result is result

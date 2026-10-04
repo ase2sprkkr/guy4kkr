@@ -88,7 +88,7 @@ def document_change_applied(parent: QWidget, change: DocumentChange) -> bool:
     QMessageBox.information(
         parent,
         "Document Changed",
-        "The document changed while the editor was open. "
-        "Its older draft was not applied.",
+        "The document changed before this operation could be applied. "
+        "The stale changes were discarded.",
     )
     return False
