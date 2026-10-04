@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
@@ -56,6 +56,7 @@ from guy4ase.gui.misc.structure_wait import (
 )
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.physics.composition import site_composition, structure_formula
 
 
 def _copy_optional_atoms(atoms: Any) -> Any:
@@ -1058,7 +1059,6 @@ class MainWindow(QMainWindow):
         arrays = getattr(self.workspace.atoms, 'arrays', {})
         empty = [None] * len(symbols)
         kinds = arrays.get('spacegroup_kinds', empty)
-        occs = self.workspace.atoms.info.get('occupancy', {})
         labels = arrays.get('labels', empty)
         color_lookup = self._site_colors
         self.positions_table.setRowCount(len(positions))
@@ -1073,8 +1073,7 @@ class MainWindow(QMainWindow):
                     counter[sym] = 1
                 label = f"{sym}.{counter[sym]}"
 
-            occ = occs.get(str(kinds[i]), None) if kind is not None else None
-            comp_text = self._format_site_composition(occ) or sym
+            comp_text = site_composition(self.workspace.atoms, i)
 
             item_site = QTableWidgetItem(label)
             item_comp = QTableWidgetItem(comp_text)
@@ -1109,91 +1108,14 @@ class MainWindow(QMainWindow):
         if atoms is None:
             return
         status_text = ""
-        if hasattr(atoms, 'has_potential') and atoms.has_potential():
+        if isinstance(atoms, SPRKKRAtoms):
             status = atoms.potential.SCF_INFO.SCFSTATUS()
             if status and status != 'START':
                 status_text = f"SCF Status: {status}"
         self.converged_label.setText(status_text)
 
         n_atoms = len(atoms)
-        formula_raw = atoms.get_chemical_formula()
-        assigned_counts = self._collect_assigned_counts()
-
-        if assigned_counts:
-            formula_text = self._format_formula_from_counts(assigned_counts)
-            info_text = f"Assigned formula: {formula_text}\n"
-        else:
-            info_text = f"Formula: {formula_raw}\n"
-
+        info_text = f"Formula: {structure_formula(atoms)}\n"
         info_text += f"Number of atoms: {n_atoms}\n"
 
-        info_text += "\nComposition:\n"
-        if assigned_counts:
-            for element, count in sorted(assigned_counts.items()):
-                info_text += f"  {element}: {count:.2f}\n"
-        else:
-            from collections import Counter
-            symbols = atoms.get_chemical_symbols()
-            species_count = Counter(symbols)
-            for element, count in sorted(species_count.items()):
-                info_text += f"  {element}: {count}\n"
-
         self.info_label.setText(info_text)
-
-    def _format_site_composition(self, occ_dict: Any) -> str:
-        if not isinstance(occ_dict, dict) or not occ_dict:
-            return None
-        parts = []
-        for species, value in occ_dict.items():
-            try:
-                val = float(value)
-            except Exception:
-                continue
-            if val <= 0.0:
-                continue
-            sym = re.sub(r'_\d+$', '', species)
-            parts.append(f"{sym}:{val:.2f}")
-        return ", ".join(parts) if parts else None
-
-    def _collect_assigned_counts(self) -> Dict[str, float]:
-        counts: Dict[str, float] = {}
-        atoms = self.workspace.atoms
-        if atoms is None:
-            return counts
-
-        occupancies = atoms.info.get('occupancy', {})
-        kinds = atoms.arrays.get('spacegroup_kinds')
-        if not occupancies or kinds is None:
-            return counts
-
-        for atom, kind in zip(atoms, kinds):
-            entry = occupancies.get(str(kind))
-            if not isinstance(entry, dict):
-                entry = {atom.symbol: 1.0}
-            for species, value in entry.items():
-                sym = getattr(species, 'symbol', str(species))
-                try:
-                    counts[sym] = counts.get(sym, 0.0) + float(value)
-                except Exception:
-                    continue
-        return counts
-
-    def _format_formula_from_counts(self, counts: Dict[str, float]) -> str:
-        if not counts:
-            return "—"
-        positives = [v for v in counts.values() if v > 1e-6]
-        if not positives:
-            return "—"
-        min_val = min(positives)
-        normalized = {sym: value / min_val for sym, value in counts.items() if value > 1e-6}
-        parts = []
-        for sym, val in sorted(normalized.items()):
-            if abs(val - 1.0) < 1e-2:
-                suffix = ""
-            elif abs(val - round(val)) < 1e-2:
-                whole = int(round(val))
-                suffix = "" if whole == 1 else str(whole)
-            else:
-                suffix = f"{val:.2f}"
-            parts.append(f"{sym}{suffix}")
-        return "".join(parts) if parts else "—"

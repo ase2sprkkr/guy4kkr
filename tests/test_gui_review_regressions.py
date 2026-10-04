@@ -9,9 +9,9 @@ os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
 import numpy as np
 import pytest
 from ase import Atoms
+from ase2sprkkr import SPRKKRAtoms
 from ase2sprkkr.common.warnings import DataValidityError
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
-from ase2sprkkr.sprkkr.atomic_types import AtomicType
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog
@@ -313,7 +313,7 @@ def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
     window.close()
 
 
-def test_assigned_composition_uses_kind_occupancy_with_multiplicity(app, tmp_path):
+def test_main_window_uses_site_aware_structure_formula(app, tmp_path):
     gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
     window = gui.create_main_window()
     atoms = Atoms('FeFeNi', cell=(3.0, 3.0, 3.0), pbc=True)
@@ -326,32 +326,16 @@ def test_assigned_composition_uses_kind_occupancy_with_multiplicity(app, tmp_pat
     window.controller.replace_structure(atoms)
 
     assert 'occupancy' not in atoms.arrays
-    assert window._collect_assigned_counts() == {
-        'Fe': 1.0,
-        'Co': 1.0,
-        'Ni': 1.0,
-    }
-    assert 'Fe: 1.00' in window.info_label.text()
-    assert 'Co: 1.00' in window.info_label.text()
-    assert 'Ni: 1.00' in window.info_label.text()
-
-    atoms.arrays['spacegroup_kinds'][2] = 2
-    atoms.info['occupancy']['0'] = {
-        AtomicType('Fe'): 0.5,
-        'Co': 0.5,
-    }
-    assert window._collect_assigned_counts() == {
-        'Fe': 1.0,
-        'Co': 1.0,
-        'Ni': 1.0,
-    }
+    assert window.info_label.text().startswith('Formula: (Fe|Co)2Ni\n')
     window.close()
 
 
 def _atoms_with_scf_status(status):
-    atoms = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
-    atoms.has_potential = lambda: True
-    atoms.potential = SimpleNamespace(
+    atoms = SPRKKRAtoms.promote_ase_atoms(
+        Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True),
+        symmetry=False,
+    )
+    atoms._potential = SimpleNamespace(
         SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
     )
     return atoms
