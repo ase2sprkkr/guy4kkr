@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import logging
 from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
@@ -17,6 +18,9 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.misc.resources import icon_path
+
+
+logger = logging.getLogger(__name__)
 
 _PLOT_ICON = (
     icon_path("labplot-xy-interpolation-curve.svg")
@@ -47,8 +51,11 @@ def result_action_icon(style: QStyle, action: str) -> QIcon:
 
 def result_action_tooltip(value, action: str) -> str:
     """Describe a result action using the value's short help text."""
+    return _action_tooltip(action, getattr(value, "info", ""))
+
+
+def _action_tooltip(action: str, info: str) -> str:
     label = _ACTION_LABELS.get(action, action.replace("_", " ").capitalize())
-    info = getattr(value, "info", "")
     return f"{label} — {info}" if info else label
 
 
@@ -126,15 +133,19 @@ class ResultActionsWidget(QWidget):
 
         try:
             values = result.output_values
-        except Exception:
-            self._show_empty("Result values are unavailable.")
-            return
+            items = list(values.items())
+        except Exception as exc:
+            logger.exception("Failed to load result output values")
+            self._add_error_row("Output values could not be loaded", exc)
+            items = ()
 
-        for value in values.values():
-            actions = tuple(value.actions())
-            if not actions and not self._show_values_without_actions:
-                continue
-            self._add_row(value, actions)
+        for key, value in items:
+            try:
+                name = str(key)
+            except Exception:
+                logger.exception("Failed to read an output value name")
+                name = "<unknown output>"
+            self._add_value(name, value)
 
         if self._row_count:
             self._empty_label.hide()
@@ -142,26 +153,89 @@ class ResultActionsWidget(QWidget):
         else:
             self._show_empty("No actions available.")
 
-    def _add_row(self, value: Any, actions: tuple[str, ...]) -> None:
+    def _add_value(self, key: str, value: Any) -> None:
+        try:
+            fallback_name = getattr(value, "name", key)
+            name = str(getattr(value, "display_name", fallback_name))
+            raw_info = getattr(value, "info", "")
+            info = str(raw_info) if raw_info else ""
+            summary = str(value.value_label())
+        except Exception as exc:
+            logger.exception("Failed to display output value %r", key)
+            self._add_error_row(f"{key}: unavailable", exc)
+            return
+
+        try:
+            actions = tuple(str(action) for action in value.actions())
+        except Exception as exc:
+            logger.exception("Failed to load actions for output value %r", key)
+            self._add_row(
+                value,
+                (),
+                name=name,
+                info=info,
+                summary=summary,
+                warning=f"Actions could not be loaded: {exc}",
+            )
+            return
+
+        if not actions and not self._show_values_without_actions:
+            return
+        self._add_row(
+            value,
+            actions,
+            name=name,
+            info=info,
+            summary=summary,
+        )
+
+    def _add_error_row(
+        self,
+        name: str,
+        error: Exception | None = None,
+    ) -> None:
+        detail = f": {error}" if error else ""
+        self._add_row(
+            None,
+            (),
+            name=f"{name} ⚠",
+            info="",
+            summary="Unavailable",
+            warning=f"Could not display this output{detail}",
+        )
+
+    def _add_row(
+        self,
+        value: Any | None,
+        actions: tuple[str, ...],
+        *,
+        name: str,
+        info: str,
+        summary: str,
+        warning: str | None = None,
+    ) -> None:
         row = self._row_count
 
-        name = QLabel(getattr(value, "display_name", value.name), self._container)
-        name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        name.setWordWrap(True)
-        info = getattr(value, "info", "")
-        if info:
-            name.setToolTip(info)
-        self._grid.addWidget(name, row, 0)
+        name_label = QLabel(name, self._container)
+        name_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        name_label.setWordWrap(True)
+        tooltip = "\n\n".join(part for part in (info, warning) if part)
+        if tooltip:
+            name_label.setToolTip(tooltip)
+        self._grid.addWidget(name_label, row, 0)
 
         buttons = QWidget(self._container)
         button_layout = QHBoxLayout(buttons)
         button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.setSpacing(4)
         for action in actions:
+            assert value is not None
             button = QToolButton(buttons)
             button.setAutoRaise(True)
             button.setIcon(result_action_icon(self.style(), action))
-            button.setToolTip(result_action_tooltip(value, action))
+            button.setToolTip(_action_tooltip(action, info))
             button.clicked.connect(
                 lambda _checked=False, v=value, a=action: self._action_handler(v, a)
             )
@@ -169,8 +243,13 @@ class ResultActionsWidget(QWidget):
         button_layout.addStretch(1)
         self._grid.addWidget(buttons, row, 1)
 
-        summary = ElidedValueLabel(str(value.value_label()), self._container)
-        self._grid.addWidget(summary, row, 2)
+        summary_text = f"{summary} ⚠" if warning else summary
+        summary_label = ElidedValueLabel(summary_text, self._container)
+        if warning:
+            summary_label.setToolTip(
+                "\n\n".join(part for part in (summary, warning) if part)
+            )
+        self._grid.addWidget(summary_label, row, 2)
         self._row_count += 1
 
     def _show_empty(self, text: str) -> None:
