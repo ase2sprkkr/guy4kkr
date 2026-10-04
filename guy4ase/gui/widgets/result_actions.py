@@ -1,6 +1,7 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
+from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QResizeEvent
 from PyQt6.QtWidgets import (
@@ -117,7 +118,7 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
-    def set_result(self, result: Any | None) -> None:
+    def set_result(self, result: TaskResult | None) -> None:
         self._clear()
         if result is None:
             self._show_empty(self._empty_text)
@@ -129,11 +130,7 @@ class ResultActionsWidget(QWidget):
             self._show_empty("Result values are unavailable.")
             return
 
-        items = values.items()
-        if isinstance(items, Mapping):
-            items = items.items()
-
-        for _key, value in items:
+        for value in values.values():
             actions = tuple(value.actions())
             if not actions and not self._show_values_without_actions:
                 continue
