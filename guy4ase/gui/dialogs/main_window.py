@@ -1109,9 +1109,10 @@ class MainWindow(QMainWindow):
             return
         status_text = ""
         if isinstance(atoms, SPRKKRAtoms):
-            status = atoms.potential.SCF_INFO.SCFSTATUS()
-            if status and status != 'START':
-                status_text = f"SCF Status: {status}"
+            if atoms.has_potential():
+                status = atoms.potential.SCF_INFO.SCFSTATUS()
+                if status and status != 'START':
+                    status_text = f"SCF Status: {status}"
         self.converged_label.setText(status_text)
 
         n_atoms = len(atoms)
