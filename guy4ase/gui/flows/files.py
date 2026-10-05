@@ -5,10 +5,14 @@ import re
 from functools import partial
 from pathlib import Path
 
+from ase.io import read as ase_read
+from ase.io import write as ase_write
 from ase.io.formats import ioformats
+from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.result_loading import load_result_file
 from guy4ase.gui.application.workspace_controller import (
     Busy,
     DocumentChange,
@@ -69,12 +73,18 @@ def load_structure(
 ) -> bool:
     try:
         generation = controller.generation
-        prepared = controller.prepare_structure_load(file_path)
+        path = Path(file_path).resolve()
+        atoms = ase_read(path)
+        potential_path = (
+            str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
+        )
         change = wait_for_structure(
             parent,
             partial(
-                controller.adopt_loaded_structure,
-                prepared,
+                controller.replace_structure,
+                atoms,
+                potential_path=potential_path,
+                directory=str(path.parent),
                 expected_generation=generation,
             ),
         )
@@ -85,7 +95,6 @@ def load_structure(
         return False
     if isinstance(change, Busy) or not document_change_applied(parent, change):
         return False
-    _resolved, atoms = prepared
     warn_if_structure_kind_is_unknown(atoms, parent)
     recent_files.remember("structure", file_path)
     return True
@@ -117,13 +126,22 @@ def load_input_parameters(
     parent: QWidget,
 ) -> bool:
     try:
-        controller.load_input_parameters(file_path)
+        generation = controller.generation
+        path = Path(file_path).resolve()
+        parameters = InputParameters.from_file(path)
+        change = controller.replace_input_parameters(
+            parameters,
+            directory=str(path.parent),
+            expected_generation=generation,
+        )
     except Exception as exc:  # noqa: BLE001 - parser errors are presented
         QMessageBox.critical(
             parent,
             "Load Error",
             f"Failed to load input parameters:\n{exc}",
         )
+        return False
+    if not document_change_applied(parent, change):
         return False
     recent_files.remember("input", file_path)
     return True
@@ -153,12 +171,12 @@ def load_output(
 ) -> bool:
     try:
         generation = controller.generation
-        prepared = controller.prepare_result_load(file_path)
+        loaded = load_result_file(file_path)
         adoption = wait_for_structure(
             parent,
             partial(
-                controller.adopt_loaded_result,
-                prepared,
+                controller.adopt_external_result,
+                loaded,
                 expected_generation=generation,
             ),
         )
@@ -203,9 +221,21 @@ def save_structure(
     match = re.search(r"\*\.(\w+)", selected_filter)
     if match and not file_path.lower().endswith(f".{match.group(1)}"):
         file_path += f".{match.group(1)}"
+
+    def write_structure() -> None:
+        atoms = controller.workspace.atoms
+        if atoms is None:
+            raise ValueError("No structure is loaded.")
+        ase_write(Path(file_path).resolve(), atoms)
+
     try:
         outcome = wait_for_structure(
-            parent, partial(controller.save_structure, file_path)
+            parent,
+            partial(
+                controller.structure_gate.try_call,
+                "saving the structure",
+                write_structure,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
@@ -223,7 +253,8 @@ def save_input_parameters(
     recent_files: RecentFiles,
     parent: QWidget,
 ) -> bool:
-    if controller.workspace.input_parameters is None:
+    parameters = controller.workspace.input_parameters
+    if parameters is None:
         return False
     file_path, _ = QFileDialog.getSaveFileName(
         parent,
@@ -234,7 +265,7 @@ def save_input_parameters(
     if not file_path:
         return False
     try:
-        controller.save_input_parameters(file_path)
+        parameters.to_file(Path(file_path).resolve())
     except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
             parent,

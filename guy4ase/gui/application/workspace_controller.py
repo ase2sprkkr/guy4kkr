@@ -8,13 +8,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, TypeVar
 
-from ase.io import read as ase_read
-from ase.io import write as ase_write
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
-from ase2sprkkr.outputs.task_result import TaskResult
-from ase2sprkkr.potentials.potentials import Potential
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
 
 _KEEP_DIRECTORY = object()
@@ -101,11 +97,6 @@ class ResultAdoption:
     adopted: bool = True
 
 
-PreparedStructureLoad = tuple[Path, Any]
-PreparedResultLoad = tuple[Any, ResultAdoption, Any, str]
-PreparedCalculationResult = tuple[Any, ResultAdoption, Any]
-
-
 class WorkspaceController(QObject):
     """Own semantic document transitions and its monotonic revision.
 
@@ -183,6 +174,7 @@ class WorkspaceController(QObject):
         atoms: Any,
         *,
         potential_path: str | None = None,
+        directory: Any = _KEEP_DIRECTORY,
         expected_generation: int | None = None,
     ) -> DocumentChange | Busy:
         def change() -> tuple[DocumentChange, bool]:
@@ -192,6 +184,8 @@ class WorkspaceController(QObject):
             self.workspace.result = None
             self.workspace.atoms = atoms
             self.workspace.potential_path = potential_path
+            if directory is not _KEEP_DIRECTORY:
+                self.workspace.directory = directory
             self._changed()
             return DocumentChange.APPLIED, had_result
 
@@ -202,6 +196,8 @@ class WorkspaceController(QObject):
         if status is DocumentChange.APPLIED:
             if had_result:
                 self.resultChanged.emit(None)
+            if directory is not _KEEP_DIRECTORY:
+                self.directoryChanged.emit(directory)
             self.structureChanged.emit(atoms)
         return status
 
@@ -267,121 +263,26 @@ class WorkspaceController(QObject):
         self.workspace.directory = directory
         self.directoryChanged.emit(directory)
 
-    @staticmethod
-    def prepare_structure_load(
-        file_path: str | Path,
-    ) -> PreparedStructureLoad:
-        """Parse a structure exactly once, without touching the document."""
-        resolved = Path(file_path).resolve()
-        return resolved, ase_read(resolved)
-
-    def adopt_loaded_structure(
+    def adopt_external_result(
         self,
-        prepared: PreparedStructureLoad,
-        *,
-        expected_generation: int,
-    ) -> DocumentChange | Busy:
-        """Commit an already parsed structure under the structure gate."""
-        resolved, atoms = prepared
-
-        def commit() -> tuple[DocumentChange, bool, str | None]:
-            if not self._generation_is_current(expected_generation):
-                return DocumentChange.STALE, False, None
-            had_result = self.workspace.result is not None
-            directory = str(resolved.parent)
-            self.workspace.result = None
-            self.workspace.directory = directory
-            self.workspace.atoms = atoms
-            self.workspace.potential_path = (
-                str(resolved)
-                if resolved.suffix.lower() in {".pot", ".pot_new"}
-                else None
-            )
-            self._changed()
-            return DocumentChange.APPLIED, had_result, directory
-
-        attempt = self._structure_gate.try_call(
-            "loading a structure from a file", commit
-        )
-        if isinstance(attempt, Busy):
-            return attempt
-        status, had_result, directory = attempt
-        if status is DocumentChange.STALE:
-            return status
-        if had_result:
-            self.resultChanged.emit(None)
-        assert directory is not None
-        self.directoryChanged.emit(directory)
-        self.structureChanged.emit(atoms)
-        return status
-
-    def load_input_parameters(self, file_path: str | Path) -> InputParameters:
-        """Parse and commit input data without taking the structure lock."""
-        resolved = Path(file_path).resolve()
-        parameters = InputParameters.from_file(resolved)
-        had_result = self.workspace.result is not None
-        directory = str(resolved.parent)
-        self.workspace.result = None
-        self.workspace.directory = directory
-        self.workspace.input_parameters = parameters
-        self._changed()
-        if had_result:
-            self.resultChanged.emit(None)
-        self.directoryChanged.emit(directory)
-        self.inputParametersChanged.emit(parameters)
-        return parameters
-
-    def save_structure(self, file_path: str | Path) -> Path | Busy:
-        """Write directly from shared Atoms while holding the structure lock."""
-        resolved = Path(file_path).resolve()
-
-        def save() -> Path:
-            if self.workspace.atoms is None:
-                raise ValueError("No structure is loaded.")
-            ase_write(resolved, self.workspace.atoms)
-            return resolved
-
-        return self._structure_gate.try_call("saving the structure", save)
-
-    def save_input_parameters(self, file_path: str | Path) -> Path:
-        """Write independent input data without taking the structure lock."""
-        resolved = Path(file_path).resolve()
-        if self.workspace.input_parameters is None:
-            raise ValueError("No input parameters are loaded.")
-        self.workspace.input_parameters.to_file(resolved)
-        return resolved
-
-    def prepare_result_load(
-        self, file_path: str | Path
-    ) -> PreparedResultLoad:
-        """Parse an external result and its potential exactly once."""
-        resolved = Path(file_path).resolve()
-        result = TaskResult.from_file(resolved)
-        output, potential = self._result_artifacts(result, resolved.parent)
-        output = output or resolved
-        atoms, potential_error = self._load_result_potential(potential)
-        directory = str(output.parent.resolve())
-        adoption = ResultAdoption(output, potential, potential_error)
-        return result, adoption, atoms, directory
-
-    def adopt_loaded_result(
-        self,
-        prepared: PreparedResultLoad,
+        loaded: LoadedResult,
         *,
         expected_generation: int,
     ) -> ResultAdoption | Busy:
-        """Commit one already parsed external result under the structure gate."""
-        result, adoption, atoms, directory = prepared
+        """Install a fully loaded external result as a new document."""
+        adoption = self._result_adoption(loaded)
 
         def commit() -> bool:
             if not self._generation_is_current(expected_generation):
                 return False
-            self.workspace.result = result
-            self.workspace.atoms = atoms
+            self.workspace.result = loaded.result
+            self.workspace.atoms = loaded.atoms
             self.workspace.potential_path = (
-                str(adoption.potential_path) if atoms is not None else None
+                str(loaded.potential_path)
+                if loaded.atoms is not None
+                else None
             )
-            self.workspace.directory = directory
+            self.workspace.directory = loaded.directory
             self._changed()
             return True
 
@@ -392,119 +293,45 @@ class WorkspaceController(QObject):
             return attempt
         if not attempt:
             return replace(adoption, adopted=False)
-        self.structureChanged.emit(atoms)
-        self.directoryChanged.emit(directory)
-        self.resultChanged.emit(result)
+        self.structureChanged.emit(loaded.atoms)
+        self.directoryChanged.emit(loaded.directory)
+        self.resultChanged.emit(loaded.result)
         return adoption
 
     @staticmethod
-    def _result_path(result: Any, key: str) -> Path | None:
-        try:
-            if hasattr(result, "files") and key in result.files:
-                value = result.path_to(key)
-                return Path(value) if value else None
-        except Exception:  # noqa: BLE001 - optional third-party adapter
-            return None
-        return None
-
-    @staticmethod
-    def _resolve_result_path(
-        path: str | Path | None,
-        result: Any,
-        fallback_directory: str | Path | None,
-    ) -> Path | None:
-        if not path:
-            return None
-        resolved = Path(path)
-        if not resolved.is_absolute():
-            base = getattr(result, "directory", None) or fallback_directory
-            if base:
-                resolved = Path(base) / resolved
-        return resolved.resolve()
-
-    def _result_artifacts(
-        self,
-        result: Any,
-        fallback_directory: str | Path | None,
-    ) -> tuple[Path | None, Path | None]:
-        output = self._result_path(result, "output")
-        if output is None:
-            output = self._resolve_result_path(
-                getattr(result, "output_file", None), result, fallback_directory
-            )
-        else:
-            output = self._resolve_result_path(output, result, fallback_directory)
-
-        potential = self._result_path(result, "converged")
-        if potential is None:
-            potential = self._result_path(result, "potential")
-        if potential is None:
-            try:
-                potential = getattr(result, "potential_filename", None)
-            except Exception:  # noqa: BLE001
-                potential = None
-        potential = self._resolve_result_path(
-            potential,
-            result,
-            fallback_directory or self.workspace.directory,
+    def _result_adoption(
+        loaded: LoadedResult, *, adopted: bool = True
+    ) -> ResultAdoption:
+        return ResultAdoption(
+            output_path=loaded.output_path,
+            potential_path=loaded.potential_path,
+            potential_error=loaded.potential_error,
+            adopted=adopted,
         )
-        return output, potential
-
-    @staticmethod
-    def _load_result_potential(
-        potential: Path | None,
-    ) -> tuple[Any | None, Exception | None]:
-        if potential is not None and potential.is_file():
-            try:
-                resolved = potential.resolve()
-                return Potential.from_file(str(resolved)).atoms, None
-            except Exception as exc:  # noqa: BLE001
-                return None, exc
-        return None, None
-
-    def prepare_calculation_result(
-        self,
-        result: Any,
-        *,
-        expected_generation: int,
-        fallback_directory: str | Path | None = None,
-    ) -> PreparedCalculationResult:
-        """Resolve and parse calculation artifacts exactly once."""
-        if not self._generation_is_current(expected_generation):
-            output, potential = self._result_artifacts(
-                result, fallback_directory
-            )
-            return result, ResultAdoption(output, potential, adopted=False), None
-
-        output, potential = self._result_artifacts(result, fallback_directory)
-        atoms, potential_error = self._load_result_potential(potential)
-        return result, ResultAdoption(output, potential, potential_error), atoms
 
     def adopt_calculation_result(
         self,
-        prepared: PreparedCalculationResult,
+        loaded: LoadedResult,
         *,
         expected_generation: int,
     ) -> ResultAdoption | Busy:
-        """Adopt only a result produced from the current document revision."""
-        result, prepared_adoption, atoms = prepared
-        if not prepared_adoption.adopted:
-            return prepared_adoption
+        """Adopt a loaded result produced from the current revision."""
+        prepared_adoption = self._result_adoption(loaded)
 
         def commit() -> ResultAdoption:
             if not self._generation_is_current(expected_generation):
                 return replace(prepared_adoption, adopted=False)
-            if atoms is not None:
-                self.workspace.atoms = atoms
+            if loaded.atoms is not None:
+                self.workspace.atoms = loaded.atoms
                 self.workspace.potential_path = str(
-                    prepared_adoption.potential_path
+                    loaded.potential_path
                 )
-            self.workspace.result = result
+            self.workspace.result = loaded.result
             self._changed()
             return prepared_adoption
 
         # Missing/unreadable potential preserves Atoms, so this is metadata-only.
-        if atoms is None:
+        if loaded.atoms is None:
             adoption = commit()
         else:
             attempt = self._structure_gate.try_call(
@@ -516,9 +343,9 @@ class WorkspaceController(QObject):
 
         if not adoption.adopted:
             return adoption
-        if atoms is not None:
-            self.structureChanged.emit(atoms)
-        self.resultChanged.emit(result)
+        if loaded.atoms is not None:
+            self.structureChanged.emit(loaded.atoms)
+        self.resultChanged.emit(loaded.result)
         return adoption
 
     def reset(self) -> None | Busy:

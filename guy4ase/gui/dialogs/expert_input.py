@@ -1,6 +1,7 @@
 """Modal workflow for editing an isolated copy of ``InputParameters``."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
@@ -98,7 +99,7 @@ class InputParametersDialog(QDialog):
         if not file_path:
             return
         try:
-            parameters = InputParameters.from_file(file_path)
+            parameters = InputParameters.from_file(Path(file_path).resolve())
             self._replace_parameters(parameters)
         except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
             QMessageBox.critical(

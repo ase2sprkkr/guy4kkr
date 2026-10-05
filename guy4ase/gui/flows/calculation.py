@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
@@ -71,19 +72,27 @@ def run_calculation(
             )
 
     def finished(result) -> None:
-        prepared_result = controller.prepare_calculation_result(
-            result,
-            expected_generation=request.generation,
-            fallback_directory=request.directory,
-        )
-        adoption = wait_for_structure(
-            parent,
-            partial(
-                controller.adopt_calculation_result,
-                prepared_result,
-                expected_generation=request.generation,
-            ),
-        )
+        try:
+            loaded = load_result(
+                result,
+                fallback_directory=request.directory,
+            )
+            adoption = wait_for_structure(
+                parent,
+                partial(
+                    controller.adopt_calculation_result,
+                    loaded,
+                    expected_generation=request.generation,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - backend metadata varies
+            QMessageBox.critical(
+                parent,
+                "Result Adoption Error",
+                "The calculation finished, but its result could not be "
+                f"adopted:\n{exc}",
+            )
+            return
         if not isinstance(adoption, Busy):
             adoption_completed(adoption)
 

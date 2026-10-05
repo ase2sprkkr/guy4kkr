@@ -398,7 +398,10 @@ class GuidedInputParametersDialog(QDialog):
         if not file_path:
             return
         try:
-            loaded = _prepare_parameters(InputParameters.from_file(file_path), self.task)
+            loaded = _prepare_parameters(
+                InputParameters.from_file(Path(file_path).resolve()),
+                self.task,
+            )
             self.session.replace_parameters(
                 loaded,
                 text=f"Load {Path(file_path).name}",
