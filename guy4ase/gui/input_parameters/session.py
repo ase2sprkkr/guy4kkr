@@ -187,6 +187,16 @@ class InputParametersSession(QObject):
         """Return a detached copy safe for callers or a nested editor to modify."""
         return self._working.copy(copy_values=True)
 
+    def fork(self, parent: QObject | None = None) -> "InputParametersSession":
+        """Create an independent session with the complete current edit state."""
+        session = InputParametersSession(
+            self._working,
+            parent,
+            plugins=self._plugins,
+        )
+        session._dormant = deepcopy(self._dormant)
+        return session
+
     def option(self, path: InputParameterPath) -> Any:
         return resolve_option(self._working, path)
 
@@ -263,7 +273,13 @@ class InputParametersSession(QObject):
         """
         candidate = self._working.copy(copy_values=True)
         callback(candidate)
-        return self._push(candidate, text=text, source_page=source_page, path=path, field_index=field_index)
+        return self._push(
+            candidate,
+            text=text,
+            source_page=source_page,
+            path=path,
+            field_index=field_index,
+        )
 
     def replace_parameters(
         self,
@@ -281,6 +297,33 @@ class InputParametersSession(QObject):
         candidate = parameters.copy(copy_values=True)
         return self._push(candidate, text=text, source_page=source_page, path=None)
 
+    def replace_from_session(
+        self,
+        session: "InputParametersSession",
+        *,
+        text: str = "Replace input parameters",
+        source_page: str | None = None,
+    ) -> bool:
+        """Import another session's complete state as one undoable command.
+
+        The source session has already applied its transaction plugins.  Its
+        dormant state is therefore installed together with its parameters
+        without applying the plugins a second time.
+        """
+        parameters = session.result()
+        if parameters.task_name.upper() != self._working.task_name.upper():
+            raise ValueError(
+                f"Expected {self._working.task_name.upper()} input parameters, "
+                f"got {parameters.task_name.upper()}."
+            )
+        return self._push_snapshot(
+            parameters,
+            deepcopy(session._dormant),
+            text=text,
+            source_page=source_page,
+            path=None,
+        )
+
     def _push(
         self,
         candidate: InputParameters,
@@ -293,6 +336,25 @@ class InputParametersSession(QObject):
         dormant = deepcopy(self._dormant)
         for plugin in self._plugins:
             plugin.apply(self._working, candidate, dormant)
+        return self._push_snapshot(
+            candidate,
+            dormant,
+            text=text,
+            source_page=source_page,
+            path=path,
+            field_index=field_index,
+        )
+
+    def _push_snapshot(
+        self,
+        candidate: InputParameters,
+        dormant: dict[DormantKey, Any],
+        *,
+        text: str,
+        source_page: str | None,
+        path: InputParameterPath | None,
+        field_index: int | None = None,
+    ) -> bool:
         if (
             _parameters_equal(candidate, self._working)
             and values_equal(dormant, self._dormant)
@@ -333,3 +395,24 @@ class InputParametersSession(QObject):
         if modified != self._modified:
             self._modified = modified
             self.modifiedChanged.emit(modified)
+
+
+def default_input_parameter_plugins() -> tuple[SessionTransactionPlugin, ...]:
+    """Return the standard transaction policy shared by all input editors."""
+    from guy4ase.gui.input_parameters.single_site_contour import (
+        SingleSiteContourPlugin,
+    )
+
+    return (SingleSiteContourPlugin(),)
+
+
+def create_input_parameters_session(
+    parameters: InputParameters,
+    parent: QObject | None = None,
+) -> InputParametersSession:
+    """Create an editing session with the application's standard policy."""
+    return InputParametersSession(
+        parameters,
+        parent,
+        plugins=default_input_parameter_plugins(),
+    )

@@ -5,7 +5,7 @@ os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
 
 import numpy as np
 import pytest
-from ase2sprkkr.common.grammar_types import SetOf
+from ase2sprkkr.common.grammar_types import Array, Integer, Keyword, Real, Sequence, SetOf
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
@@ -14,13 +14,19 @@ from PyQt6.QtWidgets import QApplication, QDialog, QToolButton
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.expert_fields import EXPERT_FIELDS
+from guy4ase.gui.input_parameters.energy import convert_energy, set_bound_energy
 from guy4ase.gui.widgets.input_parameters.relativistic_scaling import (
     RelativisticScalingEditor,
 )
 from guy4ase.gui.widgets.input_parameters.modal_editor import (
     ExpertFieldEditorDialog,
 )
-from guy4ase.gui.widgets.input_parameters.scalar import RealEditor, TextEditor
+from guy4ase.gui.widgets.input_parameters.scalar import (
+    IntegerEditor,
+    KeywordEditor,
+    RealEditor,
+    TextEditor,
+)
 
 
 @pytest.fixture
@@ -41,10 +47,9 @@ def test_expert_scaling_uses_compact_inline_defaultdict_editor(application, task
     parameters.MODE[name].set({'def': .8, 2: .4})
     original = parameters.to_string(validate=False)
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     control, item = scaling(dialog, name)
     assert isinstance(control, RealEditor)
-    assert parameters.to_string(validate=False) == original
+    assert dialog.result().to_string(validate=False) == original
     assert control.value() == .8
     assert item.child(0).text(0) == '[2]'
     tree_editor = dialog.tree_editor.tree
@@ -54,21 +59,194 @@ def test_expert_scaling_uses_compact_inline_defaultdict_editor(application, task
     assert isinstance(type_editor, RealEditor)
     assert type_editor.value() == .4
     control.setValue(.6)
-    assert parameters.MODE[name](all_values=True) == {'def': .6, 2: .4}
+    assert dialog.result().MODE[name](all_values=True) == {'def': .6, 2: .4}
     type_editor.setValue(.3)
-    assert parameters.MODE[name](all_values=True) == {'def': .6, 2: .3}
+    assert dialog.result().MODE[name](all_values=True) == {'def': .6, 2: .3}
     append_editor = tree_editor.itemWidget(item.child(1), 2)
     assert append_editor.specialValueText() == 'Add value…'
     append_editor.setValue(.2)
     application.processEvents()
-    assert parameters.MODE[name](all_values=True) == {'def': .6, 2: .3, 3: .2}
+    assert dialog.result().MODE[name](all_values=True) == {'def': .6, 2: .3, 3: .2}
     tree_editor.itemWidget(item.child(0), 3).click()
     application.processEvents()
-    assert parameters.MODE[name](all_values=True) == {'def': .6, 3: .2}
+    assert dialog.result().MODE[name](all_values=True) == {'def': .6, 3: .2}
     assert isinstance(tree_editor.itemWidget(item, 3), QToolButton)
     assert item.font(0).bold()
     dialog.close()
 
+def test_expert_tree_refreshes_energy_bound_dependencies_from_session(application):
+    parameters = InputParameters.create("dos")
+    parameters.ENERGY.EMIN.set(0.5)
+    dialog = InputParametersDialog(parameters)
+    item, = dialog.tree_editor.tree.findItems(
+        "EMIN / EMINEV",
+        Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+        0,
+    )
+    editor = dialog.tree_editor.tree.itemWidget(item, 2)
+
+    def change_bound(candidate):
+        set_bound_energy(candidate, "EMIN", -5.0, "eV", True)
+
+    dialog.session.mutate(
+        change_bound,
+        text="Change energy bound externally",
+        path=("ENERGY", "EMIN"),
+    )
+    application.processEvents()
+
+    assert editor.relative.isChecked()
+    assert editor.number.value() == pytest.approx(
+        convert_energy(-5.0, "eV", editor.units.currentData())
+    )
+    assert dialog.result().ENERGY.EMIN() is None
+    assert dialog.result().ENERGY.EMINEV() == pytest.approx(-5.0)
+    dialog.close()
+
+
+def test_expert_tree_refreshes_plugin_changed_energy_mesh_rows(application):
+    dialog = InputParametersDialog(InputParameters.create("scf"))
+    tree = dialog.tree_editor.tree
+    mesh_editors = {}
+    for name in ("NE", "GRID"):
+        item, = tree.findItems(
+            name,
+            Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+            0,
+        )
+        mesh_editors[name] = tree.itemWidget(item, 2)
+        assert isinstance(mesh_editors[name], TextEditor)
+
+    dialog.session.set_value(("ENERGY", "NE"), [41])
+    application.processEvents()
+    dialog.session.set_value(("ENERGY", "SPLITSS"), True)
+    application.processEvents()
+
+    assert list(dialog.result().ENERGY.NE()) == [41, 41]
+    assert list(dialog.result().ENERGY.GRID()) == ["5", "5"]
+    refreshed_editors = {}
+    for name in ("NE", "GRID"):
+        item, = tree.findItems(
+            name,
+            Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+            0,
+        )
+        refreshed_editors[name] = tree.itemWidget(item, 2)
+    assert refreshed_editors["NE"].text().count("41") == 2
+    assert refreshed_editors["GRID"].text().count("5") == 2
+    dialog.close()
+
+
+def test_expert_sequence_children_use_the_shared_editor_registry(application, monkeypatch):
+    parameters = InputParameters.create("scf")
+    option = parameters.SCF.NITER
+    sequence_type = Sequence(
+        Integer(), Real(), Keyword("A", "B"),
+        names=("count", "energy", "mode"),
+    )
+    monkeypatch.setattr(option._definition, "type", sequence_type)
+    monkeypatch.setattr(option._definition, "grammar_type", sequence_type)
+    option.set(sequence_type.convert([3, 2.5, "A"]))
+    dialog = InputParametersDialog(parameters)
+    tree = dialog.tree_editor.tree
+    item = next(
+        candidate
+        for candidate in tree.findItems(
+            "NITER",
+            Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+            0,
+        )
+        if candidate.text(1) == str(sequence_type)
+    )
+
+    assert isinstance(tree.itemWidget(item.child(0), 2), IntegerEditor)
+    assert isinstance(tree.itemWidget(item.child(1), 2), RealEditor)
+    assert isinstance(tree.itemWidget(item.child(2), 2), KeywordEditor)
+    tree.itemWidget(item.child(1), 2).setValue(7.25)
+    assert dialog.session.value(("SCF", "NITER")).energy == 7.25
+    dialog.close()
+
+
+def test_expert_repeated_structure_restores_through_undo_and_redo(application):
+    source = InputParameters.create("xas")
+    source.MODE.MDIR.set({"def": [0., 0., 1.], 2: [1., 0., 0.]})
+    dialog = InputParametersDialog(source)
+    tree = dialog.tree_editor.tree
+    item, = tree.findItems(
+        "MDIR",
+        Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+        0,
+    )
+
+    tree.itemWidget(item.child(1), 3).click()
+    application.processEvents()
+    assert 2 not in dialog.result().MODE.MDIR(all_values=True)
+    assert [item.child(index).text(0) for index in range(item.childCount())] == [
+        "Default items", "[1]",
+    ]
+
+    dialog.session.undo_stack.undo()
+    application.processEvents()
+    item, = tree.findItems(
+        "MDIR",
+        Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+        0,
+    )
+    assert 2 in dialog.result().MODE.MDIR(all_values=True)
+    assert item.child(1).text(0) == "[2]"
+    assert isinstance(tree.itemWidget(item.child(1), 2), TextEditor)
+
+    dialog.session.undo_stack.redo()
+    application.processEvents()
+    item, = tree.findItems(
+        "MDIR",
+        Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive,
+        0,
+    )
+    assert 2 not in dialog.result().MODE.MDIR(all_values=True)
+    assert item.child(1).text(0) == "[1]"
+    dialog.close()
+
+
+def test_incomplete_fixed_array_is_presentation_draft_only(application, monkeypatch):
+    parameters = InputParameters.create("scf")
+    option = parameters.TAU.CLURAD
+    fixed_array = Array(Real(), length=3)
+    monkeypatch.setattr(option._definition, "type", fixed_array)
+    monkeypatch.setattr(option._definition, "grammar_type", fixed_array)
+    dialog = InputParametersDialog(parameters)
+    path = ("TAU", "CLURAD")
+    item = dialog.tree_editor._option_rows[path]
+    tree = dialog.tree_editor.tree
+    editors = [tree.itemWidget(item.child(index), 2) for index in range(3)]
+
+    editors[0].setValue(1.0)
+    editors[1].setValue(2.0)
+    assert dialog.session.value(path) is None
+    assert dialog.session.undo_stack.count() == 0
+
+    editors[2].setValue(3.0)
+    application.processEvents()
+    np.testing.assert_allclose(dialog.session.value(path), [1.0, 2.0, 3.0])
+    assert dialog.session.undo_stack.count() == 1
+
+    dialog.session.undo_stack.undo()
+    application.processEvents()
+    assert dialog.session.value(path) is None
+    new_item = dialog.tree_editor._option_rows[path]
+    assert tree.itemWidget(new_item.child(0), 2).value() != 1.0
+
+    tree.itemWidget(new_item.child(0), 2).setValue(8.0)
+    assert dialog.session.value(path) is None
+    replacement = InputParameters.create("scf")
+    replacement.TAU.CLURAD.set([4.0, 5.0, 6.0])
+    dialog.session.replace_parameters(replacement)
+    item = dialog.tree_editor._option_rows[path]
+    assert list(dialog.session.value(path)) == [4.0, 5.0, 6.0]
+    assert [tree.itemWidget(item.child(index), 2).value() for index in range(3)] == [
+        4.0, 5.0, 6.0,
+    ]
+    dialog.close()
 
 def test_modal_scaling_add_and_remove_refreshes_its_rows(application):
     parameters = InputParameters.create('scf')
@@ -163,7 +341,6 @@ def test_expert_modal_scaling_uses_shared_orbital_table(application, monkeypatch
     monkeypatch.setattr(definition, 'default_value', np.array([1.]))
     parameters.MODE.SOC.set({'def': [1.], 2: [.8, .7, .6]})
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     control, item = scaling(dialog)
     assert isinstance(control, TextEditor)
 
@@ -180,6 +357,7 @@ def test_expert_modal_scaling_uses_shared_orbital_table(application, monkeypatch
 
     monkeypatch.setattr(ExpertFieldEditorDialog, 'exec', edit)
     dialog.tree_editor.tree.itemWidget(item, 3).click()
+    application.processEvents()
     assert control.text() == '[0.6, 1.0, 1.0, 1.0]'
     np.testing.assert_equal(dialog.result().MODE.SOC(all_values=True)[2], [.8, .7, .3, .6])
     dialog.close()
@@ -189,7 +367,6 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
     source = InputParameters.create('xas')
     source.MODE.MDIR.set({'def': [0., 0., 1.], 2: [1., 0., 0.]})
     dialog = InputParametersDialog(source)
-    parameters = dialog.result()
     tree = dialog.tree_editor.tree
     item, = tree.findItems(
         'MDIR',
@@ -215,6 +392,8 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
     override_editor = tree.itemWidget(override, 2)
     assert isinstance(override_editor, TextEditor)
     assert override_editor.text() == '[1.0, 0.0, 0.0]'
+    component_editor = tree.itemWidget(override.child(0), 2)
+    assert isinstance(component_editor, RealEditor)
     remove_button = tree.itemWidget(override, 3)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.toolTip() == 'Remove repeated value 2'
@@ -227,17 +406,18 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
     override_editor.setText('{.25,.5,.75}')
     override_editor.editingFinished.emit()
     application.processEvents()
-    np.testing.assert_allclose(parameters.MODE.MDIR(), [0., 0., 1.])
-    np.testing.assert_allclose(parameters.MODE.MDIR(all_values=True)[2], [.25, .5, .75])
+    np.testing.assert_allclose(dialog.result().MODE.MDIR(), [0., 0., 1.])
+    np.testing.assert_allclose(dialog.result().MODE.MDIR(all_values=True)[2], [.25, .5, .75])
     assert [
         tree.itemWidget(override.child(index), 2).value()
         for index in range(3)
     ] == [.25, .5, .75]
+    assert tree.itemWidget(override.child(0), 2) is component_editor
 
     tree.itemWidget(override.child(0), 2).setValue(.125)
     application.processEvents()
     np.testing.assert_allclose(
-        parameters.MODE.MDIR(all_values=True)[2],
+        dialog.result().MODE.MDIR(all_values=True)[2],
         [.125, .5, .75],
     )
     assert override_editor.text() == '[0.125, 0.5, 0.75]'
@@ -245,7 +425,7 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
     append_editor.setText('{.1,.2,.3}')
     append_editor.editingFinished.emit()
     application.processEvents()
-    np.testing.assert_allclose(parameters.MODE.MDIR(all_values=True)[3], [.1, .2, .3])
+    np.testing.assert_allclose(dialog.result().MODE.MDIR(all_values=True)[3], [.1, .2, .3])
     assert [item.child(index).text(0) for index in range(4)] == [
         'Default items', '[2]', '[3]', '[4]',
     ]
@@ -253,7 +433,7 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
 
     tree.itemWidget(item.child(1), 3).click()
     application.processEvents()
-    assert 2 not in parameters.MODE.MDIR(all_values=True)
+    assert 2 not in dialog.result().MODE.MDIR(all_values=True)
     assert [item.child(index).text(0) for index in range(3)] == [
         'Default items', '[3]', '[4]',
     ]
@@ -270,7 +450,6 @@ def test_expert_numbered_vectors_render_one_complete_value_per_child(application
         },
     })
     dialog = InputParametersDialog(source)
-    parameters = dialog.result()
     tree = dialog.tree_editor.tree
     item, = tree.findItems(
         'KE',
@@ -295,7 +474,7 @@ def test_expert_numbered_vectors_render_one_complete_value_per_child(application
     editor.setText('{.5,.25,.125}')
     editor.editingFinished.emit()
     application.processEvents()
-    np.testing.assert_allclose(parameters.TASK.KE(all_values=True)[1], [.5, .25, .125])
+    np.testing.assert_allclose(dialog.result().TASK.KE(all_values=True)[1], [.5, .25, .125])
     dialog.close()
 
 
@@ -303,7 +482,6 @@ def test_clicking_tree_row_after_repeated_edit_keeps_scroll_position(application
     source = InputParameters.create('xas')
     source.MODE.MDIR.set({'def': [0., 0., 1.], 2: [1., 0., 0.]})
     dialog = InputParametersDialog(source)
-    parameters = dialog.result()
     dialog.resize(1000, 650)
     dialog.show()
     application.processEvents()
@@ -336,7 +514,7 @@ def test_clicking_tree_row_after_repeated_edit_keeps_scroll_position(application
     assert scrollbar.value() == position
     assert item.child(1) is child
     np.testing.assert_allclose(
-        parameters.MODE.MDIR(all_values=True)[2],
+        dialog.result().MODE.MDIR(all_values=True)[2],
         [.2, .3, .4],
     )
     dialog.close()

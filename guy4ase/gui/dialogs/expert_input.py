@@ -19,6 +19,10 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.dialogs.input_file import InputFileEditor
+from guy4ase.gui.input_parameters.session import (
+    InputParametersSession,
+    create_input_parameters_session,
+)
 from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
@@ -28,7 +32,7 @@ class InputParametersDialog(QDialog):
 
     def __init__(
         self,
-        params: InputParameters,
+        parameters: InputParameters | InputParametersSession,
         parent: QWidget | None = None,
         *,
         show_changed_only: bool = False,
@@ -37,7 +41,12 @@ class InputParametersDialog(QDialog):
         atoms: Any = None,
     ) -> None:
         super().__init__(parent)
-        self._params = params.copy(copy_values=True)
+        if isinstance(parameters, InputParametersSession):
+            # The caller owns an explicitly supplied session and may need it
+            # after this dialog has closed (Guided applies it on Accept).
+            self.session = parameters
+        else:
+            self.session = create_input_parameters_session(parameters, self)
         self._calculate_mode = calculate_mode
         self._directory = directory or ''
 
@@ -59,7 +68,7 @@ class InputParametersDialog(QDialog):
             self._directory_edit = None
 
         self.tree_editor = ExpertInputTreeEditor(
-            lambda: self._params,
+            self.session,
             atoms=atoms,
             show_changed_only=show_changed_only,
             parent=self,
@@ -111,15 +120,8 @@ class InputParametersDialog(QDialog):
         self.tree_editor.set_show_changed_only(True)
 
     def _replace_parameters(self, parameters: InputParameters) -> None:
-        """Install a parsed draft atomically with respect to tree rebuilding."""
-        previous = self._params
-        self._params = parameters
-        try:
-            self.tree_editor.rebuild()
-        except Exception:
-            self._params = previous
-            self.tree_editor.rebuild()
-            raise
+        """Install parsed input as one session transaction."""
+        self.session.replace_parameters(parameters, text="Load input file")
 
     def _edit_input_file(self) -> None:
         focus = QApplication.focusWidget()
@@ -127,7 +129,7 @@ class InputParametersDialog(QDialog):
             focus.clearFocus()
         try:
             editor = InputFileEditor(
-                self._params,
+                self.session.result(),
                 self,
                 apply_parameters=self._replace_parameters,
             )
@@ -158,7 +160,7 @@ class InputParametersDialog(QDialog):
         if not self.tree_editor.commit_pending():
             return
         try:
-            validate_setup(self._params)
+            validate_setup(self.session.working_parameters)
         except Exception as error:  # noqa: BLE001 - backend validation boundary.
             self._validation_error.setText(str(error))
             self._validation_error.show()
@@ -174,7 +176,7 @@ class InputParametersDialog(QDialog):
         self.accept()
 
     def result(self) -> InputParameters:
-        return self._params
+        return self.session.result()
 
     def directory(self) -> str:
         if self._directory_edit is not None:
@@ -193,8 +195,36 @@ def edit_input_parameters(
     atoms: Any = None,
 ) -> Any:
     """Open the expert editor and return its accepted isolated draft."""
+    session = create_input_parameters_session(params)
+    accepted = edit_input_parameters_session(
+        session,
+        parent=parent,
+        show_changed_only=show_changed_only,
+        calculate_mode=calculate_mode,
+        directory=directory,
+        return_directory=return_directory,
+        atoms=atoms,
+    )
+    if accepted is None:
+        return None
+    if return_directory:
+        return accepted[0].result(), accepted[1]
+    return accepted.result()
+
+
+def edit_input_parameters_session(
+    session: InputParametersSession,
+    parent: QWidget | None = None,
+    *,
+    show_changed_only: bool = False,
+    calculate_mode: bool = False,
+    directory: str | None = None,
+    return_directory: bool = False,
+    atoms: Any = None,
+) -> InputParametersSession | tuple[InputParametersSession, str] | None:
+    """Run Expert over an independent session and return it only on Accept."""
     dialog = InputParametersDialog(
-        params,
+        session,
         parent=parent,
         show_changed_only=show_changed_only,
         calculate_mode=calculate_mode,
@@ -204,8 +234,8 @@ def edit_input_parameters(
     code = dialog.exec()
     if code == QDialog.DialogCode.Accepted:
         if return_directory:
-            return dialog.result(), dialog.directory()
-        return dialog.result()
+            return session, dialog.directory()
+        return session
     return None
 
 

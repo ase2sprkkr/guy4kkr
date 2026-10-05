@@ -17,11 +17,12 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
-from guy4ase.gui.input_parameters.bindings import InputParametersBinding
 from guy4ase.gui.input_parameters.field_binding import (
     IndexedFieldBinding,
     SessionFieldBinding,
 )
+from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.specs.schema import field
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
@@ -265,8 +266,10 @@ def test_guided_renderer_has_no_task_specific_presentation_branches():
 
 def test_session_has_no_single_site_contour_semantics():
     source = (GUI / "input_parameters" / "session.py").read_text()
-    for identifier in ("SPLITSS", "FSOHFF", "GRID", "NE", "single_site"):
+    for identifier in ("SPLITSS", "FSOHFF", '"GRID"', '"NE"'):
         assert identifier not in source
+    assert "default_input_parameter_plugins" in source
+    assert "SingleSiteContourPlugin" in source
 
 
 def test_single_site_contour_policy_imports_without_qt():
@@ -318,11 +321,10 @@ def test_expert_dialog_delegates_parameter_tree_rendering():
     ):
         assert tree_detail not in dialog
 
-    # The modal shell owns the one isolated draft. The reusable tree only
-    # accesses the current externally owned document through its getter.
-    assert "copy(copy_values=True)" in dialog
+    # Both shells and the reusable tree share the transactional session model.
+    assert "create_input_parameters_session" in dialog
     assert "copy(copy_values=True)" not in renderer
-    assert "self._params" not in renderer
+    assert "DirectFieldBinding" not in renderer
     assert "create_editor(" in renderer
     assert "ParameterValueEditor" in renderer
     for option_semantic in (
@@ -493,21 +495,22 @@ for module in pkgutil.walk_packages(guy4ase.gui.__path__, 'guy4ase.gui.'):
 """], cwd=ROOT, check=True, timeout=30)
 
 
-def test_binding_follows_replacement_without_owning_values():
-    current = [InputParameters.create("scf")]
-    changes = []
-    binding = InputParametersBinding(lambda: current[0], changes.append)
+def test_session_binding_parameters_follows_the_working_snapshot():
+    session = InputParametersSession(InputParameters.create("scf"))
     path = ("SCF", "NITER")
-    assert binding.set_value(path, 42)
-    assert current[0].SCF.NITER() == 42
-    assert changes == [path]
-    assert not binding.set_value(path, 42)
-    old = current[0]
-    current[0] = InputParameters.create("scf")
-    assert binding.option(path) is current[0].SCF.NITER
-    binding.set_value(path, 17)
-    assert old.SCF.NITER() == 42
-    assert current[0].SCF.NITER() == 17
+    binding = SessionFieldBinding(
+        session,
+        field("SCF", "NITER", "Iterations"),
+        "expert",
+    )
+
+    binding.set_value(42)
+    first_snapshot = binding.parameters
+    binding.set_value(17)
+
+    assert first_snapshot.SCF.NITER() == 42
+    assert binding.parameters is session.working_parameters
+    assert binding.parameters.SCF.NITER() == 17
 
 
 @pytest.mark.parametrize("name", ["system-run.svg", "run-build-clean.svg", "labplot-xy-interpolation-curve.svg"])

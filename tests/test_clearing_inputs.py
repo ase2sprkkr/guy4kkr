@@ -69,7 +69,6 @@ def test_expert_delete_number_unsets(application, task, section, name, value):
     parameters = InputParameters.create(task)
     parameters[section][name].set(value)
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     tree_name = 'EMIN / EMINEV' if name == 'EMINEV' else name
     tree = dialog.tree_editor.tree
     item, = tree.findItems(tree_name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
@@ -82,7 +81,7 @@ def test_expert_delete_number_unsets(application, task, section, name, value):
     erase(control)
     dialog.tree_editor.filter_edit.setFocus()
     application.processEvents()
-    assert parameters[section][name]() is None
+    assert dialog.result()[section][name]() is None
     if energy is None:
         assert (control.placeholderText() if isinstance(control, QLineEdit) else control.text()) == 'Not set'
     else:
@@ -94,7 +93,6 @@ def test_expert_nullable_numeric_editor_accepts_direct_typing_from_unset_state(a
     parameters = InputParameters.create('scf')
     parameters.MODE.MALF.set(0.25)
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     tree = dialog.tree_editor.tree
     item, = tree.findItems('MALF', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = tree.itemWidget(item, 2)
@@ -109,7 +107,7 @@ def test_expert_nullable_numeric_editor_accepts_direct_typing_from_unset_state(a
 
     assert control.text() != 'Not set'
     assert control.value() == 1.0
-    assert parameters.MODE.MALF() == 1.0
+    assert dialog.result().MODE.MALF() == 1.0
     dialog.close()
 
 
@@ -117,13 +115,12 @@ def test_expert_required_text_cannot_silently_become_unset(application):
     parameters = InputParameters.create('scf')
     parameters.CONTROL.POTFIL.set('Fe.pot')
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     tree = dialog.tree_editor.tree
     item, = tree.findItems('POTFIL', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = tree.itemWidget(item, 2)
     control.clear()
     control.editingFinished.emit()
-    assert parameters.CONTROL.POTFIL() == 'Fe.pot'
+    assert dialog.result().CONTROL.POTFIL() == 'Fe.pot'
     assert 'must have a value' in control.toolTip()
     assert control.text() == ''
     dialog.close()
@@ -131,7 +128,6 @@ def test_expert_required_text_cannot_silently_become_unset(application):
 
 def test_expert_site_text_uses_input_grammar(application):
     dialog = InputParametersDialog(InputParameters.create('scf'))
-    parameters = dialog.result()
     tree = dialog.tree_editor.tree
     item, = tree.findItems(
         'IQCNTR',
@@ -143,7 +139,7 @@ def test_expert_site_text_uses_input_grammar(application):
     control.setText('3')
     control.editingFinished.emit()
 
-    assert parameters.TAU.IQCNTR() == 3
+    assert dialog.result().TAU.IQCNTR() == 3
     assert not dialog.tree_editor.error_text
     dialog.close()
 
@@ -153,11 +149,10 @@ def test_expert_empty_optional_array_unsets(application):
     parameters.MODE.OP.set('LDA+U')
     parameters.MODE.LOPT.set(['d'])
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     tree = dialog.tree_editor.tree
     item, = tree.findItems('LOPT', Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
     control = tree.itemWidget(item, 2)
     control.clear()
     control.editingFinished.emit()
-    assert parameters.MODE.LOPT() is None
+    assert dialog.result().MODE.LOPT() is None
     dialog.close()

@@ -116,7 +116,6 @@ def test_imaginary_energy_has_units_without_relative_checkbox(application):
 def test_expert_combines_pair_and_uses_identical_control(application):
     parameters = InputParameters.create('dos')
     dialog = InputParametersDialog(parameters)
-    parameters = dialog.result()  # Expert edits an isolated copy.
     flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
     tree = dialog.tree_editor.tree
     item, = tree.findItems('EMIN / EMINEV', flags, 0)
@@ -127,12 +126,13 @@ def test_expert_combines_pair_and_uses_identical_control(application):
     editor.units.setCurrentText('eV')
     editor.number.setValue(-5.)
     assert editor.commit()
-    assert parameters.ENERGY.EMINEV() == -5.
-    assert parameters.ENERGY.EMIN() is None
+    assert dialog.result().ENERGY.EMINEV() == -5.
+    assert dialog.result().ENERGY.EMIN() is None
+    application.processEvents()
     assert item.font(0).bold()
     editor.relative.setChecked(False)
-    assert parameters.ENERGY.EMIN() == pytest.approx(convert_energy(-5., 'eV', 'Ry'))
-    assert parameters.ENERGY.EMINEV() is None
+    assert dialog.result().ENERGY.EMIN() == pytest.approx(convert_energy(-5., 'eV', 'Ry'))
+    assert dialog.result().ENERGY.EMINEV() is None
     dialog.close()
 
 
@@ -142,13 +142,12 @@ def test_arpes_absolute_bounds_and_relative_defaults(application, expert):
     parameters.CONTROL.POTFIL.set('Fe.pot')
     if expert:
         dialog = InputParametersDialog(parameters)
-        parameters = dialog.result()  # Expert edits an isolated copy.
         flags = Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
         def editor_for(name):
             tree = dialog.tree_editor.tree
             item, = tree.findItems(f'{name} / {name}EV', flags, 0)
             return tree.itemWidget(item, 2)
-        current = lambda: parameters
+        current = dialog.result
     else:
         dialog = GuidedInputParametersDialog('arpes', parameters)
         editor_for = lambda name: dialog.editors_for(('ENERGY', name))[-1].control

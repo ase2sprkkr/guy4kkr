@@ -11,13 +11,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.input_parameters.bindings import (
-    InputParametersBinding,
-    InputParameterPath,
-    resolve_option,
-)
+from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
 from guy4ase.gui.input_parameters.expert_fields import ExpertFieldSpec
-from guy4ase.gui.input_parameters.field_binding import DirectFieldBinding
+from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
+from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.widgets.input_parameters.registry import create_editor
 
 
@@ -34,9 +31,9 @@ class ExpertFieldEditorDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._parameters = parameters.copy(copy_values=True)
+        self.session = create_input_parameters_session(parameters, self)
         self._path = path
-        option = resolve_option(self._parameters, path)
+        option = resolve_option(self.session.working_parameters, path)
 
         self.setWindowTitle(f"Edit {'.'.join(path)}")
         self.setModal(True)
@@ -44,8 +41,11 @@ class ExpertFieldEditorDialog(QDialog):
         layout = QVBoxLayout(self)
 
         placement = spec.placement(path, option.name)
-        model = InputParametersBinding(lambda: self._parameters, lambda _path: None)
-        binding = DirectFieldBinding(model, placement)
+        binding = SessionFieldBinding(
+            self.session,
+            placement,
+            "expert-modal",
+        )
         self.editor = create_editor(
             binding,
             placement,
@@ -72,7 +72,7 @@ class ExpertFieldEditorDialog(QDialog):
 
     @property
     def value(self) -> Any:
-        return resolve_option(self._parameters, self._path)(all_values=True)
+        return self.session.value(self._path)
 
     def _show_error(self, message: str) -> None:
         self.error_label.setText(message)

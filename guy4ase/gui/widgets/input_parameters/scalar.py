@@ -306,14 +306,14 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
         *,
         nullable: bool,
         allow_empty: bool,
-        option: Any,
+        value_name: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._grammar_type = grammar_type
         self._nullable = nullable
         self._allow_empty = allow_empty
-        self._option = option
+        self._value_name = value_name
 
     literal = False
 
@@ -324,7 +324,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
             binding.value_type,
             nullable=binding.allows_unset,
             allow_empty=binding.allow_empty,
-            option=binding.option,
+            value_name=placement.label or "Value",
             parent=parent,
         )
         editor.setReadOnly(binding.read_only)
@@ -343,8 +343,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
                 self._apply_value(None)
                 self._sync_display()
                 return
-            option_name = getattr(self._option, "name", "Value")
-            raise ValueError(f"{option_name} must have a value")
+            raise ValueError(f"{self._value_name} must have a value")
         if self.literal:
             value = ast.literal_eval(text)
         else:

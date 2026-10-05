@@ -26,11 +26,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.dialogs.expert_input import edit_input_parameters
+from guy4ase.gui.dialogs.expert_input import edit_input_parameters_session
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
-from guy4ase.gui.input_parameters.session import InputParametersSession
-from guy4ase.gui.input_parameters.single_site_contour import SingleSiteContourPlugin
+from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
@@ -87,11 +86,7 @@ class GuidedInputParametersDialog(QDialog):
         self.directory = directory or ""
         self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
         prepared = _prepare_parameters(parameters, self.task)
-        self.session = InputParametersSession(
-            prepared,
-            self,
-            plugins=(SingleSiteContourPlugin(),),
-        )
+        self.session = create_input_parameters_session(prepared, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
         self._navigation: dict[str, NavigationView] = {}
 
@@ -376,12 +371,23 @@ class GuidedInputParametersDialog(QDialog):
         if not self._commit_pending():
             return
         try:
-            candidate = self.session.result()
-            result = edit_input_parameters(candidate, parent=self, show_changed_only=False, atoms=self.atoms)
-            if result is not None:
-                result = _prepare_parameters(result, self.task)
-                self.session.replace_parameters(
-                    result,
+            temporary = self.session.fork()
+            accepted = edit_input_parameters_session(
+                temporary,
+                parent=self,
+                show_changed_only=False,
+                atoms=self.atoms,
+            )
+            if accepted is not None:
+                assert not isinstance(accepted, tuple)
+                prepared = _prepare_parameters(accepted.result(), self.task)
+                accepted.replace_parameters(
+                    prepared,
+                    text="Normalize expert settings",
+                    source_page="expert",
+                )
+                self.session.replace_from_session(
+                    accepted,
                     text="Apply expert settings",
                     source_page="expert",
                 )

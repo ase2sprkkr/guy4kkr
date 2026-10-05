@@ -1,17 +1,13 @@
 """Qt-independent binding of one guided field placement to its session."""
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from collections.abc import Callable
 from typing import Any
 
-from guy4ase.gui.input_parameters.bindings import (
-    InputParametersBinding,
-    InputParameterPath,
-    resolve_option,
-)
+import numpy as np
 
-_MISSING = object()
+from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
 
 
 @dataclass(frozen=True)
@@ -34,15 +30,18 @@ def _indexed(value: Any, index: int) -> Any:
 
 
 class SessionFieldBinding:
-    """Map one FieldPlacement to session reads, defaults and atomic writes."""
+    """Bind an ordinary option directly to its authoritative session value."""
 
-    def __init__(self, session: Any, placement: Any, page_id: str) -> None:
+    def __init__(
+        self,
+        session: Any,
+        placement: Any,
+        page_id: str,
+    ) -> None:
         self.session = session
         self.placement = placement
         self.page_id = page_id
         self.path: InputParameterPath = placement.path
-        self.read_only = False
-        self.allow_empty = False
 
     @property
     def option(self) -> Any:
@@ -54,16 +53,27 @@ class SessionFieldBinding:
 
     @property
     def allows_unset(self) -> bool:
-        return True
+        optional = self.option._definition.is_optional
+        return bool(
+            optional(self.option) if callable(optional) else optional
+        ) or self.option.default_value is not None
 
     @property
     def value_type(self) -> Any:
         return self.option._definition.type
 
+    @property
+    def read_only(self) -> bool:
+        return False
+
+    @property
+    def allow_empty(self) -> bool:
+        return False
+
     def read(self) -> FieldValue:
         """Return the field value to display without mutating session state."""
         option = self.option
-        complete_value = self.session.value(self.path)
+        complete_value = self.model_value_from(self.parameters)
         return FieldValue(
             complete_value,
             option.default_value,
@@ -71,16 +81,39 @@ class SessionFieldBinding:
             explicit=option.is_set(),
         )
 
-    def set_value(self, value: Any) -> None:
+    def set_value(self, value: Any) -> Any:
         """Commit the complete option value as one session edit."""
-        def update(parameters):
-            resolve_option(parameters, self.path).set(value)
+        return self.update_value(
+            lambda _current: value,
+            text=f"Change {self.placement.label.rstrip(':')}",
+        )
 
-        self.session.mutate(
-            update,
+    def model_value_from(self, parameters: Any) -> Any:
+        """Return this option's logical model value from a parameter snapshot."""
+        return resolve_option(parameters, self.path)(all_values=True)
+
+    def replace_in(self, parameters: Any, value: Any) -> None:
+        """Replace this option in a candidate snapshot without opening a transaction."""
+        resolve_option(parameters, self.path).set(value)
+
+    def update_value(
+        self,
+        transform: Callable[[Any], Any],
+        *,
+        text: str,
+        field_index: int | None = None,
+    ) -> Any:
+        """Transform the model value in one candidate-copy session transaction."""
+        def operation(candidate: Any) -> None:
+            old_value = self.model_value_from(candidate)
+            self.replace_in(candidate, transform(old_value))
+
+        return self.session.mutate(
+            operation,
             source_page=self.page_id,
             path=self.path,
-            text=f"Change {self.placement.label.rstrip(':')}",
+            field_index=field_index,
+            text=text,
         )
 
     def option_at(self, path: InputParameterPath) -> Any:
@@ -114,6 +147,438 @@ class SessionFieldBinding:
         )
 
 
+class ProjectedFieldBinding:
+    """A composable child view into a parent binding's model value."""
+
+    def __init__(
+        self,
+        parent: Any,
+        placement: Any,
+        *,
+        project_value: Callable[[Any], Any],
+        replace_value: Callable[[Any, Any], Any],
+        value_type: Any,
+        allows_unset: bool = False,
+        allow_empty: bool = False,
+        read_only: bool = False,
+        project_state: Callable[[FieldValue], FieldValue] | None = None,
+        project_default: Callable[[Any], Any] | None = None,
+    ) -> None:
+        self.parent = parent
+        self.session = parent.session
+        self.page_id = parent.page_id
+        self.path = parent.path
+        self.placement = placement
+        self._project_value = project_value
+        self._replace_value = replace_value
+        self._value_type = value_type
+        self._allows_unset = allows_unset
+        self._allow_empty = allow_empty
+        self._read_only = read_only
+        self._project_state = project_state
+        self._project_default = project_default or project_value
+
+    @property
+    def option(self) -> None:
+        return None
+
+    @property
+    def parameters(self) -> Any:
+        return self.session.working_parameters
+
+    @property
+    def value_type(self) -> Any:
+        return self._value_type
+
+    @property
+    def allows_unset(self) -> bool:
+        return self._allows_unset
+
+    @property
+    def allow_empty(self) -> bool:
+        return self._allow_empty
+
+    @property
+    def read_only(self) -> bool:
+        return self._read_only
+
+    def model_value_from(self, parameters: Any) -> Any:
+        return self._project_value(self.parent.model_value_from(parameters))
+
+    def replace_in(self, parameters: Any, value: Any) -> None:
+        parent_value = self.parent.model_value_from(parameters)
+        replacement = self._replace_value(parent_value, value)
+        self.parent.replace_in(parameters, replacement)
+
+    def read(self) -> FieldValue:
+        parent_state = self.parent.read()
+        if self._project_state is not None:
+            return self._project_state(parent_state)
+        return FieldValue(
+            self._project_value(parent_state.value),
+            self._project_default(parent_state.default),
+            implicit_default=parent_state.implicit_default,
+            explicit=parent_state.explicit,
+        )
+
+    def set_value(self, value: Any) -> Any:
+        return self.update_value(
+            lambda _current: value,
+            text=f"Change {self.placement.label.rstrip(':')}",
+        )
+
+    def update_value(
+        self,
+        transform: Callable[[Any], Any],
+        *,
+        text: str,
+        field_index: int | None = None,
+    ) -> Any:
+        def operation(candidate: Any) -> None:
+            old_value = self.model_value_from(candidate)
+            self.replace_in(candidate, transform(old_value))
+
+        return self.session.mutate(
+            operation,
+            source_page=self.page_id,
+            path=self.path,
+            field_index=field_index,
+            text=text,
+        )
+
+    def option_at(self, path: InputParameterPath) -> Any:
+        return self.session.option(path)
+
+    def value_at(self, path: InputParameterPath) -> Any:
+        return self.session.value(path)
+
+    def set_path_value(self, path: InputParameterPath, value: Any, *, text: str) -> Any:
+        return self.session.set_value(
+            path,
+            value,
+            source_page=self.page_id,
+            text=text,
+        )
+
+    def mutate(
+        self,
+        callback: Callable[[Any], Any],
+        *,
+        text: str,
+        path: InputParameterPath | None = None,
+        field_index: int | None = None,
+    ) -> Any:
+        return self.session.mutate(
+            callback,
+            source_page=self.page_id,
+            path=path or self.path,
+            field_index=field_index,
+            text=text,
+        )
+
+
+class FixedArrayDraft:
+    """Presentation-only component values for one incomplete fixed Array."""
+
+    def __init__(self, parent: Any, length: int, value: Any) -> None:
+        self.parent = parent
+        self.length = length
+        self.values = _copied_sequence(value) if value is not None else []
+        self.values.extend([None] * (length - len(self.values)))
+
+    def value(self, index: int) -> Any:
+        return self.values[index]
+
+    def set_value(self, index: int, value: Any) -> None:
+        self.values[index] = value
+        if all(component is not None for component in self.values):
+            complete = self.parent.value_type.convert(self.values)
+            self.parent.set_value(complete)
+
+
+class DraftFieldBinding:
+    """Editor contract over one component in a presentation-only fixed Array draft."""
+
+    def __init__(
+        self,
+        parent: Any,
+        draft: FixedArrayDraft,
+        index: int,
+        placement: Any,
+    ) -> None:
+        self.parent = parent
+        self.draft = draft
+        self.index = index
+        self.session = parent.session
+        self.page_id = parent.page_id
+        self.path = parent.path
+        self.placement = placement
+
+    @property
+    def option(self) -> None:
+        return None
+
+    @property
+    def parameters(self) -> Any:
+        return self.session.working_parameters
+
+    @property
+    def value_type(self) -> Any:
+        return self.parent.value_type.type
+
+    @property
+    def allows_unset(self) -> bool:
+        return True
+
+    @property
+    def allow_empty(self) -> bool:
+        return False
+
+    @property
+    def read_only(self) -> bool:
+        return False
+
+    def read(self) -> FieldValue:
+        parent_state = self.parent.read()
+        default = _indexed(parent_state.default, self.index)
+        return FieldValue(
+            self.draft.value(self.index),
+            default,
+            implicit_default=parent_state.implicit_default,
+            explicit=parent_state.explicit,
+        )
+
+    def set_value(self, value: Any) -> None:
+        self.draft.set_value(self.index, value)
+
+
+def _copied_sequence(value: Any) -> list[Any]:
+    if isinstance(value, np.ndarray):
+        return value.copy().tolist()
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return list(value)
+
+
+def _project_index(value: Any, index: int) -> Any:
+    if value is None:
+        return None
+    try:
+        return value[index]
+    except (TypeError, IndexError, KeyError):
+        return None
+
+
+def array_item_binding(
+    parent: Any,
+    index: int,
+    placement: Any,
+    *,
+    allows_unset: bool = False,
+    allow_empty: bool = False,
+    read_only: bool = False,
+    append: bool = False,
+) -> ProjectedFieldBinding:
+    """Project one structural Array/SetOf item using its grammar conversion."""
+    parent_type = parent.value_type
+    if not getattr(parent_type, "array_access", False):
+        raise TypeError(f"{parent_type} does not support structural item access")
+
+    def project(value: Any) -> Any:
+        return _project_index(value, index)
+
+    def replace(value: Any, child: Any) -> Any:
+        if append:
+            result = [] if value is None else _copied_sequence(value)
+        elif isinstance(value, np.ndarray):
+            result = value.copy()
+        else:
+            result = [] if value is None else _copied_sequence(value)
+        if index < len(result):
+            result[index] = child
+        elif append and index == len(result):
+            result.append(child)
+        else:
+            raise IndexError(index)
+        return parent_type.convert(result)
+
+    return ProjectedFieldBinding(
+        parent,
+        placement,
+        project_value=project,
+        replace_value=replace,
+        value_type=parent_type.type,
+        allows_unset=allows_unset,
+        allow_empty=allow_empty,
+        read_only=read_only,
+        project_default=lambda value: _project_index(value, index),
+    )
+
+
+def sequence_value_binding(
+    parent: Any,
+    index: int,
+    placement: Any,
+    *,
+    value_type: Any,
+    allows_unset: bool = False,
+    allow_empty: bool = False,
+    read_only: bool = False,
+    append: bool = False,
+    remove_on_none: bool = False,
+) -> ProjectedFieldBinding:
+    """Project one occurrence from an outer repeated-value sequence."""
+    def replace(value: Any, child: Any) -> Any:
+        result = [] if value is None else _copied_sequence(value)
+        if remove_on_none and child is None:
+            if index < len(result):
+                result.pop(index)
+        elif index < len(result):
+            result[index] = child
+        elif append and index == len(result):
+            result.append(child)
+        else:
+            raise IndexError(index)
+        return result or None
+
+    return ProjectedFieldBinding(
+        parent,
+        placement,
+        project_value=lambda value: _project_index(value, index),
+        replace_value=replace,
+        value_type=value_type,
+        allows_unset=allows_unset,
+        allow_empty=allow_empty,
+        read_only=read_only,
+        project_default=lambda _value: None,
+    )
+
+
+def sequence_item_binding(
+    parent: Any,
+    index: int,
+    placement: Any,
+    *,
+    value_type: Any,
+    allows_unset: bool = False,
+    allow_empty: bool = False,
+    read_only: bool = False,
+    project_default: Callable[[Any], Any] | None = None,
+) -> ProjectedFieldBinding:
+    """Project one heterogeneous Sequence field and reconstruct its grammar type."""
+    parent_type = parent.value_type
+
+    def replace(value: Any, child: Any) -> Any:
+        result = _copied_sequence(value)
+        result[index] = child
+        source = tuple(result) if isinstance(value, tuple) else result
+        return parent_type.convert(source)
+
+    return ProjectedFieldBinding(
+        parent,
+        placement,
+        project_value=lambda value: _project_index(value, index),
+        replace_value=replace,
+        value_type=value_type,
+        allows_unset=allows_unset,
+        allow_empty=allow_empty,
+        read_only=read_only,
+        project_default=project_default or (lambda value: _project_index(value, index)),
+    )
+
+
+def mapping_value_binding(
+    parent: Any,
+    key: Any,
+    placement: Any,
+    *,
+    value_type: Any,
+    default: Any = None,
+    allows_unset: bool = False,
+    allow_empty: bool = False,
+    read_only: bool = False,
+    project_state: Callable[[FieldValue], FieldValue] | None = None,
+) -> ProjectedFieldBinding:
+    """Project a mapping occurrence, copying mappings for every replacement."""
+    def project(value: Any) -> Any:
+        return value.get(key, default) if isinstance(value, Mapping) else default
+
+    def replace(value: Any, child: Any) -> Any:
+        result = dict(value) if isinstance(value, Mapping) else {}
+        if child is None:
+            result.pop(key, None)
+        else:
+            result[key] = child
+        return result or None
+
+    def occurrence_state(parent_state: FieldValue) -> FieldValue:
+        stored = getattr(parent.session.option(parent.path), "_value", None)
+        explicit = isinstance(stored, Mapping) and key in stored
+        value = project(parent_state.value)
+        return FieldValue(
+            value,
+            default,
+            implicit_default=not explicit and value is not None,
+            explicit=explicit,
+        )
+
+    return ProjectedFieldBinding(
+        parent,
+        placement,
+        project_value=project,
+        replace_value=replace,
+        value_type=value_type,
+        allows_unset=allows_unset,
+        allow_empty=allow_empty,
+        read_only=read_only,
+        project_state=project_state or occurrence_state,
+    )
+
+
+def table_cell_binding(
+    parent: Any,
+    row: int,
+    column: Any,
+    placement: Any,
+    *,
+    value_type: Any,
+    allows_unset: bool = False,
+    allow_empty: bool = False,
+    read_only: bool = False,
+) -> ProjectedFieldBinding:
+    """Project one cell from a supported NumPy-backed Table representation."""
+    parent_type = parent.value_type
+
+    def table_array(value: Any) -> np.ndarray:
+        array = value if isinstance(value, np.ndarray) else parent_type.convert(value)
+        return np.array(array, copy=True)
+
+    def project(value: Any) -> Any:
+        if value.dtype.names:
+            return value[row][column]
+        return value[row, column]
+
+    def replace(value: Any, child: Any) -> Any:
+        result = table_array(value)
+        if result.dtype.names:
+            result[row][column] = child
+        else:
+            result[row, column] = child
+        return parent_type.convert(result)
+
+    return ProjectedFieldBinding(
+        parent,
+        placement,
+        project_value=project,
+        replace_value=replace,
+        value_type=value_type,
+        allows_unset=allows_unset,
+        allow_empty=allow_empty,
+        read_only=read_only,
+        project_default=lambda _value: None,
+    )
+
+
 class IndexedFieldBinding(SessionFieldBinding):
     """Expose one explicitly declared component of an array-valued option."""
 
@@ -135,7 +600,7 @@ class IndexedFieldBinding(SessionFieldBinding):
             explicit=option.is_set(),
         )
 
-    def set_value(self, value: Any) -> None:
+    def set_value(self, value: Any) -> Any:
         index = self.index
 
         def update(parameters):
@@ -146,112 +611,12 @@ class IndexedFieldBinding(SessionFieldBinding):
             values[index] = value
             option.set(values)
 
-        self.session.mutate(
+        return self.mutate(
             update,
-            source_page=self.page_id,
             path=self.path,
             field_index=index,
             text=f"Change {self.placement.label.rstrip(':')}",
         )
-
-
-class DirectFieldBinding:
-    """Bind an expert-tree field directly to its isolated parameter document."""
-
-    def __init__(
-        self,
-        model: InputParametersBinding,
-        placement: Any,
-        *,
-        read_value: Callable[[], Any] | None = None,
-        apply_value: Callable[[Any], None] | None = None,
-        value_type: Any = None,
-        allows_unset: bool | None = None,
-        read_only: bool = False,
-        allow_empty: bool = False,
-        cache_applied: bool = True,
-    ) -> None:
-        self.model = model
-        self.placement = placement
-        self.path: InputParameterPath = placement.path
-        self._read_value = read_value
-        self._apply_value = apply_value
-        self._value_type = value_type
-        self._allows_unset = allows_unset
-        self.read_only = read_only
-        self.allow_empty = allow_empty
-        self._cache_applied = cache_applied
-        self._last_applied = _MISSING
-
-    @property
-    def parameters(self) -> Any:
-        return self.model.parameters
-
-    @property
-    def option(self) -> Any:
-        return self.model.option(self.path)
-
-    @property
-    def value_type(self) -> Any:
-        return (
-            self._value_type
-            if self._value_type is not None
-            else self.option._definition.type
-        )
-
-    @property
-    def allows_unset(self) -> bool:
-        if self._allows_unset is not None:
-            return self._allows_unset
-        optional = self.option._definition.is_optional
-        return bool(
-            optional(self.option) if callable(optional) else optional
-        ) or self.option.default_value is not None
-
-    def read(self) -> FieldValue:
-        if self._last_applied is not _MISSING:
-            value = self._last_applied
-        elif self._read_value is not None:
-            value = self._read_value()
-            if isinstance(value, FieldValue):
-                return value
-        else:
-            value = self.model.value(self.path)
-        option = self.option
-        return FieldValue(
-            value,
-            option.default_value,
-            implicit_default=not option.is_set() and value is not None,
-            explicit=option.is_set(),
-        )
-
-    def set_value(self, value: Any) -> Any:
-        if self._apply_value is not None:
-            result = self._apply_value(value)
-            self._last_applied = value if self._cache_applied else _MISSING
-            return result
-        return self.model.set_value(self.path, value)
-
-    def option_at(self, path: InputParameterPath) -> Any:
-        return self.model.option(path)
-
-    def value_at(self, path: InputParameterPath) -> Any:
-        return self.model.value(path)
-
-    def set_path_value(self, path: InputParameterPath, value: Any, *, text: str) -> Any:
-        del text
-        return self.model.set_value(path, value)
-
-    def mutate(
-        self,
-        callback: Callable[[Any], Any],
-        *,
-        text: str,
-        path: InputParameterPath | None = None,
-        field_index: int | None = None,
-    ) -> Any:
-        del text, field_index
-        return self.model.mutate(callback, path=path or self.path)
 
 
 def create_field_binding(
