@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import execute_value_action
@@ -138,7 +139,9 @@ class WorkflowWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
-        self.resize(980, 680)
+        manage_window_geometry(
+            self, "workflow", default_size=(1120, 700)
+        )
         self.controller = controller
         self.workspace = self.controller.workspace
         self._structure_access = QtStructureAccess(

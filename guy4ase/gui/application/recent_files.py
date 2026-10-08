@@ -6,8 +6,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
-import platformdirs
 from PyQt6.QtCore import QObject, pyqtSignal
+
+from guy4ase.gui.application.config import config_home
 
 RecentKind = Literal["structure", "input", "output"]
 RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
@@ -15,10 +16,7 @@ RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
 
 def default_recent_files_path() -> Path:
     """Return the per-user history path used by the application."""
-    config_home = platformdirs.user_config_dir(
-        "guy4ase", appauthor="ase2sprkkr"
-    )
-    return Path(config_home) / "recent_files.json"
+    return config_home() / "recent_files.json"
 
 
 class RecentFiles(QObject):

@@ -34,6 +34,7 @@ from ase2sprkkr import SPRKKRAtoms
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.expert_input import (
     edit_input_parameters,
@@ -74,7 +75,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
-        self.resize(1400, 800)
+        manage_window_geometry(
+            self,
+            "structure-manager",
+            default_size=(1400, 800),
+            default_maximized=True,
+        )
 
         self.controller = controller
         self.workspace = self.controller.workspace

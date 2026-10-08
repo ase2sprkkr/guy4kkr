@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters_session
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
@@ -87,7 +88,9 @@ class GuidedInputParametersDialog(QDialog):
         self._navigation: dict[str, NavigationView] = {}
 
         self.setWindowTitle(self.spec.title)
-        self.resize(980, 700)
+        manage_window_geometry(
+            self, "guided-input", default_size=(1180, 740)
+        )
         self._build_ui()
         self._connect_session()
         self._update_all_statuses()

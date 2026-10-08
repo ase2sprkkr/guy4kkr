@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.session import (
     InputParametersSession,
@@ -51,7 +52,12 @@ class InputParametersDialog(QDialog):
         self._directory = directory or ''
 
         self.setWindowTitle('Edit Input Parameters')
-        self.resize(800, 600)
+        manage_window_geometry(
+            self,
+            "expert-input",
+            default_size=(1200, 750),
+            default_maximized=True,
+        )
         root = QVBoxLayout(self)
 
         if calculate_mode:
