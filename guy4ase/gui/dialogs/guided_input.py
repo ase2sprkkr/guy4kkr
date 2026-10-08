@@ -11,10 +11,8 @@ from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -77,13 +75,11 @@ class GuidedInputParametersDialog(QDialog):
         parameters: InputParameters,
         parent: QWidget | None = None,
         *,
-        directory: str | None = None,
         atoms: Any = None,
     ) -> None:
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.directory = directory or ""
         self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
         prepared = _prepare_parameters(parameters, self.task)
         self.session = create_input_parameters_session(prepared, self)
@@ -112,17 +108,6 @@ class GuidedInputParametersDialog(QDialog):
         intro.setObjectName("guidedDialogSubtitle")
         intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         root.addWidget(intro)
-
-        directory_row = QHBoxLayout()
-        directory_row.addWidget(QLabel("Working directory:"))
-        self.directory_edit = QLineEdit(self.directory, self)
-        self.directory_edit.setPlaceholderText("Select a calculation directory")
-        directory_row.addWidget(self.directory_edit, 1)
-        browse = QPushButton("Browse…", self)
-        browse.setStyleSheet(button_stylesheet(self.palette()))
-        browse.clicked.connect(self._choose_directory)
-        directory_row.addWidget(browse)
-        root.addLayout(directory_row)
 
         body = QHBoxLayout()
         self.navigation = QListWidget(self)
@@ -341,9 +326,6 @@ class GuidedInputParametersDialog(QDialog):
         except Exception as exc:
             self._show_model_error(exc)
             return
-        if not self.directory_edit.text().strip() and not self._choose_directory():
-            return
-        self.directory = self.directory_edit.text().strip()
         self.accept()
 
     def _show_model_error(self, exception: Exception) -> None:
@@ -353,18 +335,6 @@ class GuidedInputParametersDialog(QDialog):
                 self.select_page(page_id)
                 break
         QMessageBox.critical(self, "Invalid Settings", message)
-
-    def _choose_directory(self) -> bool:
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Select Calculation Directory",
-            self.directory_edit.text().strip(),
-        )
-        if not selected:
-            return False
-        self.directory = str(selected)
-        self.directory_edit.setText(self.directory)
-        return True
 
     def _open_expert_settings(self) -> None:
         """Edit a detached copy; accepting installs the result as one undoable change."""
@@ -434,18 +404,17 @@ class GuidedInputParametersDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Input File Error", str(exc))
 
-    def result(self) -> tuple[InputParameters, str]:
-        """Return a detached parameter copy and the selected calculation directory."""
-        return self.session.result(), self.directory
+    def result(self) -> InputParameters:
+        """Return a detached parameter copy."""
+        return self.session.result()
 
 
 def select_guided_input_parameters(
     task: str,
     parent: QWidget | None = None,
     *,
-    directory: str | None = None,
     atoms: Any = None,
-) -> tuple[InputParameters, str] | None:
+) -> InputParameters | None:
     task = task.lower()
     spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
     parameters = new_parameters(spec.parameter_task)
@@ -453,7 +422,6 @@ def select_guided_input_parameters(
         task,
         parameters,
         parent=parent,
-        directory=directory,
         atoms=atoms,
     )
     if dialog.exec() != QDialog.DialogCode.Accepted:

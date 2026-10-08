@@ -4,9 +4,10 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QAction, QColor, QIcon, QPalette
+from PyQt6.QtCore import QSize, Qt, QUrl
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -147,9 +148,13 @@ class WorkflowWindow(QMainWindow):
         self.active_runs = active_runs
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
+        self.controller.directoryChanged.connect(
+            lambda _directory: self._refresh_working_directory()
+        )
         self.controller.resultChanged.connect(lambda _result: self._refresh())
         self.recent_history.changed.connect(self._refresh)
         self._build_ui()
+        self._refresh_working_directory()
         self._refresh()
 
     def _build_ui(self) -> None:
@@ -195,6 +200,65 @@ class WorkflowWindow(QMainWindow):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(SPACE_SM)
+
+        working_directory = QWidget(side)
+        working_directory.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        working_directory_layout = QVBoxLayout(working_directory)
+        working_directory_layout.setContentsMargins(0, 0, 0, 0)
+        working_directory_layout.setSpacing(SPACE_XS)
+        working_directory_title = QLabel("Working directory", working_directory)
+        working_directory_title.setFont(
+            heading_font(working_directory_title.font(), "section")
+        )
+        working_directory_layout.addWidget(working_directory_title)
+
+        directory_row = QHBoxLayout()
+        directory_row.setContentsMargins(0, 0, 0, 0)
+        directory_row.setSpacing(SPACE_XS)
+        self._working_directory_label = QLabel(working_directory)
+        self._working_directory_label.setWordWrap(False)
+        self._working_directory_label.setMinimumWidth(0)
+        self._working_directory_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._working_directory_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        directory_row.addWidget(self._working_directory_label, 1)
+
+        change_directory = QToolButton(working_directory)
+        change_directory.setIcon(
+            QIcon.fromTheme(
+                "document-open",
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            )
+        )
+        change_directory.setToolTip("Change working directory")
+        change_directory.setAccessibleName("Change working directory")
+        change_directory.clicked.connect(self._choose_working_directory)
+        directory_row.addWidget(change_directory)
+
+        self._browse_working_directory_button = QToolButton(working_directory)
+        self._browse_working_directory_button.setIcon(
+            QIcon.fromTheme(
+                "system-file-manager",
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            )
+        )
+        self._browse_working_directory_button.setToolTip(
+            "Open working directory in file manager"
+        )
+        self._browse_working_directory_button.setAccessibleName(
+            "Open working directory in file manager"
+        )
+        self._browse_working_directory_button.clicked.connect(
+            self._browse_working_directory
+        )
+        directory_row.addWidget(self._browse_working_directory_button)
+        working_directory_layout.addLayout(directory_row)
+        side_layout.addWidget(working_directory)
 
         self._result_actions = QWidget(side)
         result_actions_layout = QVBoxLayout(self._result_actions)
@@ -280,6 +344,41 @@ class WorkflowWindow(QMainWindow):
         self._actions_layout.insertWidget(position, group)
         self._action_group_layouts[title] = layout
         return layout
+
+    def _refresh_working_directory(self) -> None:
+        directory = self.workspace.directory
+        self._working_directory_label.setText(directory or "(not defined)")
+        self._working_directory_label.setToolTip(directory or "")
+        self._browse_working_directory_button.setEnabled(bool(directory))
+
+    def _choose_working_directory(
+        self,
+        _checked: bool = False,
+        *,
+        title: str = "Select Calculation Directory",
+    ) -> bool:
+        start_directory = self.workspace.directory or str(Path.home())
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            title,
+            start_directory,
+        )
+        if not directory:
+            return False
+        self.controller.change_working_directory(str(directory))
+        return True
+
+    def _browse_working_directory(self) -> None:
+        directory = self.workspace.directory
+        if not directory:
+            return
+        path = Path(directory).expanduser().resolve()
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(
+                self,
+                "Cannot Open Directory",
+                f"Could not open the working directory in the system file manager:\n{path}",
+            )
 
     def _refresh_result_actions(self) -> None:
         result = self.workspace.result
@@ -574,6 +673,10 @@ class WorkflowWindow(QMainWindow):
 
     def _prepare_task(self, task: str) -> None:
         try:
+            if not self.workspace.directory and not self._choose_working_directory(
+                title="Choose the directory for this calculation"
+            ):
+                return
             snapshot = wait_for_structure(
                 self,
                 partial(
@@ -585,7 +688,6 @@ class WorkflowWindow(QMainWindow):
             if isinstance(snapshot, Busy):
                 return
             generation, atoms = snapshot
-            directory = self.workspace.directory
             if atoms is None:
                 QMessageBox.information(
                     self,
@@ -593,20 +695,17 @@ class WorkflowWindow(QMainWindow):
                     "Load or create a structure first.",
                 )
                 return
-            selection = select_guided_input_parameters(
+            parameters = select_guided_input_parameters(
                 task,
                 parent=self,
-                directory=directory,
                 atoms=atoms,
             )
-            if selection is None:
+            if parameters is None:
                 return
-            parameters, directory = selection
             completed = document_change_applied(
                 self,
                 self.controller.replace_input_parameters(
                     parameters,
-                    directory=directory,
                     expected_generation=generation,
                 ),
             )
