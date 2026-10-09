@@ -377,6 +377,39 @@ class MainWindow(QMainWindow):
         output_menu.addAction(load_output_action)
         self._recent_menus['output'] = output_menu.addMenu("Open &Recent")
 
+        run_menu = menubar.addMenu("&Run")
+        empty_spheres_action = QAction("Add Empty Spheres", self)
+        empty_spheres_action.triggered.connect(
+            lambda: structure_flows.update_empty_spheres(self.controller, self)
+        )
+        run_menu.addAction(empty_spheres_action)
+        run_menu.addSeparator()
+        run_calculation_action = QAction("Run SPRKKR Calculation...", self)
+        run_calculation_action.triggered.connect(
+            self._on_run_sprkkr_calculation
+        )
+        run_menu.addAction(run_calculation_action)
+
+        def update_run_menu() -> None:
+            action = self.workspace.empty_spheres_action()
+            empty_spheres_action.setVisible(action is not None)
+            if action is not None:
+                empty_spheres_action.setText(
+                    "Recalculate Empty Spheres"
+                    if action == "recalculate"
+                    else "Add Empty Spheres"
+                )
+            run_calculation_action.setEnabled(
+                bool(
+                    self.workspace.atoms is not None
+                    and self.workspace.input_parameters
+                    and self.workspace.directory
+                )
+            )
+
+        run_menu.aboutToShow.connect(update_run_menu)
+        update_run_menu()
+
         assign_elements_action = QAction("&Edit the structure...", self)
         assign_elements_action.setShortcut("Ctrl+E")
         assign_elements_action.triggered.connect(self._on_assign_elements)

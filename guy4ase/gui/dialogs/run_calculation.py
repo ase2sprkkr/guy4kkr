@@ -60,6 +60,7 @@ class _SprkkrRunWorker(QObject):
                         atoms=self._request.atoms,
                         input_parameters=self._request.input_parameters,
                         directory=self._request.directory,
+                        empty_spheres=False,
                         run_async=True,
                         read_callback=read_callback,
                         print_output=False,

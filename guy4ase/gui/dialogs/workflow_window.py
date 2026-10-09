@@ -566,6 +566,23 @@ class WorkflowWindow(QMainWindow):
         self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
 
         if not converged:
+            empty_spheres_action = (
+                None if status in stage_names else self.workspace.empty_spheres_action()
+            )
+            if empty_spheres_action is not None:
+                self._add_action(
+                    (
+                        "Recalculate Empty Spheres"
+                        if empty_spheres_action == "recalculate"
+                        else "Add Empty Spheres"
+                    ),
+                    "Find empty spheres explicitly before the SCF calculation",
+                    self._update_empty_spheres,
+                    group=self._GROUP_CALCULATE,
+                    category='structure',
+                    icon='run-build-clean.svg',
+                )
+
             if status in stage_names:
                 scf_label = "Continue SCF"
                 scf_description = f"Resume from {stage_names[status]} using the current potential"
@@ -604,9 +621,9 @@ class WorkflowWindow(QMainWindow):
 
         if converged or (status is not None and status != "START"):
             self._add_action(
-                "Recalculate SCF",
-                "Discard SCF progress and calculate again from the initial state",
-                self._recalculate_scf,
+                "Use for New Calculation",
+                "Keep the current potential as starting density for a new SCF sequence",
+                self._use_for_new_calculation,
                 group=self._GROUP_DIFFERENT,
                 category='destructive',
                 icon='run-build-clean.svg',
@@ -728,12 +745,16 @@ class WorkflowWindow(QMainWindow):
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return
 
-    def _recalculate_scf(self) -> None:
+    def _update_empty_spheres(self) -> None:
+        structure_flows.update_empty_spheres(self.controller, self)
+
+    def _use_for_new_calculation(self) -> None:
         generation = self.controller.generation
         answer = QMessageBox.question(
             self,
-            "Recalculate SCF?",
-            "Really discard the current SCF convergence state and start again?",
+            "Use for New Calculation?",
+            "Keep the current potential as starting density, reset the SCF stage, "
+            "and use this structure for a new calculation?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -743,7 +764,7 @@ class WorkflowWindow(QMainWindow):
             change = wait_for_structure(
                 self,
                 partial(
-                    self.controller.restart_scf,
+                    self.controller.use_for_new_calculation,
                     expected_generation=generation,
                 ),
             )
@@ -752,10 +773,7 @@ class WorkflowWindow(QMainWindow):
             ):
                 return
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
-            return
-        self._refresh()
-        self._prepare_task("scf")
+            QMessageBox.critical(self, "Cannot Start New Calculation", str(exc))
 
     def _start_over(self) -> None:
         answer = QMessageBox.question(

@@ -4,6 +4,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
+from ase2sprkkr.bindings.empty_spheres import add_empty_spheres
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
@@ -161,3 +162,66 @@ def build_2d_structure(
             f"Failed to build 2D structure:\n{exc}",
         )
         return None
+
+def update_empty_spheres(
+    controller: WorkspaceController, parent: QWidget
+) -> bool:
+    """Find empty spheres explicitly and publish the resulting structure."""
+    generation = controller.generation
+    recalculate = bool(controller.workspace.empty_spheres_added)
+
+    def edit(atoms: Any, previous_count: int) -> tuple[Any, int]:
+        if previous_count:
+            if previous_count > len(atoms):
+                raise ValueError(
+                    "Stored empty-sphere provenance no longer matches the structure."
+                )
+            candidate = atoms.copy()
+            trailing = candidate.sites[-previous_count:]
+            if not all(site.is_vacuum() for site in trailing):
+                raise ValueError(
+                    "Previously generated empty spheres are no longer the trailing sites."
+                )
+            del candidate[-previous_count:]
+            base_count = len(candidate)
+            add_empty_spheres(candidate)
+            return candidate, len(candidate) - base_count
+
+        candidate = add_empty_spheres(atoms, copy=True)
+        if candidate is atoms:
+            return atoms, 0
+        return candidate, len(candidate) - len(atoms)
+
+    try:
+        change = wait_for_structure(
+            parent,
+            partial(
+                controller.update_empty_spheres,
+                edit,
+                expected_generation=generation,
+            ),
+        )
+        if isinstance(change, Busy) or not document_change_applied(
+            parent, change
+        ):
+            return False
+    except Exception as exc:  # noqa: BLE001 - optional finder/backend boundary
+        QMessageBox.critical(
+            parent,
+            "Empty Spheres Error",
+            f"Failed to update empty spheres:\n{exc}",
+        )
+        return False
+
+    if controller.workspace.empty_spheres_added == 0:
+        QMessageBox.information(
+            parent,
+            "Empty Spheres",
+            (
+                "No empty spheres were found. Previously generated empty spheres "
+                "were removed."
+                if recalculate
+                else "No empty spheres were found for this structure."
+            ),
+        )
+    return True
