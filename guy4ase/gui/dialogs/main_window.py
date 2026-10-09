@@ -29,8 +29,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from ase2sprkkr import SPRKKRAtoms
-
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
@@ -1113,12 +1111,12 @@ class MainWindow(QMainWindow):
         atoms = self.workspace.atoms
         if atoms is None:
             return
+        status = self.workspace.scf_status()
         status_text = ""
-        if isinstance(atoms, SPRKKRAtoms):
-            if atoms.has_potential():
-                status = atoms.potential.SCF_INFO.SCFSTATUS()
-                if status and status != 'START':
-                    status_text = f"SCF Status: {status}"
+        if self.workspace.is_scf_converged():
+            status_text = "SCF Status: CONVERGED"
+        elif status and status != "START":
+            status_text = f"SCF Status: {status}"
         self.converged_label.setText(status_text)
 
         n_atoms = len(atoms)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt, QUrl
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
@@ -52,7 +52,6 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-from guy4ase.physics.lattice import detect_structure_kind
 
 
 def _copy_optional_atoms(atoms: Any) -> Any:
@@ -547,19 +546,27 @@ class WorkflowWindow(QMainWindow):
             return
 
         formula = atoms.get_chemical_formula()
-        structure_kind = detect_structure_kind(atoms)
-        status = self._scf_status(atoms)
+        structure_kind = self.workspace.structure_kind()
+        status = self.workspace.scf_status()
+        converged = self.workspace.is_scf_converged()
         stage_names = {
+            "ITR": "iterating SCF",
+            "ITR-BULK": "converging bulk",
             "ITR-L-BULK": "converging left bulk",
             "ITR-R-BULK": "converging right bulk",
             "ITR-I-ZONE": "converging interaction zone",
         }
-        status_text = stage_names.get(status, status if status is not None else "not converged")
+        status_text = (
+            "CONVERGED"
+            if converged
+            else stage_names.get(
+                status, status if status is not None else "not converged"
+            )
+        )
         self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
 
-        if not self._is_converged(status):
-            intermediate_2d = status in {"ITR-L-BULK", "ITR-R-BULK", "ITR-I-ZONE"}
-            if intermediate_2d:
+        if not converged:
+            if status in stage_names:
                 scf_label = "Continue SCF"
                 scf_description = f"Resume from {stage_names[status]} using the current potential"
             else:
@@ -578,7 +585,7 @@ class WorkflowWindow(QMainWindow):
                 icon='system-run.svg',
             )
 
-        if self._is_converged(status):
+        if converged:
             for task, label, description in (
                 ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
                 ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
@@ -595,7 +602,7 @@ class WorkflowWindow(QMainWindow):
                     icon='system-run.svg',
                 )
 
-        if status is not None and status != "START":
+        if converged or (status is not None and status != "START"):
             self._add_action(
                 "Recalculate SCF",
                 "Discard SCF progress and calculate again from the initial state",
@@ -764,16 +771,3 @@ class WorkflowWindow(QMainWindow):
 
     def _open_expert_mode(self) -> None:
         self._open_expert()
-
-    @staticmethod
-    def _scf_status(atoms: Any) -> Optional[str]:
-        try:
-            if hasattr(atoms, "has_potential") and atoms.has_potential():
-                return str(atoms.potential.SCF_INFO.SCFSTATUS()).strip().upper()
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _is_converged(status: Optional[str]) -> bool:
-        return status in {"CONVERGED", "SCF-CONVERGED", "DONE", "FINISHED"}

@@ -236,13 +236,24 @@ def test_transient_dialog_lifetime_uses_qt_ownership():
     assert "WA_DeleteOnClose" in object_view
 
 
-def test_workflow_does_not_cache_derived_structure_kind():
+def test_workspace_owns_derived_structure_and_scf_queries():
     workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
+    workspace = (GUI / "application" / "workspace.py").read_text()
     lattice = (ROOT / "guy4ase" / "physics" / "lattice.py").read_text()
 
     assert "self._structure_kind" not in workflow
     assert "_detect_structure_kind" not in workflow
-    assert "detect_structure_kind(atoms)" in workflow
+    assert "detect_structure_kind" not in workflow
+    assert "_scf_status" not in workflow
+    assert "_is_converged" not in workflow
+    assert "self.workspace.structure_kind()" in workflow
+    assert "self.workspace.scf_status()" in workflow
+    assert "self.workspace.is_scf_converged()" in workflow
+    assert "def structure_kind(" in workspace
+    assert "def scf_status(" in workspace
+    assert "def is_scf_converged(" in workspace
+    assert "detect_structure_kind(self.atoms)" in workspace
+    assert "sprkkr_is_scf_converged" in workspace
     assert "def detect_structure_kind" in lattice
     assert "PyQt" not in lattice
 

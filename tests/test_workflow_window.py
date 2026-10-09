@@ -139,6 +139,31 @@ def test_structure_kind_follows_external_workspace_changes(tmp_path):
     workflow.close()
 
 
+def test_in_progress_scf_statuses_offer_continue(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    _gui, window = _workflow(tmp_path)
+    window.controller.replace_structure(
+        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    )
+
+    for status in (
+        "ITR",
+        "ITR-BULK",
+        "ITR-L-BULK",
+        "ITR-R-BULK",
+        "ITR-I-ZONE",
+    ):
+        window.workspace.scf_status = lambda value=status: value
+        window.workspace.is_scf_converged = lambda: False
+        window._refresh()
+        application.processEvents()
+        calculate = _actions_in_group(window, window._GROUP_CALCULATE)
+        assert "Continue SCF" in calculate
+        assert "Converge SCF" not in calculate
+
+    window.close()
+
+
 def test_start_actions_are_grouped_with_section_labels(tmp_path):
     _application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
@@ -203,10 +228,9 @@ def test_group_labels_follow_dark_and_light_palette_text_color(tmp_path):
 def test_structure_actions_follow_requested_group_order(tmp_path):
     application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
-    window.controller.replace_structure(
-        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    )
-    window._scf_status = lambda _atoms: "CONVERGED"
+    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    atoms.sprkkr_is_scf_converged = lambda: True
+    window.controller.replace_structure(atoms)
     window._refresh()
     application.processEvents()
 
