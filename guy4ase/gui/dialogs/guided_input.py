@@ -34,8 +34,6 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
-from guy4ase.gui.input_parameters.tasks import new_parameters
-from guy4ase.gui.input_parameters.tasks import prepare_parameters as _prepare_parameters
 from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
@@ -82,8 +80,13 @@ class GuidedInputParametersDialog(QDialog):
         self.task = task.lower()
         self.atoms = atoms
         self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
-        prepared = _prepare_parameters(parameters, self.task)
-        self.session = create_input_parameters_session(prepared, self)
+        expected_task = self.spec.parameter_task.lower()
+        if parameters.task_name.lower() != expected_task:
+            raise ValueError(
+                f"Expected {expected_task.upper()} input parameters, "
+                f"got {parameters.task_name.upper()}."
+            )
+        self.session = create_input_parameters_session(parameters, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
         self._navigation: dict[str, NavigationView] = {}
 
@@ -353,12 +356,6 @@ class GuidedInputParametersDialog(QDialog):
             )
             if accepted is not None:
                 assert not isinstance(accepted, tuple)
-                prepared = _prepare_parameters(accepted.result(), self.task)
-                accepted.replace_parameters(
-                    prepared,
-                    text="Normalize expert settings",
-                    source_page="expert",
-                )
                 self.session.replace_from_session(
                     accepted,
                     text="Apply expert settings",
@@ -377,12 +374,8 @@ class GuidedInputParametersDialog(QDialog):
         if not file_path:
             return
         try:
-            loaded = _prepare_parameters(
-                InputParameters.from_file(Path(file_path).resolve()),
-                self.task,
-            )
             self.session.replace_parameters(
-                loaded,
+                InputParameters.from_file(Path(file_path).resolve()),
                 text=f"Load {Path(file_path).name}",
                 source_page="load",
             )
@@ -399,8 +392,7 @@ class GuidedInputParametersDialog(QDialog):
         try:
             def apply(parameters):
                 self.session.replace_parameters(
-                    _prepare_parameters(parameters, self.task),
-                    text="Edit input file", source_page="input_file",
+                    parameters, text="Edit input file", source_page="input_file",
                 )
             editor = InputFileEditor(self.session.result(), self, apply_parameters=apply)
             editor.exec()
@@ -420,7 +412,7 @@ def select_guided_input_parameters(
 ) -> InputParameters | None:
     task = task.lower()
     spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
-    parameters = new_parameters(spec.parameter_task)
+    parameters = InputParameters.create(spec.parameter_task)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,

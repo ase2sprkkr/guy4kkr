@@ -19,10 +19,7 @@ from PyQt6.QtWidgets import QApplication, QDialog
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs import main_window
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
-from guy4ase.gui.dialogs.guided_input import (
-    GuidedInputParametersDialog,
-    _prepare_parameters,
-)
+from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.specs import bsf, scf
 from guy4ase.gui.input_parameters.validation import validate_setup
 from guy4ase.main import GuiApplication
@@ -367,9 +364,9 @@ def test_scf_status_is_cleared_when_structure_is_reset(app, tmp_path):
 
 
 @pytest.mark.parametrize('task', ['scf', 'dos'])
-def test_bsf_import_rejects_another_task_before_normalizing(task):
+def test_guided_dialog_rejects_another_parameter_task(app, task):
     with pytest.raises(ValueError, match='Expected BSF'):
-        _prepare_parameters(InputParameters.create(task), 'bsf')
+        GuidedInputParametersDialog('bsf', InputParameters.create(task))
 
 
 def test_unrelated_edit_preserves_invalid_kpath_draft_but_undo_discards_it(app):
