@@ -522,6 +522,7 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
     fallback_potential.touch()
     atoms = Atoms("Fe")
     potential_reads = []
+    parameters = object()
     result = SimpleNamespace(
         files={
             "output": output.name,
@@ -530,6 +531,7 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
         },
         directory=str(run_directory),
         potential_filename="ignored.pot",
+        input_parameters=parameters,
     )
     result.path_to = lambda key: result.files[key]
     monkeypatch.setattr(
@@ -551,7 +553,27 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
     assert loaded.atoms is atoms
     assert loaded.potential_error is None
     assert loaded.directory == str(run_directory.resolve())
+    assert loaded.input_parameters is parameters
+    assert loaded.input_parameters_error is None
     assert potential_reads == [str(converged.resolve())]
+
+
+def test_result_loading_keeps_input_parameter_parse_failure_nonfatal(tmp_path):
+    error = ValueError("broken input")
+
+    class Result:
+        files = {}
+        directory = str(tmp_path)
+        output_file = None
+
+        @property
+        def input_parameters(self):
+            raise error
+
+    loaded = load_result(Result(), fallback_directory=tmp_path)
+
+    assert loaded.input_parameters is None
+    assert loaded.input_parameters_error is error
 
 
 @pytest.mark.parametrize(
@@ -755,6 +777,7 @@ def test_external_result_without_potential_clears_old_structure(
     )
     workspace = WorkspaceState(
         atoms=Atoms("Fe"),
+        input_parameters=object(),
         potential_path="Fe.pot",
         result=object(),
     )
@@ -770,6 +793,7 @@ def test_external_result_without_potential_clears_old_structure(
     assert adoption.potential_error is None
     assert workspace.result is result
     assert workspace.atoms is None
+    assert workspace.input_parameters is None
     assert workspace.potential_path is None
 
 
@@ -817,6 +841,8 @@ def test_external_result_with_potential_replaces_old_structure(
     potential.touch()
     result = _result(tmp_path)
     result_atoms = Atoms("Fe")
+    result_parameters = object()
+    result.input_parameters = result_parameters
     monkeypatch.setattr(
         result_loading_module.TaskResult,
         "from_file",
@@ -829,6 +855,7 @@ def test_external_result_with_potential_replaces_old_structure(
     )
     workspace = WorkspaceState(
         atoms=Atoms("Cu"),
+        input_parameters=object(),
         potential_path="Cu.pot",
     )
     controller = WorkspaceController(workspace)
@@ -841,6 +868,7 @@ def test_external_result_with_potential_replaces_old_structure(
     assert adoption.potential_error is None
     assert workspace.result is result
     assert workspace.atoms is result_atoms
+    assert workspace.input_parameters is result_parameters
     assert workspace.potential_path == str(potential.resolve())
 
 
@@ -1015,6 +1043,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
     potential = tmp_path / "Fe.pot"
     result_atoms = Atoms("Fe")
     result = object()
+    result_parameters = object()
     loaded = LoadedResult(
         result=result,
         output_path=output,
@@ -1022,6 +1051,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
         atoms=result_atoms,
         potential_error=None,
         directory=str(tmp_path),
+        input_parameters=result_parameters,
     )
 
     workspace = WorkspaceState(
@@ -1036,6 +1066,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
                 workspace.result,
                 workspace.directory,
                 workspace.potential_path,
+                workspace.input_parameters,
                 controller.generation,
             )
         )
@@ -1052,6 +1083,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
             result,
             str(tmp_path),
             str(potential),
+            result_parameters,
             1,
         )
     ]

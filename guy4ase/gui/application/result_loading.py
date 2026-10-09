@@ -24,6 +24,8 @@ class LoadedResult:
     atoms: Any | None
     potential_error: Exception | None
     directory: str | None
+    input_parameters: Any | None = None
+    input_parameters_error: Exception | None = None
 
 
 def load_result_file(file_path: str | Path) -> LoadedResult:
@@ -48,6 +50,9 @@ def load_result(
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
     atoms, potential_error = _load_potential(potential)
+    input_parameters, input_parameters_error = _load_input_parameters(
+        result
+    )
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
         result=result,
@@ -56,7 +61,18 @@ def load_result(
         atoms=atoms,
         potential_error=potential_error,
         directory=directory,
+        input_parameters=input_parameters,
+        input_parameters_error=input_parameters_error,
     )
+
+
+def _load_input_parameters(
+    result: Any,
+) -> tuple[Any | None, Exception | None]:
+    try:
+        return getattr(result, "input_parameters", None), None
+    except Exception as exc:  # noqa: BLE001 - parser failures are data
+        return None, exc
 
 
 def _registered_path(result: Any, key: str) -> Path | None:

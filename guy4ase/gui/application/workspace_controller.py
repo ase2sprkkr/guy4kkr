@@ -102,6 +102,7 @@ class ResultAdoption:
     output_path: Path | None = None
     potential_path: Path | None = None
     potential_error: Exception | None = None
+    input_parameters_error: Exception | None = None
     adopted: bool = True
 
 
@@ -330,6 +331,7 @@ class WorkspaceController(QObject):
                 return False, False
             self.workspace.result = loaded.result
             self.workspace.atoms = loaded.atoms
+            self.workspace.input_parameters = loaded.input_parameters
             self.workspace.potential_path = (
                 str(loaded.potential_path)
                 if loaded.atoms is not None
@@ -349,6 +351,7 @@ class WorkspaceController(QObject):
         if not adopted:
             return replace(adoption, adopted=False)
         self.structureChanged.emit(loaded.atoms)
+        self.inputParametersChanged.emit(loaded.input_parameters)
         if directory_changed:
             self.directoryChanged.emit(loaded.directory)
         self.resultChanged.emit(loaded.result)
@@ -362,6 +365,7 @@ class WorkspaceController(QObject):
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             potential_error=loaded.potential_error,
+            input_parameters_error=loaded.input_parameters_error,
             adopted=adopted,
         )
 

@@ -48,6 +48,19 @@ def _show_potential_warning(
     )
 
 
+def _show_input_parameters_warning(
+    adoption: ResultAdoption, parent: QWidget
+) -> None:
+    if adoption.input_parameters_error is None:
+        return
+    QMessageBox.warning(
+        parent,
+        "Input Parameters Load Warning",
+        "The result was loaded, but its input parameters could not be loaded:\n"
+        f"{adoption.input_parameters_error}",
+    )
+
+
 def choose_and_load_structure(
     controller: WorkspaceController,
     recent_files: RecentFiles,
@@ -194,6 +207,7 @@ def load_output(
         return False
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
+    _show_input_parameters_warning(adoption, parent)
     return True
 
 
