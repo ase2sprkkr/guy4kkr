@@ -46,7 +46,7 @@ def test_focus_without_edit_preserves_raw_numeric_value(app, path, value):
     d.show()
     editor.control.setFocus()
     app.processEvents()
-    d.directory_edit.setFocus()
+    d.navigation.setFocus()
     app.processEvents()
     assert editor.commit()
     assert d.session.value(path) == value

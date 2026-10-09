@@ -43,7 +43,7 @@ def test_guided_delete_number_unsets_and_undo_restores(application, task, path, 
     assert editor.control.isEnabled()
     control = editor.control.number if isinstance(editor.control, EnergyEditor) else editor.control
     erase(control)
-    dialog.directory_edit.setFocus()
+    dialog.navigation.setFocus()
     application.processEvents()
     assert dialog.session.value(path) is None
     if not isinstance(editor.control, EnergyEditor):

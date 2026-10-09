@@ -7,7 +7,7 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.flows import input_parameters as input_parameter_flows
-from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.session import create_input_parameters_session
 
 
 def _changed_scf_parameters(session):
@@ -22,7 +22,7 @@ def test_load_input_parameters_is_one_named_session_transaction(
 ):
     application = QApplication.instance() or QApplication([])
     assert application is not None
-    session = InputParametersSession(InputParameters.create("scf"))
+    session = create_input_parameters_session(InputParameters.create("scf"))
     parameters, initial = _changed_scf_parameters(session)
     path = tmp_path / "loaded.inp"
     path.write_text("not parsed because the reader is stubbed")
@@ -47,7 +47,7 @@ def test_load_input_parameters_is_one_named_session_transaction(
 def test_text_editor_applies_through_the_same_session_flow(monkeypatch):
     application = QApplication.instance() or QApplication([])
     assert application is not None
-    session = InputParametersSession(InputParameters.create("scf"))
+    session = create_input_parameters_session(InputParameters.create("scf"))
     parameters, initial = _changed_scf_parameters(session)
 
     class FakeInputFileEditor:
