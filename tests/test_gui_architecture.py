@@ -351,6 +351,20 @@ def test_expert_dialog_delegates_parameter_tree_rendering():
     assert "PyQt6" not in field_specs
 
 
+def test_guided_and_expert_delegate_input_file_workflows():
+    flow = (GUI / "flows" / "input_parameters.py").read_text()
+    for name in ("guided_input.py", "expert_input.py"):
+        dialog = (GUI / "dialogs" / name).read_text()
+        assert "InputParameters.from_file" not in dialog
+        assert "InputFileEditor" not in dialog
+        assert "QFileDialog.getOpenFileName" not in dialog
+        assert "choose_and_load_input_parameters" in dialog
+        assert "edit_input_parameters_file" in dialog
+
+    assert flow.count("InputParameters.from_file") == 1
+    assert flow.count("InputFileEditor(") == 1
+
+
 def test_workflow_and_guided_renderer_use_shared_visual_primitives():
     """Shared styling belongs below dialogs; semantic colors remain local."""
     workflow = (GUI / "dialogs" / "workflow_window.py").read_text()

@@ -1,25 +1,25 @@
 """Modal workflow for editing an isolated copy of ``InputParameters``."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.dialogs.input_file import InputFileEditor
+from guy4ase.gui.flows.input_parameters import (
+    choose_and_load_input_parameters,
+    edit_input_parameters_file,
+)
 from guy4ase.gui.input_parameters.session import (
     InputParametersSession,
     create_input_parameters_session,
@@ -105,43 +105,11 @@ class InputParametersDialog(QDialog):
         self.ok_btn = add_button('Calculate' if calculate_mode else 'OK', self._on_ok)
 
     def _load_input(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            'Load SPRKKR Input File',
-            '',
-            'SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)',
-        )
-        if not file_path:
-            return
-        try:
-            parameters = InputParameters.from_file(Path(file_path).resolve())
-            self._replace_parameters(parameters)
-        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
-            QMessageBox.critical(
-                self,
-                'Load Error',
-                f'Failed to load input parameters:\n{exc}',
-            )
-            return
-        self.tree_editor.set_show_changed_only(True)
-
-    def _replace_parameters(self, parameters: InputParameters) -> None:
-        """Install parsed input as one session transaction."""
-        self.session.replace_parameters(parameters, text="Load input file")
+        if choose_and_load_input_parameters(self.session, self):
+            self.tree_editor.set_show_changed_only(True)
 
     def _edit_input_file(self) -> None:
-        focus = QApplication.focusWidget()
-        if focus is not None:
-            focus.clearFocus()
-        try:
-            editor = InputFileEditor(
-                self.session.result(),
-                self,
-                apply_parameters=self._replace_parameters,
-            )
-            editor.exec()
-        except Exception as exc:  # noqa: BLE001 - modal callback boundary.
-            QMessageBox.critical(self, 'Input File Error', str(exc))
+        edit_input_parameters_file(self.session, self)
 
     def _choose_directory(self) -> bool:
         start = (

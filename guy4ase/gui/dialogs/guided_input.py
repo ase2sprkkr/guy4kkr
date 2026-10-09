@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -26,7 +25,10 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters_session
-from guy4ase.gui.dialogs.input_file import InputFileEditor
+from guy4ase.gui.flows.input_parameters import (
+    choose_and_load_input_parameters,
+    edit_input_parameters_file,
+)
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
@@ -362,39 +364,10 @@ class GuidedInputParametersDialog(QDialog):
             QMessageBox.critical(self, "Expert Settings Error", str(exc))
 
     def _load_input(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load SPRKKR Input File",
-            "",
-            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)",
-        )
-        if not file_path:
-            return
-        try:
-            self.session.replace_parameters(
-                InputParameters.from_file(Path(file_path).resolve()),
-                text=f"Load {Path(file_path).name}",
-                source_page="load",
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{exc}")
+        choose_and_load_input_parameters(self.session, self)
 
     def _edit_input_file(self) -> None:
-        """Apply parsed input through a callback so failed application keeps the draft open."""
-        # Parsing is also useful for repairing incomplete inputs; do not block
-        # opening the text editor on save-time/required-field validation.
-        focus = QApplication.focusWidget()
-        if focus is not None:
-            focus.clearFocus()
-        try:
-            def apply(parameters):
-                self.session.replace_parameters(
-                    parameters, text="Edit input file", source_page="input_file",
-                )
-            editor = InputFileEditor(self.session.result(), self, apply_parameters=apply)
-            editor.exec()
-        except Exception as exc:
-            QMessageBox.critical(self, "Input File Error", str(exc))
+        edit_input_parameters_file(self.session, self)
 
     def result(self) -> InputParameters:
         """Return a detached parameter copy."""
