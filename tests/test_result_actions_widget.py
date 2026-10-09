@@ -9,6 +9,7 @@ import pytest
 from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtWidgets import QApplication, QToolButton
 
+from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -126,4 +127,31 @@ def test_broken_actions_keep_value_visible_without_buttons(caplog):
     assert "Readable value" in summary.toolTip()
     assert "broken actions" in summary.toolTip()
     assert "Failed to load actions for output value 'bad'" in caplog.text
+    widget.close()
+
+
+def test_summary_opt_in_does_not_expose_all_actionless_values():
+    _application = QApplication.instance() or QApplication([])
+    widget = _widget(show_values_without_actions=False)
+    ordinary = _Value()
+    summary = _Value()
+    summary.show_in_summary = True
+
+    widget.set_result(_Result({"ordinary": ordinary, "summary": summary}))
+
+    assert widget._row_count == 1
+    assert widget._grid.itemAtPosition(0, 0).widget().text() == "Display value"
+    widget.close()
+
+
+def test_empty_spheres_result_is_visible_without_actions():
+    _application = QApplication.instance() or QApplication([])
+    widget = _widget(show_values_without_actions=False)
+
+    widget.set_result(EmptySpheresResult(found=7))
+
+    assert widget._row_count == 1
+    assert widget._grid.itemAtPosition(0, 0).widget().text() == "Empty spheres found"
+    summary = widget._grid.itemAtPosition(0, 2).widget()
+    assert summary.toolTip() == "7"
     widget.close()

@@ -2,7 +2,6 @@ from collections.abc import Callable
 import logging
 from typing import Any
 
-from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QResizeEvent
 from PyQt6.QtWidgets import (
@@ -125,7 +124,7 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
-    def set_result(self, result: TaskResult | None) -> None:
+    def set_result(self, result: Any | None) -> None:
         self._clear()
         if result is None:
             self._show_empty(self._empty_text)
@@ -160,6 +159,7 @@ class ResultActionsWidget(QWidget):
             raw_info = getattr(value, "info", "")
             info = str(raw_info) if raw_info else ""
             summary = str(value.value_label())
+            show_in_summary = bool(getattr(value, "show_in_summary", False))
         except Exception as exc:
             logger.exception("Failed to display output value %r", key)
             self._add_error_row(f"{key}: unavailable", exc)
@@ -179,7 +179,11 @@ class ResultActionsWidget(QWidget):
             )
             return
 
-        if not actions and not self._show_values_without_actions:
+        if (
+            not actions
+            and not self._show_values_without_actions
+            and not show_in_summary
+        ):
             return
         self._add_row(
             value,

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from ase import Atoms
 
+from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
@@ -23,7 +24,31 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
     assert change is DocumentChange.APPLIED
     assert workspace.empty_spheres_added == 0
     assert workspace.empty_spheres_action() is None
+    assert workspace.result == EmptySpheresResult(found=0)
     assert controller.generation == generation
+
+
+def test_empty_sphere_update_publishes_found_count_as_result():
+    workspace = WorkspaceState(atoms=Atoms("Fe"), result=object())
+    controller = WorkspaceController(workspace)
+    published = []
+    controller.resultChanged.connect(published.append)
+    generation = controller.generation
+
+    def add_one(atoms, _previous):
+        updated = atoms.copy()
+        updated += Atoms("X")
+        return updated, 1
+
+    change = controller.update_empty_spheres(
+        add_one,
+        expected_generation=generation,
+    )
+
+    assert change is DocumentChange.APPLIED
+    assert workspace.result == EmptySpheresResult(found=1)
+    assert published == [workspace.result]
+    assert controller.generation == generation + 1
 
 
 def test_use_for_new_calculation_keeps_density_and_marks_restart():

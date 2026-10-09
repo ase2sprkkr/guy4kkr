@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
 
@@ -459,9 +460,9 @@ class WorkspaceController(QObject):
     ) -> DocumentChange | Busy:
         """Commit one explicit empty-sphere search/recalculation."""
 
-        def change() -> tuple[DocumentChange, bool, bool, Any]:
+        def change() -> tuple[DocumentChange, Any, EmptySpheresResult | None]:
             if not self._generation_is_current(expected_generation):
-                return DocumentChange.STALE, False, False, None
+                return DocumentChange.STALE, None, None
             atoms = self.workspace.atoms
             if atoms is None:
                 raise ValueError("No structure is loaded.")
@@ -472,28 +473,27 @@ class WorkspaceController(QObject):
                 raise ValueError("Empty-sphere count cannot be negative.")
 
             structure_changed = updated is not atoms
-            had_result = structure_changed and self.workspace.result is not None
+            result = EmptySpheresResult(found=count)
             self.workspace.empty_spheres_added = count
+            self.workspace.result = result
             if structure_changed:
-                self.workspace.result = None
                 self.workspace.atoms = updated
                 self.workspace.potential_path = None
                 self.workspace.restarted = True
                 self._changed()
-            return DocumentChange.APPLIED, structure_changed, had_result, updated
+            return DocumentChange.APPLIED, updated, result
 
         attempt = self._structure_gate.try_call(
             "updating empty spheres", change
         )
         if isinstance(attempt, Busy):
             return attempt
-        status, _structure_changed, had_result, atoms = attempt
+        status, atoms, result = attempt
         if status is DocumentChange.APPLIED:
-            if had_result:
-                self.resultChanged.emit(None)
             # A no-op search still changes workflow state (None -> 0), so
-            # refresh observers without inventing a new structure revision.
+            # refresh structure observers without inventing a new revision.
             self.structureChanged.emit(atoms)
+            self.resultChanged.emit(result)
         return status
 
     @staticmethod
