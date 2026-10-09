@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, TypeVar
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -127,6 +127,18 @@ class WorkspaceController(QObject):
     @property
     def generation(self) -> int:
         return self._generation
+
+    @pyqtSlot(object)
+    def notify_structure_prepared(self, atoms: Any) -> None:
+        """Refresh the current borrowed structure after worker preparation.
+
+        Preparation may mutate Atoms even when it fails. This notification
+        does not advance the revision or invalidate the calculation request.
+        Checking identity does not read Atoms data; observers protect their
+        own structure reads through the gate.
+        """
+        if self.workspace.atoms is atoms:
+            self.structureChanged.emit(atoms)
 
     def read_structure(
         self,

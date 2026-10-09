@@ -140,6 +140,66 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     ]
 
 
+@pytest.mark.parametrize("gate_busy", [False, True])
+def test_preparation_notification_preserves_calculation_generation(gate_busy):
+    atoms = Atoms("Fe")
+    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller.replace_input_parameters(object())
+    generation = controller.generation
+    structures = []
+    controller.structureChanged.connect(structures.append)
+
+    if gate_busy:
+        controller.structure_gate.try_call(
+            "preparing another calculation",
+            lambda: controller.notify_structure_prepared(atoms),
+        )
+    else:
+        controller.notify_structure_prepared(atoms)
+
+    assert len(structures) == 1
+    assert structures[0] is atoms
+    assert controller.generation == generation
+
+    result = object()
+    adoption = controller.adopt_calculation_result(
+        LoadedResult(
+            result=result,
+            output_path=None,
+            potential_path=None,
+            atoms=None,
+            potential_error=None,
+            directory=None,
+        ),
+        expected_generation=generation,
+    )
+    assert adoption.adopted
+    assert controller.workspace.result is result
+
+
+def test_preparation_notification_ignores_replaced_or_cleared_structure():
+    old_atoms = Atoms("Fe")
+    controller = WorkspaceController(WorkspaceState(atoms=old_atoms))
+    controller.replace_structure(old_atoms.copy())
+    structures = []
+    controller.structureChanged.connect(structures.append)
+    generation = controller.generation
+
+    controller.notify_structure_prepared(old_atoms)
+
+    assert structures == []
+    assert controller.generation == generation
+
+    controller.reset()
+    structures.clear()
+    generation = controller.generation
+    controller.notify_structure_prepared(old_atoms)
+
+    assert structures == []
+    assert controller.generation == generation
+    assert controller.workspace.atoms is None
+
+
 def test_replacing_structure_invalidates_result_and_potential_source():
     old_atoms = Atoms("Fe")
     new_atoms = Atoms("Cu")

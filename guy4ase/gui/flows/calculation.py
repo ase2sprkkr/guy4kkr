@@ -10,7 +10,6 @@ from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
-from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.structure_wait import wait_for_structure
 
 
@@ -50,7 +49,6 @@ def run_calculation(
         return None
     if isinstance(request, Busy):
         return None
-    structure_access = QtStructureAccess(controller.structure_gate, parent)
 
     def adoption_completed(adoption) -> None:
         if adoption.output_path is not None:
@@ -96,20 +94,6 @@ def run_calculation(
         if not isinstance(adoption, Busy):
             adoption_completed(adoption)
 
-    def prepared(atoms) -> None:
-        def is_current_structure() -> bool:
-            return controller.workspace.atoms is atoms
-
-        def publish_if_current(is_current: bool) -> None:
-            if is_current:
-                controller.structureChanged.emit(atoms)
-
-        structure_access.retry(
-            is_current_structure,
-            reason="refreshing the structure after calculation preparation",
-            on_completed=publish_if_current,
-        )
-
     window = SprkkrRunWindow(
         request=request,
         structure_gate=controller.structure_gate,
@@ -117,7 +101,7 @@ def run_calculation(
         on_finished=finished,
         on_activity_started=active_runs.register,
         on_activity_ended=active_runs.unregister,
-        on_prepared=prepared,
+        on_prepared=controller.notify_structure_prepared,
     )
     window.show()
     return window
