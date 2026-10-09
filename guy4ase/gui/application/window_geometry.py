@@ -64,6 +64,29 @@ def adjust_window_geometry(
     return QRect(x, y, width, height)
 
 
+def restore_window_geometry(
+    geometry: QRect,
+    available: QRect,
+    *,
+    default_size: QSize,
+    center_if_outside: bool = False,
+) -> QRect:
+    """Restore saved geometry, replacing implausibly small sizes with the default."""
+    minimum_width = max(
+        1, min(max(1, default_size.width() // 2), max(1, available.width() // 4))
+    )
+    minimum_height = max(
+        1, min(max(1, default_size.height() // 2), max(1, available.height() // 4))
+    )
+    was_outside = _intersection_area(geometry, available) == 0
+    restored = QRect(geometry)
+    if restored.width() < minimum_width or restored.height() < minimum_height:
+        restored.setSize(default_size)
+    if center_if_outside and was_outside:
+        restored.moveCenter(available.center())
+    return adjust_window_geometry(restored, available)
+
+
 class WindowGeometryStore(QObject):
     """Load, apply, track and persist geometry for registered windows."""
 
@@ -145,9 +168,10 @@ class WindowGeometryStore(QObject):
         if screen is None:
             return WindowPlacement(saved.geometry, saved.maximized)
         available = screen.availableGeometry()
-        geometry = adjust_window_geometry(
+        geometry = restore_window_geometry(
             saved.geometry,
             available,
+            default_size=default,
             center_if_outside=_intersection_area(saved.geometry, available) == 0,
         )
         return WindowPlacement(geometry, saved.maximized)
