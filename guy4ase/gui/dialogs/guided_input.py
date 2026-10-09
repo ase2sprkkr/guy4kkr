@@ -47,13 +47,7 @@ from guy4ase.gui.style import (
 )
 from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
-
-
-def _is_2d(atoms: Any) -> bool:
-    try:
-        return not all(bool(value) for value in atoms.get_pbc())
-    except Exception:
-        return False
+from guy4ase.physics.lattice import detect_structure_kind
 
 
 @dataclass(frozen=True)
@@ -79,7 +73,10 @@ class GuidedInputParametersDialog(QDialog):
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
+        self.spec: TaskDialogSpec = task_dialog_spec(
+            self.task,
+            is_2d=detect_structure_kind(atoms) == "2d",
+        )
         expected_task = self.spec.parameter_task.lower()
         if parameters.task_name.lower() != expected_task:
             raise ValueError(
@@ -411,7 +408,10 @@ def select_guided_input_parameters(
     atoms: Any = None,
 ) -> InputParameters | None:
     task = task.lower()
-    spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
+    spec = task_dialog_spec(
+        task,
+        is_2d=detect_structure_kind(atoms) == "2d",
+    )
     parameters = InputParameters.create(spec.parameter_task)
     dialog = GuidedInputParametersDialog(
         task,

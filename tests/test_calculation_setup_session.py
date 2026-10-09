@@ -6,10 +6,12 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.build import bulk
 from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QApplication, QSpinBox, QComboBox
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr.sprkkr.build import semiinfinite_system
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
@@ -141,10 +143,25 @@ def test_finishing_untouched_dialog_does_not_commit_visual_fallbacks():
     application.processEvents()
 
 
-def test_scf_accuracy_page_uses_2d_kpoint_controls_for_2d_structure():
+def test_scf_accuracy_page_does_not_treat_plain_slab_as_layered_2d():
     application = QApplication.instance() or QApplication([])
     atoms = Atoms("Fe", cell=(2.8, 2.8, 12.0), pbc=(True, True, False))
     dialog = GuidedInputParametersDialog("scf", InputParameters.create("scf"), atoms=atoms)
+
+    assert dialog.editors_for(("TAU", "NKTAB"))
+    assert not dialog.editors_for(("TAU", "NKTAB2D"))
+    assert not dialog.editors_for(("TAU", "NKTAB3D"))
+
+    dialog.close()
+    application.processEvents()
+
+
+def test_scf_accuracy_page_uses_2d_kpoint_controls_for_layered_structure():
+    application = QApplication.instance() or QApplication([])
+    atoms = semiinfinite_system(bulk("Cu", "sc", a=2.0), (0, 0))
+    dialog = GuidedInputParametersDialog(
+        "scf", InputParameters.create("scf"), atoms=atoms
+    )
 
     assert dialog.editors_for(("TAU", "NKTAB2D"))
     assert dialog.editors_for(("TAU", "NKTAB3D"))
