@@ -1,22 +1,7 @@
 """Atomic edits for the unified BSF task; ENERGY.NE remains the mode source."""
 from ase2sprkkr.common.configuration_transaction import ConfigurationTransaction
 from ase2sprkkr.input_parameters.definitions.bsf import EK, KK, KK_TASK_ITEMS, bsf_mode
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
-
 from guy4ase.gui.input_parameters.keyword_choices import keyword_items
-
-
-def prepare_bsf(parameters):
-    """Copy BSF input to its canonical definition while retaining alias-specific NE."""
-    if parameters.task_name.lower() not in {'bsf', 'bsfek', 'bsfkk'}:
-        raise ValueError(f'Expected BSF input parameters, got {parameters.task_name.upper()}.')
-    # Legacy aliases have a default NE based on _requested_task_name, which
-    # copy() does not preserve. Materialise NE and use the canonical task.
-    values = parameters.as_dict(only_changed=True, generated=False, copy=True) or {}
-    values.setdefault("ENERGY", {})["NE"] = parameters.ENERGY.NE().copy()
-    result = InputParameters.create("bsf")
-    result.set(values)
-    return result
 
 
 def set_energy_points(parameters, points, *, atoms=None):
