@@ -17,6 +17,14 @@ _KEEP_DIRECTORY = object()
 _T = TypeVar("_T")
 
 
+def _result_is_scf(result: Any) -> bool:
+    """Return whether a live calculation result belongs to an SCF task."""
+    try:
+        return str(result.task_name).strip().lower() == "scf"
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class Busy:
     """A nonblocking structure operation could not enter the gate."""
@@ -214,6 +222,7 @@ class WorkspaceController(QObject):
         potential_path: str | None = None,
         directory: Any = _KEEP_DIRECTORY,
         expected_generation: int | None = None,
+        restarted: bool = False,
     ) -> DocumentChange | Busy:
         def change() -> tuple[DocumentChange, bool, bool]:
             if not self._generation_is_current(expected_generation):
@@ -222,6 +231,7 @@ class WorkspaceController(QObject):
             self.workspace.result = None
             self.workspace.atoms = atoms
             self.workspace.potential_path = potential_path
+            self.workspace.restarted = restarted
             directory_changed = self._set_directory(directory)
             self._changed()
             return DocumentChange.APPLIED, had_result, directory_changed
@@ -257,6 +267,7 @@ class WorkspaceController(QObject):
             had_result = self.workspace.result is not None
             self.workspace.result = None
             self.workspace.atoms = atoms
+            self.workspace.restarted = True
             if not preserve_potential_path:
                 self.workspace.potential_path = None
             self._changed()
@@ -324,6 +335,7 @@ class WorkspaceController(QObject):
                 if loaded.atoms is not None
                 else None
             )
+            self.workspace.restarted = False
             directory_changed = self._set_directory(loaded.directory)
             self._changed()
             return True, directory_changed
@@ -370,6 +382,8 @@ class WorkspaceController(QObject):
                 self.workspace.potential_path = str(
                     loaded.potential_path
                 )
+                if _result_is_scf(loaded.result):
+                    self.workspace.restarted = False
             self.workspace.result = loaded.result
             self._changed()
             return prepared_adoption
@@ -398,6 +412,7 @@ class WorkspaceController(QObject):
             self.workspace.atoms = None
             self.workspace.potential_path = None
             self.workspace.input_parameters = None
+            self.workspace.restarted = False
             self._set_directory(None)
             self._changed()
 

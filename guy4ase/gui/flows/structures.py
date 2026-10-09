@@ -146,6 +146,7 @@ def build_2d_structure(
                     controller.replace_structure,
                     result,
                     expected_generation=generation,
+                    restarted=True,
                 ),
             )
             if isinstance(change, Busy) or not document_change_applied(

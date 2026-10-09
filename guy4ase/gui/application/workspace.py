@@ -28,6 +28,7 @@ class WorkspaceState:
     directory: str | None = None
     potential_path: str | None = None
     result: Any | None = None
+    restarted: bool = False
 
     def structure_kind(self) -> StructureKind | None:
         """Classify the current structure directly from ``atoms``."""
@@ -40,6 +41,8 @@ class WorkspaceState:
             return None
         if not atoms.has_potential():
             return None
+        if self.restarted:
+            return "START"
         status = atoms.potential.SCF_INFO.SCFSTATUS()
         if status is None:
             return None
@@ -48,6 +51,8 @@ class WorkspaceState:
 
     def is_scf_converged(self) -> bool:
         """Return effective SPR-KKR convergence derived from the current atoms."""
+        if self.restarted:
+            return False
         atoms = self.atoms
         if atoms is None:
             return False

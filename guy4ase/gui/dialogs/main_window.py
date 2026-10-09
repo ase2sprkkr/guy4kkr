@@ -987,6 +987,7 @@ class MainWindow(QMainWindow):
                     self.controller.replace_structure,
                     atoms,
                     expected_generation=generation,
+                    restarted=True,
                 ),
             )
             if not isinstance(change, Busy):
