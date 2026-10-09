@@ -79,6 +79,17 @@ def _structure_key(kind: str, shape: Any) -> tuple[Any, ...]:
     return kind, shape
 
 
+def _sequence_values(grammar: GrammarSequence, value: Any) -> list[Any] | None:
+    """Return a complete Sequence value, or None while it needs whole-value editing."""
+    if value is None:
+        return None
+    try:
+        grammar.validate(value)
+    except (TypeError, ValueError):
+        return None
+    return _items(value)
+
+
 class ExpertInputTreeEditor(QWidget):
     """Render grammar values directly into the single QTreeWidget presentation tree."""
 
@@ -234,11 +245,13 @@ class ExpertInputTreeEditor(QWidget):
             key = self._structural_key(option, self._field_specs.get(path))
             old_key = item.data(0, self._STRUCTURAL_KEY_ROLE)
             if key != old_key or self._contains_draft(item):
-                focus_next_append = self._focus_is_in_append(item)
+                append_container = self._focused_append_container_path(item)
                 self._render_option(option, path, item.parent(), item, self._field_specs.get(path))
                 self._collapse_groups(item)
-                if focus_next_append:
-                    QTimer.singleShot(0, lambda current=item: self._focus_append_editor(current))
+                if append_container is not None:
+                    QTimer.singleShot(
+                        0, lambda current=item, path=append_container: self._focus_append_editor(current, path)
+                    )
             else:
                 self._refresh_subtree(item, refreshed)
             self._update_changed_style(option, item, refresh_filter=False)
@@ -331,11 +344,12 @@ class ExpertInputTreeEditor(QWidget):
                 (len(display), fixed, append, incomplete, child_keys),
             )
         if isinstance(grammar, GrammarSequence):
-            values = _items(value)
+            values = _sequence_values(grammar, value)
+            if values is None:
+                return _structure_key("sequence-leaf", None)
             children = tuple(
                 self._value_structure_key(
-                    child_type,
-                    values[index] if index < len(values) else None,
+                    child_type, values[index],
                 )
                 for index, child_type in enumerate(grammar.types)
             )
@@ -395,10 +409,10 @@ class ExpertInputTreeEditor(QWidget):
             for index in range(item.childCount())
         )
 
-    def _focus_is_in_append(self, option_item: QTreeWidgetItem) -> bool:
+    def _focused_append_container_path(self, option_item: QTreeWidgetItem) -> tuple[int, ...] | None:
         focus = QApplication.focusWidget()
         if focus is None:
-            return False
+            return None
         for item, editor in self._editor_widgets():
             if editor is None or sip.isdeleted(editor):
                 continue
@@ -407,17 +421,34 @@ class ExpertInputTreeEditor(QWidget):
             current = item
             while current is not None and current is not option_item:
                 if current.data(0, self._APPEND_ROLE):
-                    return True
+                    container = current.parent()
+                    path = []
+                    while container is not None and container is not option_item:
+                        parent = container.parent()
+                        if parent is None:
+                            return None
+                        path.append(parent.indexOfChild(container))
+                        container = parent
+                    return tuple(reversed(path)) if container is option_item else None
                 current = current.parent()
-            return False
-        return False
+            return None
+        return None
 
-    def _focus_append_editor(self, option_item: QTreeWidgetItem) -> None:
+    def _focus_append_editor(
+        self,
+        option_item: QTreeWidgetItem,
+        container_path: tuple[int, ...],
+    ) -> None:
+        container = option_item
+        for index in container_path:
+            if index < 0 or index >= container.childCount():
+                return
+            container = container.child(index)
         append_item = next(
             (
-                option_item.child(index)
-                for index in range(option_item.childCount())
-                if option_item.child(index).data(0, self._APPEND_ROLE)
+                container.child(index)
+                for index in range(container.childCount())
+                if container.child(index).data(0, self._APPEND_ROLE)
             ),
             None,
         )
@@ -595,6 +626,14 @@ class ExpertInputTreeEditor(QWidget):
         path: InputParameterPath,
     ) -> Any:
         value = binding.model_value_from(binding.parameters)
+        values = _sequence_values(grammar, value)
+        if values is None:
+            self._clear_children(item)
+            self._install_editor(item, binding, placement)
+            key = _structure_key("sequence-leaf", None)
+            item.setData(0, self._STRUCTURAL_KEY_ROLE, key)
+            return key
+
         self._install_editor(item, binding, placement)
         self._clear_children(item)
         names = getattr(grammar, "names", None)
@@ -806,6 +845,7 @@ class ExpertInputTreeEditor(QWidget):
                 binding, index, child_placement, append=True, allow_empty=True
             )
             child = self._new_item(item, child_placement.label, str(grammar.type), "Append new item")
+            child.setData(0, self._APPEND_ROLE, True)
             self._render_value(child_binding, child_placement, grammar.type, child, path)
         item.setData(0, self._STRUCTURAL_KEY_ROLE, _structure_key("array", (len(values), fixed, incomplete, maximum)))
 

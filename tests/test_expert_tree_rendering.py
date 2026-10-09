@@ -121,13 +121,17 @@ def test_tree_array_append_commits_numpy_backed_array_once(application, monkeypa
     dialog = InputParametersDialog(parameters)
     item = dialog.tree_editor._option_rows[("TAU", "CLURAD")]
     tree = dialog.tree_editor.tree
-    append_editor = tree.itemWidget(item.child(2), 2)
+    append_item = item.child(2)
+    assert append_item.data(0, dialog.tree_editor._APPEND_ROLE)
+    append_editor = tree.itemWidget(append_item, 2)
     append_editor.setValue(3.5)
     application.processEvents()
 
     result = dialog.session.value(("TAU", "CLURAD"))
     assert isinstance(result, np.ndarray)
     np.testing.assert_array_equal(result, [1.5, 2.5, 3.5])
+    item = dialog.tree_editor._option_rows[("TAU", "CLURAD")]
+    assert item.child(3).data(0, dialog.tree_editor._APPEND_ROLE)
     assert dialog.session.undo_stack.count() == 1
     dialog.close()
 
@@ -218,14 +222,22 @@ def test_sequence_nested_array_append_updates_rows_and_one_transaction(applicati
     inner, sequence_type = _install_sequence_array(option, monkeypatch)
     option.set(sequence_type.convert([1, np.array([2.0])]))
     dialog = InputParametersDialog(parameters)
+    dialog.show()
+    dialog.activateWindow()
+    application.processEvents()
     path = ("SCF", "NITER")
     item = dialog.tree_editor._option_rows[path]
     array_item = item.child(1)
     existing_editor = dialog.tree_editor.tree.itemWidget(array_item.child(0), 2)
     assert isinstance(existing_editor, RealEditor)
     append_editor = dialog.tree_editor.tree.itemWidget(array_item.child(1), 2)
+    append_editor.setFocus(Qt.FocusReason.OtherFocusReason)
+    application.processEvents()
+    focus = QApplication.focusWidget()
+    assert focus is append_editor or append_editor.isAncestorOf(focus)
 
     append_editor.setValue(3.0)
+    application.processEvents()
     application.processEvents()
 
     result = dialog.session.value(path)
@@ -235,6 +247,56 @@ def test_sequence_nested_array_append_updates_rows_and_one_transaction(applicati
     item = dialog.tree_editor._option_rows[path]
     array_item = item.child(1)
     assert array_item.childCount() == 3
+    new_append_editor = dialog.tree_editor.tree.itemWidget(array_item.child(2), 2)
+    focus = QApplication.focusWidget()
+    assert focus is new_append_editor or new_append_editor.isAncestorOf(focus)
+    assert dialog.session.undo_stack.count() == 1
+    dialog.close()
+
+
+def test_invalid_complete_sequence_uses_whole_value_editor(application, monkeypatch):
+    parameters = InputParameters.create("scf")
+    option = parameters.SCF.NITER
+    sequence_type = Sequence(Integer(), Real(), names=("count", "energy"))
+    monkeypatch.setattr(option._definition, "type", sequence_type)
+    monkeypatch.setattr(option._definition, "grammar_type", sequence_type)
+    option._value = sequence_type.value_type(3, "not-a-real")
+
+    dialog = InputParametersDialog(parameters)
+    item = dialog.tree_editor._option_rows[("SCF", "NITER")]
+
+    assert isinstance(dialog.tree_editor.tree.itemWidget(item, 2), TextEditor)
+    assert item.childCount() == 0
+    dialog.close()
+
+
+def test_missing_sequence_uses_whole_value_editor_until_complete(application, monkeypatch):
+    parameters = InputParameters.create("scf")
+    option = parameters.SCF.NITER
+    sequence_type = Sequence(Integer(), Real(), names=("count", "energy"))
+    monkeypatch.setattr(option._definition, "type", sequence_type)
+    monkeypatch.setattr(option._definition, "grammar_type", sequence_type)
+    option._value = None
+
+    dialog = InputParametersDialog(parameters)
+    path = ("SCF", "NITER")
+    tree = dialog.tree_editor.tree
+    item = dialog.tree_editor._option_rows[path]
+    editor = tree.itemWidget(item, 2)
+
+    assert isinstance(editor, TextEditor)
+    assert item.childCount() == 0
+
+    editor.setText("(3, 2.5)")
+    assert editor.commit()
+    application.processEvents()
+
+    item = dialog.tree_editor._option_rows[path]
+    assert item.childCount() == 2
+    assert isinstance(tree.itemWidget(item.child(0), 2), IntegerEditor)
+    assert isinstance(tree.itemWidget(item.child(1), 2), RealEditor)
+    result = dialog.session.value(path)
+    assert result.count == 3 and result.energy == 2.5
     assert dialog.session.undo_stack.count() == 1
     dialog.close()
 
