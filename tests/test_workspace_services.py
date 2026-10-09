@@ -103,7 +103,7 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     atoms = Atoms("Fe")
     parameters = object()
     result = object()
-    controller.change_working_directory("calculation")
+    controller.change_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
     controller.adopt_calculation_result(
@@ -183,14 +183,44 @@ def test_replacing_input_parameters_invalidates_only_result():
         result=object(),
     )
     controller = WorkspaceController(workspace)
+    directories = []
+    controller.directoryChanged.connect(directories.append)
 
-    controller.replace_input_parameters(parameters)
+    controller.replace_input_parameters(
+        parameters, directory="calculation"
+    )
 
     assert workspace.atoms is atoms
     assert workspace.potential_path == "Fe.pot"
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
     assert workspace.result is None
+    assert directories == []
+
+
+def test_changing_directory_invalidates_result_and_same_directory_is_noop():
+    result = object()
+    workspace = WorkspaceState(directory="first", result=result)
+    controller = WorkspaceController(workspace)
+    results = []
+    directories = []
+    controller.resultChanged.connect(results.append)
+    controller.directoryChanged.connect(directories.append)
+    generation = controller.generation
+
+    controller.change_directory("next")
+
+    assert workspace.directory == "next"
+    assert workspace.result is None
+    assert controller.generation == generation + 1
+    assert results == [None]
+    assert directories == ["next"]
+
+    controller.change_directory("next")
+
+    assert controller.generation == generation + 1
+    assert results == [None]
+    assert directories == ["next"]
 
 
 @pytest.mark.parametrize("suffix", [".pot", ".pot_new"])

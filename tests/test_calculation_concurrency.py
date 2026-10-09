@@ -163,7 +163,7 @@ def test_preparation_locks_only_structure_and_process_run_does_not(
     assert isinstance(blocked, Busy)
     assert blocked.active_reason == "preparing a calculation"
 
-    controller.change_working_directory(str(tmp_path / "other"))
+    controller.change_directory(str(tmp_path / "other"))
     replacement_parameters = _Parameters(2)
     assert (
         controller.replace_input_parameters(replacement_parameters)
@@ -529,7 +529,7 @@ def test_file_loads_reject_an_intervening_document_change(
     assert result_controller.workspace.result is None
 
 
-def test_directory_change_does_not_invalidate_or_get_overwritten_by_result(
+def test_directory_change_invalidates_and_rejects_stale_calculation_result(
     tmp_path,
 ):
     original_directory = tmp_path / "first"
@@ -540,16 +540,20 @@ def test_directory_change_does_not_invalidate_or_get_overwritten_by_result(
     generation = controller.generation
     result = SimpleNamespace(files={}, directory=str(original_directory))
     loaded = load_result(result, fallback_directory=original_directory)
-    controller.change_working_directory(str(next_directory))
-    assert controller.generation == generation
+
+    controller.change_directory(str(next_directory))
+
+    assert controller.generation == generation + 1
+    assert controller.workspace.result is None
+    assert controller.workspace.directory == str(next_directory)
 
     adoption = controller.adopt_calculation_result(
         loaded,
         expected_generation=generation,
     )
+    assert not adoption.adopted
     assert controller.generation == generation + 1
-    assert adoption.adopted
-    assert controller.workspace.result is result
+    assert controller.workspace.result is None
     assert controller.workspace.directory == str(next_directory)
 
 

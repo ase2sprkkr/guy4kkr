@@ -169,6 +169,16 @@ class WorkspaceController(QObject):
     def _changed(self) -> None:
         self._generation += 1
 
+    def _set_directory(self, directory: Any) -> bool:
+        """Set a requested directory and report whether it actually changed."""
+        if (
+            directory is _KEEP_DIRECTORY
+            or directory == self.workspace.directory
+        ):
+            return False
+        self.workspace.directory = directory
+        return True
+
     def replace_structure(
         self,
         atoms: Any,
@@ -177,26 +187,25 @@ class WorkspaceController(QObject):
         directory: Any = _KEEP_DIRECTORY,
         expected_generation: int | None = None,
     ) -> DocumentChange | Busy:
-        def change() -> tuple[DocumentChange, bool]:
+        def change() -> tuple[DocumentChange, bool, bool]:
             if not self._generation_is_current(expected_generation):
-                return DocumentChange.STALE, False
+                return DocumentChange.STALE, False, False
             had_result = self.workspace.result is not None
             self.workspace.result = None
             self.workspace.atoms = atoms
             self.workspace.potential_path = potential_path
-            if directory is not _KEEP_DIRECTORY:
-                self.workspace.directory = directory
+            directory_changed = self._set_directory(directory)
             self._changed()
-            return DocumentChange.APPLIED, had_result
+            return DocumentChange.APPLIED, had_result, directory_changed
 
         attempt = self._structure_gate.try_call("changing the structure", change)
         if isinstance(attempt, Busy):
             return attempt
-        status, had_result = attempt
+        status, had_result, directory_changed = attempt
         if status is DocumentChange.APPLIED:
             if had_result:
                 self.resultChanged.emit(None)
-            if directory is not _KEEP_DIRECTORY:
+            if directory_changed:
                 self.directoryChanged.emit(directory)
             self.structureChanged.emit(atoms)
         return status
@@ -247,20 +256,25 @@ class WorkspaceController(QObject):
             return DocumentChange.STALE
         had_result = self.workspace.result is not None
         self.workspace.result = None
-        if directory is not _KEEP_DIRECTORY:
-            self.workspace.directory = directory
+        directory_changed = self._set_directory(directory)
         self.workspace.input_parameters = parameters
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
-        if directory is not _KEEP_DIRECTORY:
+        if directory_changed:
             self.directoryChanged.emit(directory)
         self.inputParametersChanged.emit(parameters)
         return DocumentChange.APPLIED
 
-    def change_working_directory(self, directory: str | None) -> None:
-        """Change directory metadata without invalidating calculations."""
-        self.workspace.directory = directory
+    def change_directory(self, directory: str | None) -> None:
+        """Change directory and invalidate any result bound to the old one."""
+        if not self._set_directory(directory):
+            return
+        had_result = self.workspace.result is not None
+        self.workspace.result = None
+        self._changed()
+        if had_result:
+            self.resultChanged.emit(None)
         self.directoryChanged.emit(directory)
 
     def adopt_external_result(
@@ -272,9 +286,9 @@ class WorkspaceController(QObject):
         """Install a fully loaded external result as a new document."""
         adoption = self._result_adoption(loaded)
 
-        def commit() -> bool:
+        def commit() -> tuple[bool, bool]:
             if not self._generation_is_current(expected_generation):
-                return False
+                return False, False
             self.workspace.result = loaded.result
             self.workspace.atoms = loaded.atoms
             self.workspace.potential_path = (
@@ -282,19 +296,21 @@ class WorkspaceController(QObject):
                 if loaded.atoms is not None
                 else None
             )
-            self.workspace.directory = loaded.directory
+            directory_changed = self._set_directory(loaded.directory)
             self._changed()
-            return True
+            return True, directory_changed
 
         attempt = self._structure_gate.try_call(
             "loading a calculation result", commit
         )
         if isinstance(attempt, Busy):
             return attempt
-        if not attempt:
+        adopted, directory_changed = attempt
+        if not adopted:
             return replace(adoption, adopted=False)
         self.structureChanged.emit(loaded.atoms)
-        self.directoryChanged.emit(loaded.directory)
+        if directory_changed:
+            self.directoryChanged.emit(loaded.directory)
         self.resultChanged.emit(loaded.result)
         return adoption
 
@@ -354,7 +370,7 @@ class WorkspaceController(QObject):
             self.workspace.atoms = None
             self.workspace.potential_path = None
             self.workspace.input_parameters = None
-            self.workspace.directory = None
+            self._set_directory(None)
             self._changed()
 
         attempt = self._structure_gate.try_call("clearing the structure", clear)

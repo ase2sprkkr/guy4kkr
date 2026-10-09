@@ -367,7 +367,7 @@ class WorkflowWindow(QMainWindow):
         )
         if not directory:
             return False
-        self.controller.change_working_directory(str(directory))
+        self.controller.change_directory(str(directory))
         return True
 
     def _browse_working_directory(self) -> None:

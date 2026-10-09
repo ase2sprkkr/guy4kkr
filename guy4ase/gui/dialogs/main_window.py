@@ -205,7 +205,7 @@ class MainWindow(QMainWindow):
         chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
         if not chosen:
             return
-        self.controller.change_working_directory(str(chosen))
+        self.controller.change_directory(str(chosen))
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
         handlers = {
