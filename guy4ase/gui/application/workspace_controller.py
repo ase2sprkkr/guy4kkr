@@ -140,6 +140,22 @@ class WorkspaceController(QObject):
         if self.workspace.atoms is atoms:
             self.structureChanged.emit(atoms)
 
+    def access_structure(
+        self,
+        operation: Callable[[Any], _T],
+        *,
+        reason: str,
+    ) -> _T | Busy:
+        """Run an operation with exclusive access to shared Atoms.
+
+        The callback may inspect or serialize the borrowed structure, but
+        document mutations belong in the named controller transitions.
+        """
+        return self._structure_gate.try_call(
+            reason,
+            lambda: operation(self.workspace.atoms),
+        )
+
     def read_structure(
         self,
         reader: Callable[[Any], _T],
@@ -148,16 +164,15 @@ class WorkspaceController(QObject):
     ) -> tuple[int, _T] | Busy:
         """Create a revision-tagged snapshot derived from shared Atoms."""
 
-        def read() -> tuple[int, _T]:
-            return self._generation, reader(self.workspace.atoms)
-
-        return self._structure_gate.try_call(reason, read)
+        return self.access_structure(
+            lambda atoms: (self._generation, reader(atoms)),
+            reason=reason,
+        )
 
     def create_calculation_request(self) -> CalculationRequest | Busy:
         """Borrow Atoms and capture independent calculation inputs."""
 
-        def capture() -> CalculationRequest:
-            atoms = self.workspace.atoms
+        def capture(atoms: Any) -> CalculationRequest:
             parameters = self.workspace.input_parameters
             directory = self.workspace.directory
             if atoms is None or parameters is None or not directory:
@@ -171,8 +186,9 @@ class WorkspaceController(QObject):
                 generation=self._generation,
             )
 
-        return self._structure_gate.try_call(
-            "creating a calculation request", capture
+        return self.access_structure(
+            capture,
+            reason="creating a calculation request",
         )
 
     def _generation_is_current(self, expected: int | None) -> bool:

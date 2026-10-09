@@ -222,19 +222,20 @@ def save_structure(
     if match and not file_path.lower().endswith(f".{match.group(1)}"):
         file_path += f".{match.group(1)}"
 
-    def write_structure() -> None:
-        atoms = controller.workspace.atoms
+    path = Path(file_path).resolve()
+
+    def write_structure(atoms) -> None:
         if atoms is None:
             raise ValueError("No structure is loaded.")
-        ase_write(Path(file_path).resolve(), atoms)
+        ase_write(path, atoms)
 
     try:
         outcome = wait_for_structure(
             parent,
             partial(
-                controller.structure_gate.try_call,
-                "saving the structure",
+                controller.access_structure,
                 write_structure,
+                reason="saving the structure",
             ),
         )
     except Exception as exc:  # noqa: BLE001 - backend writers vary

@@ -200,6 +200,24 @@ def test_preparation_notification_ignores_replaced_or_cleared_structure():
     assert controller.workspace.atoms is None
 
 
+def test_structure_access_runs_operation_under_gate():
+    atoms = Atoms("Fe")
+    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    locked = []
+
+    def observe(current):
+        locked.append(controller.structure_gate.locked())
+        return current
+
+    observed = controller.access_structure(
+        observe,
+        reason="testing structure access",
+    )
+
+    assert observed is atoms
+    assert locked == [True]
+
+
 def test_replacing_structure_invalidates_result_and_potential_source():
     old_atoms = Atoms("Fe")
     new_atoms = Atoms("Cu")
