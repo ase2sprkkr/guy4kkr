@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.main_window import MainWindow
@@ -22,6 +23,7 @@ class GuiApplication(QObject):
         *,
         workspace: WorkspaceState | None = None,
         recent_files_path: str | Path | None = None,
+        settings_path: str | Path | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -32,6 +34,10 @@ class GuiApplication(QObject):
             parent=self,
         )
         self.recent_files.load()
+        self.settings = ApplicationSettings(
+            Path(settings_path) if settings_path is not None else None
+        )
+        self.settings.load()
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
 
@@ -43,6 +49,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 self.active_runs,
                 open_expert=self.show_main_window,
+                settings=self.settings,
             )
         return self._workflow_window
 
@@ -53,6 +60,7 @@ class GuiApplication(QObject):
                 self.controller,
                 self.recent_files,
                 self.active_runs,
+                self.settings,
             )
         return self._main_window
 

@@ -26,13 +26,16 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.misc.structure_wait import (
@@ -118,11 +121,13 @@ class WorkflowWindow(QMainWindow):
     """Task-oriented entry point that keeps the full UI available as expert mode."""
 
     _GROUP_CALCULATE = "Calculate"
+    _GROUP_VIEW = "View"
     _GROUP_CREATE = "Create structure"
     _GROUP_LOAD = "Load structure"
     _GROUP_DIFFERENT = "And now something completely different..."
     _ACTION_GROUPS = (
         _GROUP_CALCULATE,
+        _GROUP_VIEW,
         _GROUP_CREATE,
         _GROUP_LOAD,
         _GROUP_DIFFERENT,
@@ -135,6 +140,7 @@ class WorkflowWindow(QMainWindow):
         active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
+        settings: ApplicationSettings | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
@@ -148,6 +154,7 @@ class WorkflowWindow(QMainWindow):
         )
         self.recent_history = recent_files
         self.active_runs = active_runs
+        self.settings = settings or ApplicationSettings()
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.directoryChanged.connect(
@@ -284,15 +291,36 @@ class WorkflowWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
         expert_layout = QVBoxLayout(expert_box)
-        side_text = QLabel("Access every setting directly.", expert_box)
+        side_text = QLabel("Access the full expert interface.", expert_box)
         side_text.setWordWrap(True)
         side_text.setStyleSheet(secondary_text_stylesheet(self.palette()))
         expert_layout.addWidget(side_text)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_row.setSpacing(SPACE_XS)
         expert_btn = QPushButton("Open Expert Mode", expert_box)
         expert_btn.setMinimumHeight(40)
         expert_btn.setStyleSheet(button_stylesheet(self.palette()))
         expert_btn.clicked.connect(self._open_expert_mode)
-        expert_layout.addWidget(expert_btn)
+        bottom_row.addWidget(expert_btn, 1)
+
+        settings_btn = QToolButton(expert_box)
+        settings_btn.setAutoRaise(True)
+        settings_btn.setFixedSize(40, 40)
+        settings_btn.setIcon(
+            QIcon.fromTheme(
+                "preferences-system",
+                self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_FileDialogDetailedView
+                ),
+            )
+        )
+        settings_btn.setToolTip("Settings")
+        settings_btn.setAccessibleName("Settings")
+        settings_btn.clicked.connect(self._open_settings)
+        bottom_row.addWidget(settings_btn)
+        expert_layout.addLayout(bottom_row)
         expert_box.setStyleSheet(
             group_panel_stylesheet(
                 self.palette(), self.palette().color(QPalette.ColorRole.Highlight)
@@ -565,6 +593,15 @@ class WorkflowWindow(QMainWindow):
         )
         self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
 
+        self._add_action(
+            "Visualize Structure",
+            "Open the current structure in the configured ASE viewer",
+            self._visualize_structure,
+            group=self._GROUP_VIEW,
+            category="neutral",
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+        )
+
         if not converged:
             empty_spheres_action = (
                 None if status in stage_names else self.workspace.empty_spheres_action()
@@ -786,6 +823,12 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         wait_for_structure(self, self.controller.reset)
+
+    def _visualize_structure(self) -> None:
+        visualization_flow.visualize_structure(self.controller, self.settings, self)
+
+    def _open_settings(self) -> None:
+        edit_settings(self.settings, self)
 
     def _open_expert_mode(self) -> None:
         self._open_expert()

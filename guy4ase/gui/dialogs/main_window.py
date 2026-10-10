@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.expert_input import (
@@ -39,6 +40,7 @@ from guy4ase.gui.dialogs.expert_input import (
     select_input_parameters,
 )
 from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
 from guy4ase.gui.dialogs.structures.transforms import (
     repeat_atoms,
@@ -48,6 +50,7 @@ from guy4ase.gui.dialogs.structures.transforms import (
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.structure_wait import (
     document_change_applied,
@@ -70,6 +73,7 @@ class MainWindow(QMainWindow):
         controller: WorkspaceController,
         recent_files: RecentFiles,
         active_runs: ActiveRunRegistry,
+        settings: ApplicationSettings | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -87,6 +91,7 @@ class MainWindow(QMainWindow):
         )
         self.recent_history = recent_files
         self.active_runs = active_runs
+        self.settings = settings or ApplicationSettings()
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -410,6 +415,23 @@ class MainWindow(QMainWindow):
         run_menu.aboutToShow.connect(update_run_menu)
         update_run_menu()
 
+        view_menu = menubar.addMenu("&View")
+        visualize_action = QAction("&Visualize Structure", self)
+        visualize_action.triggered.connect(self._visualize_structure)
+        view_menu.addAction(visualize_action)
+
+        def update_view_menu() -> None:
+            visualize_action.setEnabled(self.workspace.atoms is not None)
+
+        view_menu.aboutToShow.connect(update_view_menu)
+        update_view_menu()
+
+        tools_menu = menubar.addMenu("&Tools")
+        settings_action = QAction("&Settings...", self)
+        settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        settings_action.triggered.connect(self._open_settings)
+        tools_menu.addAction(settings_action)
+
         assign_elements_action = QAction("&Edit the structure...", self)
         assign_elements_action.setShortcut("Ctrl+E")
         assign_elements_action.triggered.connect(self._on_assign_elements)
@@ -445,6 +467,12 @@ class MainWindow(QMainWindow):
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    def _visualize_structure(self) -> None:
+        visualization_flow.visualize_structure(self.controller, self.settings, self)
+
+    def _open_settings(self) -> None:
+        edit_settings(self.settings, self)
 
     def _build_structure_view(self) -> QWidget:
         viewer_widget = QWidget()
