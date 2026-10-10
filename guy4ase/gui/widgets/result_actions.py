@@ -1,10 +1,12 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import logging
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QResizeEvent
 from PyQt6.QtWidgets import (
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -99,9 +101,16 @@ class ResultActionsWidget(QWidget):
         self._show_values_without_actions = show_values_without_actions
         self._empty_text = empty_text
         self._row_count = 0
+        self._results: tuple[Any, ...] = ()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self._selector = QComboBox(self)
+        self._selector.setToolTip("Select a result")
+        self._selector.currentIndexChanged.connect(self._select_result)
+        self._selector.hide()
+        layout.addWidget(self._selector)
 
         self._empty_label = QLabel(empty_text, self)
         self._empty_label.setWordWrap(True)
@@ -123,6 +132,60 @@ class ResultActionsWidget(QWidget):
     @property
     def has_rows(self) -> bool:
         return self._row_count > 0
+
+    def set_results(self, results: Iterable[Any]) -> None:
+        """Show a newest-first result history."""
+        new_results = tuple(results)
+        same_history = (
+            len(new_results) == len(self._results)
+            and all(
+                current is previous
+                for current, previous in zip(new_results, self._results)
+            )
+        )
+        selected = self._selector.currentIndex()
+
+        self._results = new_results
+        self._selector.blockSignals(True)
+        try:
+            self._selector.clear()
+            for index, result in enumerate(self._results):
+                self._selector.addItem(self._result_label(result, index))
+            if not self._results:
+                selected = -1
+            elif not same_history or not 0 <= selected < len(self._results):
+                selected = 0
+            self._selector.setCurrentIndex(selected)
+        finally:
+            self._selector.blockSignals(False)
+
+        self._selector.setVisible(bool(self._results))
+        self.set_result(
+            self._results[selected] if selected >= 0 else None
+        )
+
+    def _select_result(self, index: int) -> None:
+        if 0 <= index < len(self._results):
+            self.set_result(self._results[index])
+
+    @staticmethod
+    def _result_label(result: Any, index: int) -> str:
+        try:
+            task = str(result.task_name).strip().upper()
+        except (AttributeError, TypeError, ValueError):
+            task = ""
+
+        try:
+            output = getattr(result, "output_file", None)
+            output_name = Path(str(output)).name if output else ""
+        except Exception:  # noqa: BLE001 - presentation metadata is optional
+            output_name = ""
+
+        details = " — ".join(part for part in (task, output_name) if part)
+        if not details:
+            details = type(result).__name__
+        prefix = "Latest" if index == 0 else str(index + 1)
+        return f"{prefix}: {details}"
 
     def set_result(self, result: Any | None) -> None:
         self._clear()

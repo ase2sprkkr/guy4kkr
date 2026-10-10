@@ -16,6 +16,7 @@ from guy4ase.gui.application.workspace import WorkspaceState
 
 _KEEP_DIRECTORY = object()
 _T = TypeVar("_T")
+_RESULT_HISTORY_LIMIT = 10
 
 
 def _result_is_scf(result: Any) -> bool:
@@ -127,6 +128,8 @@ class WorkspaceController(QObject):
     ) -> None:
         super().__init__(parent)
         self.workspace = workspace or WorkspaceState()
+        if self.workspace.result is not None and not self.workspace.result_history:
+            self.workspace.result_history = (self.workspace.result,)
         self._structure_gate = StructureAccessGate()
         self._generation = 0
 
@@ -207,6 +210,28 @@ class WorkspaceController(QObject):
     def _changed(self) -> None:
         self._generation += 1
 
+    def _clear_result_history(self) -> bool:
+        """Clear the current result and browsing history."""
+        had_results = (
+            self.workspace.result is not None
+            or bool(self.workspace.result_history)
+        )
+        self.workspace.result = None
+        self.workspace.result_history = ()
+        return had_results
+
+    def _remember_result(
+        self, result: Any, *, replace_history: bool = False
+    ) -> None:
+        """Make a result current and remember it for later browsing."""
+        self.workspace.result = result
+        if replace_history:
+            self.workspace.result_history = (result,)
+            return
+        self.workspace.result_history = (
+            result, *self.workspace.result_history
+        )[:_RESULT_HISTORY_LIMIT]
+
     def _set_directory(self, directory: Any) -> bool:
         """Set a requested directory and report whether it actually changed."""
         if (
@@ -229,8 +254,7 @@ class WorkspaceController(QObject):
         def change() -> tuple[DocumentChange, bool, bool]:
             if not self._generation_is_current(expected_generation):
                 return DocumentChange.STALE, False, False
-            had_result = self.workspace.result is not None
-            self.workspace.result = None
+            had_result = self._clear_result_history()
             self.workspace.atoms = atoms
             self.workspace.potential_path = potential_path
             self.workspace.empty_spheres_added = None
@@ -258,6 +282,7 @@ class WorkspaceController(QObject):
         expected_generation: int,
         preserve_potential_path: bool = False,
         preserve_empty_spheres: bool = False,
+        preserve_result_history: bool = False,
         reason: str = "applying structure changes",
     ) -> DocumentChange | Busy:
         def change() -> tuple[DocumentChange, bool, Any]:
@@ -268,8 +293,11 @@ class WorkspaceController(QObject):
             atoms = edit(self.workspace.atoms)
             if atoms is None:
                 raise ValueError("A confirmed structure edit returned no structure.")
-            had_result = self.workspace.result is not None
-            self.workspace.result = None
+            if preserve_result_history:
+                had_result = self.workspace.result is not None
+                self.workspace.result = None
+            else:
+                had_result = self._clear_result_history()
             self.workspace.atoms = atoms
             self.workspace.restarted = True
             if not preserve_potential_path:
@@ -334,7 +362,7 @@ class WorkspaceController(QObject):
         def commit() -> tuple[bool, bool]:
             if not self._generation_is_current(expected_generation):
                 return False, False
-            self.workspace.result = loaded.result
+            self._remember_result(loaded.result, replace_history=True)
             self.workspace.atoms = loaded.atoms
             self.workspace.input_parameters = loaded.input_parameters
             self.workspace.potential_path = (
@@ -394,7 +422,7 @@ class WorkspaceController(QObject):
                 )
                 if _result_is_scf(loaded.result):
                     self.workspace.restarted = False
-            self.workspace.result = loaded.result
+            self._remember_result(loaded.result)
             self._changed()
             return prepared_adoption
 
@@ -418,7 +446,7 @@ class WorkspaceController(QObject):
 
     def reset(self) -> None | Busy:
         def clear() -> None:
-            self.workspace.result = None
+            self._clear_result_history()
             self.workspace.atoms = None
             self.workspace.potential_path = None
             self.workspace.input_parameters = None
@@ -449,6 +477,7 @@ class WorkspaceController(QObject):
             ),
             preserve_potential_path=True,
             preserve_empty_spheres=True,
+            preserve_result_history=True,
             reason="preparing the structure for a new calculation",
         )
 
@@ -476,12 +505,13 @@ class WorkspaceController(QObject):
             structure_changed = updated is not atoms
             result = EmptySpheresResult(found=count, parameters=parameters or {})
             self.workspace.empty_spheres_added = count
-            self.workspace.result = result
             if structure_changed:
+                self._clear_result_history()
                 self.workspace.atoms = updated
                 self.workspace.potential_path = None
                 self.workspace.restarted = True
                 self._changed()
+            self._remember_result(result)
             return DocumentChange.APPLIED, updated, result
 
         attempt = self._structure_gate.try_call(

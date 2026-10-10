@@ -28,6 +28,8 @@ class WorkspaceState:
     directory: str | None = None
     potential_path: str | None = None
     result: Any | None = None
+    # Results available for browsing in the UI, newest first.
+    result_history: tuple[Any, ...] = ()
     # None = not searched / provenance unknown; 0 = searched and none found;
     # positive = number of trailing empty-sphere sites added by Guy4ASE.
     empty_spheres_added: int | None = None

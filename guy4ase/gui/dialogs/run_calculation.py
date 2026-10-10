@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -69,6 +70,7 @@ class _SprkkrRunWorker(QObject):
         self._structure_gate = structure_gate
         self._cancellation = cancellation or _RunCancellation()
         self.run_id = object()
+        self._file_id = uuid4().hex[:12]
 
     @pyqtSlot()
     def run(self) -> None:
@@ -86,10 +88,14 @@ class _SprkkrRunWorker(QObject):
                 def prepare() -> Any:
                     self.status.emit("Preparing calculation…")
                     calc = SPRKKR()
+                    prefix = f"%a_%T_{self._file_id}"
                     return calc.calculate(
                         atoms=self._request.atoms,
                         input_parameters=self._request.input_parameters,
                         directory=self._request.directory,
+                        input_file=f"{prefix}.inp",
+                        potential_file=f"{prefix}.pot",
+                        output_file=f"{prefix}.out",
                         empty_spheres=False,
                         run_async=True,
                         read_callback=read_callback,

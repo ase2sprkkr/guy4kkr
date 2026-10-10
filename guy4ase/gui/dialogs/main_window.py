@@ -878,7 +878,7 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_result(self.workspace.result)
+        self._result_actions_widget.set_results(self.workspace.result_history)
 
     def _on_about(self) -> None:
         """Show about dialog."""

@@ -383,9 +383,9 @@ class WorkflowWindow(QMainWindow):
             )
 
     def _refresh_result_actions(self) -> None:
-        result = self.workspace.result
-        self._result_actions_widget.set_result(result)
-        self._result_actions.setVisible(self._result_actions_widget.has_rows)
+        results = self.workspace.result_history
+        self._result_actions_widget.set_results(results)
+        self._result_actions.setVisible(bool(results))
 
     def _action_style(self, category: str, widget: str) -> str:
         palette = self.palette()
