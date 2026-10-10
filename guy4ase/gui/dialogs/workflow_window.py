@@ -7,7 +7,6 @@ from typing import Any, Callable
 from PyQt6.QtCore import QSize, Qt, QUrl
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -29,7 +28,6 @@ from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
-from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
@@ -55,10 +53,6 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-
-
-def _copy_optional_atoms(atoms: Any) -> Any:
-    return None if atoms is None else atoms.copy()
 
 
 def _set_action_button_content(
@@ -246,7 +240,12 @@ class WorkflowWindow(QMainWindow):
         )
         change_directory.setToolTip("Change working directory")
         change_directory.setAccessibleName("Change working directory")
-        change_directory.clicked.connect(self._choose_working_directory)
+        change_directory.clicked.connect(
+            lambda _checked=False: calculation_flow.choose_working_directory(
+                self.controller,
+                self,
+            )
+        )
         directory_row.addWidget(change_directory)
 
         self._browse_working_directory_button = QToolButton(working_directory)
@@ -380,23 +379,6 @@ class WorkflowWindow(QMainWindow):
         self._working_directory_label.setText(directory or "(not defined)")
         self._working_directory_label.setToolTip(directory or "")
         self._browse_working_directory_button.setEnabled(bool(directory))
-
-    def _choose_working_directory(
-        self,
-        _checked: bool = False,
-        *,
-        title: str = "Select Calculation Directory",
-    ) -> bool:
-        start_directory = self.workspace.directory or str(Path.home())
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            title,
-            start_directory,
-        )
-        if not directory:
-            return False
-        self.controller.change_directory(str(directory))
-        return True
 
     def _browse_working_directory(self) -> None:
         directory = self.workspace.directory
@@ -736,51 +718,13 @@ class WorkflowWindow(QMainWindow):
         )
 
     def _prepare_task(self, task: str) -> None:
-        try:
-            if not self.workspace.directory and not self._choose_working_directory(
-                title="Choose the directory for this calculation"
-            ):
-                return
-            snapshot = wait_for_structure(
-                self,
-                partial(
-                    self.controller.read_structure,
-                    _copy_optional_atoms,
-                    reason="reading the structure for the task editor",
-                ),
-            )
-            if isinstance(snapshot, Busy):
-                return
-            generation, atoms = snapshot
-            if atoms is None:
-                QMessageBox.information(
-                    self,
-                    "No Structure",
-                    "Load or create a structure first.",
-                )
-                return
-            parameters = select_guided_input_parameters(
-                task,
-                parent=self,
-                atoms=atoms,
-            )
-            if parameters is None:
-                return
-            completed = document_change_applied(
-                self,
-                self.controller.replace_input_parameters(
-                    parameters,
-                    expected_generation=generation,
-                ),
-            )
-            if not completed:
-                return
-            calculation_flow.run_calculation(
-                self.controller, self.recent_history, self.active_runs, self
-            )
-        except (ImportError, ModuleNotFoundError) as exc:
-            QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
-            return
+        calculation_flow.configure_and_run_task(
+            self.controller,
+            self.recent_history,
+            self.active_runs,
+            self,
+            task,
+        )
 
     def _update_empty_spheres(self) -> None:
         structure_flows.update_empty_spheres(self.controller, self)

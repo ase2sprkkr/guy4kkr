@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -9,7 +8,6 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -29,19 +27,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
-from guy4ase.gui.dialogs.expert_input import (
-    edit_input_parameters,
-    select_input_parameters,
-)
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
-from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
 from guy4ase.gui.dialogs.structures.transforms import (
     repeat_atoms,
     rotate_atoms,
@@ -49,20 +41,13 @@ from guy4ase.gui.dialogs.structures.transforms import (
 )
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
+from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.physics.composition import site_composition, structure_formula
-
-
-def _copy_optional_atoms(atoms: Any) -> Any:
-    return None if atoms is None else atoms.copy()
 
 
 class MainWindow(QMainWindow):
@@ -204,13 +189,6 @@ class MainWindow(QMainWindow):
         value = self.workspace.potential_path or "—"
         self._potential_path_label.setText(value)
         self._potential_path_label.setToolTip(self.workspace.potential_path or "")
-
-    def _choose_directory(self) -> None:
-        start_dir = self.workspace.directory or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
-        if not chosen:
-            return
-        self.controller.change_directory(str(chosen))
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
         handlers = {
@@ -405,11 +383,7 @@ class MainWindow(QMainWindow):
                     else "Add Empty Spheres"
                 )
             run_calculation_action.setEnabled(
-                bool(
-                    self.workspace.atoms is not None
-                    and self.workspace.input_parameters
-                    and self.workspace.directory
-                )
+                self.workspace.can_calculate()
             )
 
         run_menu.aboutToShow.connect(update_run_menu)
@@ -732,7 +706,13 @@ class MainWindow(QMainWindow):
         self._directory_choose_btn = QToolButton()
         self._directory_choose_btn.setToolTip("Choose directory")
         self._directory_choose_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
-        self._directory_choose_btn.clicked.connect(self._choose_directory)
+        self._directory_choose_btn.clicked.connect(
+            lambda _checked=False: calculation_flow.choose_working_directory(
+                self.controller,
+                self,
+                title="Select Directory",
+            )
+        )
         dir_row_l.addWidget(self._directory_choose_btn, 0)
         layout.addWidget(dir_row)
 
@@ -796,25 +776,10 @@ class MainWindow(QMainWindow):
         # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
         if not isinstance(task, str):
             task = "scf"
-        snapshot = wait_for_structure(
+        input_editing_flow.create_input_parameters(
+            self.controller,
             self,
-            partial(
-                self.controller.read_structure,
-                _copy_optional_atoms,
-                reason="reading the structure for the parameter editor",
-            ),
-        )
-        if isinstance(snapshot, Busy):
-            return
-        generation, atoms = snapshot
-        params = select_input_parameters(atoms, parent=self, task=task)
-        if params is None:
-            return
-        document_change_applied(
-            self,
-            self.controller.replace_input_parameters(
-                params, expected_generation=generation
-            ),
+            task=task,
         )
 
     def _on_input_preview_double_click(self, event) -> None:
@@ -824,69 +789,17 @@ class MainWindow(QMainWindow):
 
     def _on_edit_sprkkr_input(self, _checked=False) -> None:
         """Edit current input without changing task; create SCF only if none exists."""
-        if self.workspace.input_parameters is None:
-            self._on_create_sprkkr_input()
-            return
-        snapshot = wait_for_structure(
+        input_editing_flow.edit_current_input_parameters(
+            self.controller,
             self,
-            partial(
-                self.controller.read_structure,
-                _copy_optional_atoms,
-                reason="reading the structure for the parameter editor",
-            ),
         )
-        if isinstance(snapshot, Busy):
-            return
-        generation, atoms = snapshot
-        parameters = self.workspace.input_parameters
-        if parameters is None:
-            return
-        parameters = parameters.copy(copy_values=True)
-        result = edit_input_parameters(
-            parameters, parent=self, atoms=atoms
-        )
-        if result is not None:
-            document_change_applied(
-                self,
-                self.controller.replace_input_parameters(
-                    result, expected_generation=generation
-                ),
-            )
 
     def _on_load_sprkkr_input(self) -> None:
-        loaded = file_flows.choose_and_load_input_parameters(
-            self.controller, self.recent_history, self
-        )
-        if not loaded or self.workspace.input_parameters is None:
-            return
-        snapshot = wait_for_structure(
+        input_editing_flow.load_and_edit_input_parameters(
+            self.controller,
+            self.recent_history,
             self,
-            partial(
-                self.controller.read_structure,
-                _copy_optional_atoms,
-                reason="reading the structure for the imported parameter editor",
-            ),
         )
-        if isinstance(snapshot, Busy):
-            return
-        generation, atoms = snapshot
-        candidate = self.workspace.input_parameters
-        if candidate is None:
-            return
-        candidate = candidate.copy(copy_values=True)
-        edited = edit_input_parameters(
-            candidate,
-            parent=self,
-            show_changed_only=True,
-            atoms=atoms,
-        )
-        if edited is not None:
-            document_change_applied(
-                self,
-                self.controller.replace_input_parameters(
-                    edited, expected_generation=generation
-                ),
-            )
 
     def load_sprkkr_output(self) -> None:
         """Start the shared output-loading workflow."""
@@ -926,8 +839,7 @@ class MainWindow(QMainWindow):
         self.enable_run_calculation()
 
     def enable_run_calculation(self) -> None:
-        enabled = bool(self.workspace.atoms is not None and self.workspace.input_parameters and self.workspace.directory)
-        self.run_calc_btn.setEnabled(enabled)
+        self.run_calc_btn.setEnabled(self.workspace.can_calculate())
 
     def _update_structure_view(self) -> None:
         """Update all structure visualization and information panels."""
@@ -978,87 +890,31 @@ class MainWindow(QMainWindow):
         )
 
     def _on_assign_elements(self) -> None:
-        if self.workspace.atoms is None:
-            return
-        draft_result = wait_for_structure(
-            self,
-            partial(
-                self.controller.read_structure,
-                ElementAssignmentDraft,
-                reason="reading the structure for element assignment",
-            ),
-        )
-        if isinstance(draft_result, Busy):
-            return
-        generation, draft = draft_result
-        result = select_site_elements(
-            draft, parent=self, back=False, apply=False
-        )
-        if isinstance(result, str):
-            return
-        if result is None:
-            return
-        def apply_draft(atoms: Any) -> Any:
-            return result.apply(atoms)
-
-        change = wait_for_structure(
-            self,
-            partial(
-                self.controller.apply_structure_edit,
-                apply_draft,
-                expected_generation=generation,
-            ),
-        )
-        if not isinstance(change, Busy):
-            document_change_applied(self, change)
+        structure_flows.edit_site_elements(self.controller, self)
 
     def _on_scale_structure(self) -> None:
-        self._apply_structure_edit(scale_atoms, error_title="Scale Error")
+        structure_flows.edit_current_structure(
+            self.controller,
+            self,
+            scale_atoms,
+            error_title="Scale Error",
+        )
 
     def _on_repeat_structure(self) -> None:
-        self._apply_structure_edit(repeat_atoms, error_title="Repeat Error")
+        structure_flows.edit_current_structure(
+            self.controller,
+            self,
+            repeat_atoms,
+            error_title="Repeat Error",
+        )
 
     def _on_rotate_structure(self) -> None:
-        self._apply_structure_edit(rotate_atoms, error_title="Rotate Error")
-
-    def _apply_structure_edit(self, editor, *, error_title: str) -> None:
-        """Apply one expert-window modal structure transformation."""
-        snapshot = wait_for_structure(
+        structure_flows.edit_current_structure(
+            self.controller,
             self,
-            partial(
-                self.controller.read_structure,
-                _copy_optional_atoms,
-                reason="reading the structure for an editor",
-            ),
+            rotate_atoms,
+            error_title="Rotate Error",
         )
-        if isinstance(snapshot, Busy):
-            return
-        generation, source = snapshot
-        if source is None:
-            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
-            return
-
-        try:
-            atoms = editor(source, parent=self)
-            if atoms is None:
-                return
-            change = wait_for_structure(
-                self,
-                partial(
-                    self.controller.replace_structure,
-                    atoms,
-                    expected_generation=generation,
-                    restarted=True,
-                ),
-            )
-            if not isinstance(change, Busy):
-                document_change_applied(self, change)
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                error_title,
-                f"Failed to edit structure:\n{e!s}",
-            )
 
     def build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
         structure_flows.build_2d_structure(
