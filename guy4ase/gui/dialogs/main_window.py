@@ -998,8 +998,8 @@ class MainWindow(QMainWindow):
             return
         if result is None:
             return
-        def apply_draft(_atoms: Any) -> Any:
-            return result.apply()
+        def apply_draft(atoms: Any) -> Any:
+            return result.apply(atoms)
 
         change = wait_for_structure(
             self,

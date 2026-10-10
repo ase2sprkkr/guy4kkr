@@ -63,7 +63,7 @@ def test_to_atoms_preserves_public_assignment_format():
 
     result = state.apply()
 
-    assert result is atoms
+    assert result is not atoms
     np.testing.assert_array_equal(
         result.get_array("spacegroup_kinds"), (0, 0)
     )
@@ -181,6 +181,6 @@ def test_apply_without_split_preserves_sprkkr_site_type_data():
 
     result = draft.apply()
 
-    assert result is atoms
+    assert result is not atoms
     assert result.sites[0].site_type is result.sites[1].site_type
     assert result.sites[0].site_type.reference_system.vref == 8.0

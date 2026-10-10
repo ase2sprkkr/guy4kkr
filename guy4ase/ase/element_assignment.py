@@ -223,23 +223,25 @@ class ElementAssignmentDraft:
             self.is_site_valid(site) for site in self.sites
         )
 
-    def apply(self) -> Atoms:
-        """Validate and materialize the draft in the established format."""
+    def apply(self, atoms: Atoms | None = None) -> Atoms:
+        """Validate and materialize the draft into a detached structure."""
         if not self.is_valid():
             raise ValueError("Element assignment is not valid")
 
         source = self._source_atoms
-        atoms = source
+        if atoms is None or atoms is source:
+            atoms = source.copy()
         changed = self._partition_changed()
 
         if changed:
+            materialization_source = atoms
             rebuilt: Atoms | None = None
             for site in self.sites:
                 if all(origin is not None for origin in site.origins):
                     indices = [int(origin) for origin in site.origins]
-                    part = source[indices]
+                    part = materialization_source[indices]
                 else:
-                    part = self._rebuilt_site(source, site)
+                    part = self._rebuilt_site(materialization_source, site)
                 rebuilt = part if rebuilt is None else rebuilt + part
             atoms = rebuilt if rebuilt is not None else Atoms(cell=self._cell)
 
