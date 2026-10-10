@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional
-from weakref import WeakKeyDictionary
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -21,14 +20,6 @@ from guy4ase.physics.structure_database import (
     StructurePrototype,
     load_structure_database,
 )
-
-
-class _GlobalSentinel:
-    pass
-
-
-_DEFAULT_KEY = _GlobalSentinel()
-_DIALOGS = WeakKeyDictionary()
 
 
 class StructureDatabaseDialog(QDialog):
@@ -194,11 +185,7 @@ class StructureDatabaseDialog(QDialog):
 def select_structure_prototype(
     parent: Optional[QWidget] = None,
 ) -> Optional[StructurePrototype]:
-    key = parent if parent is not None else _DEFAULT_KEY
-    dialog = _DIALOGS.get(key)
-    if dialog is None:
-        dialog = StructureDatabaseDialog(parent)
-        _DIALOGS[key] = dialog
+    dialog = StructureDatabaseDialog(parent)
     if dialog.exec() == QDialog.DialogCode.Accepted:
         return dialog.selected_prototype
     return None

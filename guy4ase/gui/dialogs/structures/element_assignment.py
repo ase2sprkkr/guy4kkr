@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Dict, Optional
-from weakref import WeakKeyDictionary
 
 import numpy as np
 from ase import Atoms
@@ -29,13 +28,6 @@ from guy4ase.ase.element_assignment import AssignmentSite, ElementAssignmentDraf
 from guy4ase.gui.dialogs.structures.element_selector import select_element
 from guy4ase.gui.plots.lattice import plot_lattice, plot_sites_in_lattice
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
-
-
-class _GlobalSentinel:
-    pass
-
-_DEFAULT_KEY = _GlobalSentinel()
-_DIALOGS = WeakKeyDictionary()
 
 
 class ElementAssignmentDialog(QDialog):
@@ -342,14 +334,7 @@ def select_site_elements(
             - array 'labels' (str per atom: site labels like 'a', 'b.1', ...)
         Or 'back' or None.
     """
-    key = parent if parent is not None else _DEFAULT_KEY
-    dlg = _DIALOGS.get(key)
-    if dlg is None:
-        dlg = ElementAssignmentDialog(parent, back=back)
-        _DIALOGS[key] = dlg
-    else:
-        dlg._allow_back = bool(back)
-
+    dlg = ElementAssignmentDialog(parent, back=back)
     dlg.setup(atoms)
     code = dlg.exec()
     if code == 42:
