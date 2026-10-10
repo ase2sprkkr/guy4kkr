@@ -4,6 +4,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
+from ase import Atoms
 from ase.visualize import view as ase_view
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
@@ -12,8 +13,16 @@ from guy4ase.gui.application.workspace_controller import Busy, WorkspaceControll
 from guy4ase.gui.misc.structure_wait import wait_for_structure
 
 
-def _copy_optional_atoms(atoms: Any) -> Any:
-    return None if atoms is None else atoms.copy()
+def _visualization_atoms(atoms: Any) -> Atoms | None:
+    """Return a plain ASE Atoms snapshot, without SPR-KKR runtime state."""
+    if atoms is None:
+        return None
+    return Atoms(
+        numbers=atoms.get_atomic_numbers(),
+        positions=atoms.get_positions(),
+        cell=atoms.get_cell(),
+        pbc=atoms.get_pbc(),
+    )
 
 
 def visualize_structure(
@@ -26,7 +35,7 @@ def visualize_structure(
         parent,
         partial(
             controller.read_structure,
-            _copy_optional_atoms,
+            _visualization_atoms,
             reason="reading the structure for visualization",
         ),
     )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from ase import Atoms
 
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.flows import visualization
@@ -32,7 +32,16 @@ def test_corrupt_settings_keep_defaults(tmp_path):
 
 
 def test_visualization_uses_configured_viewer(monkeypatch):
-    atoms = SimpleNamespace(copy=lambda: "atoms snapshot")
+    class SpecializedAtoms(Atoms):
+        pass
+
+    atoms = SpecializedAtoms(
+        "Fe",
+        positions=[[1.0, 2.0, 3.0]],
+        cell=[4.0, 5.0, 6.0],
+        pbc=[True, False, True],
+    )
+    atoms.info["non_viewer_state"] = lambda: None
 
     class Controller:
         def read_structure(self, reader, *, reason):
@@ -59,4 +68,13 @@ def test_visualization_uses_configured_viewer(monkeypatch):
         settings,
         parent=None,
     )
-    assert opened == [("atoms snapshot", "ngl")]
+    assert len(opened) == 1
+    snapshot, viewer = opened[0]
+    assert viewer == "ngl"
+    assert type(snapshot) is Atoms
+    assert snapshot is not atoms
+    assert snapshot.symbols == atoms.symbols
+    assert (snapshot.positions == atoms.positions).all()
+    assert (snapshot.cell == atoms.cell).all()
+    assert (snapshot.pbc == atoms.pbc).all()
+    assert snapshot.info == {}
