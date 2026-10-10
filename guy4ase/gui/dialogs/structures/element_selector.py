@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import re
-import threading
 from typing import Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -79,61 +78,94 @@ def _categorize() -> Dict[int, str]:
 
 _CATEGORY_BY_Z = _categorize()
 
-_ELEMENT_DATA: Dict[int, Dict[str, object]] = {z: {'symbol': sym, 'z': z} for z, sym, *_ in _TABLE}
-_PENDING: set[int] = set()
-_WORKER_COND = threading.Condition()
-
-def _worker():
-    while True:
-        with _WORKER_COND:
-            while not _PENDING:
-                _WORKER_COND.wait()
-            # take one (pop) so recent gets priority implicitly by add order
-            atomic_number = _PENDING.pop()
-        if mendeleev_element is None:
-            continue
-        if _ELEMENT_DATA.get(atomic_number, {}).get('mendeleev') is not None:
-            continue
-        try:
-            el = mendeleev_element(atomic_number)
-        except Exception:
-            data = None
-        else:
-            conf = _get_attr_value(el, 'electronic_configuration', 'econf', 'ec', 'electron_configuration')
-            # Parse s/p/d/f counts
-            spdf_counts = None
-            try:
-                tokens = _tokens_from_econf(conf)
-                counts = {'s': 0, 'p': 0, 'd': 0, 'f': 0}
-                for tok in tokens:
-                    m = re.match(r"^(\d+)([spdf])(\d+)$", str(tok).strip())
-                    if m:
-                        orb = m.group(2)
-                        n = int(m.group(3))
-                        counts[orb] += n
-                spdf_counts = counts
-            except Exception:
-                spdf_counts = None
-            data = {
-                'name': _get_attr_value(el, 'name'),
-                'symbol': _get_attr_value(el, 'symbol'),
-                'atomic_weight': _get_attr_value(el, 'atomic_weight', 'atomic_mass'),
-                'valence': _get_attr_value(el, 'nvalence', 'valence'),
-                'en': _get_attr_value(el, 'en_pauling', 'electronegativity'),
-                'ea': _get_attr_value(el, 'electron_affinity'),
-                'ox': _get_attr_value(el, 'oxistates', 'oxidation_states'),
-                'econf': conf,
-                'spdf': spdf_counts,
-            }
-        _ELEMENT_DATA.setdefault(atomic_number, {'symbol': str(atomic_number), 'z': atomic_number})['mendeleev'] = data
-
-def _ensure_worker():
+def _load_element_info(atomic_number: int) -> Optional[Dict[str, object]]:
+    """Load slow optional element metadata outside the GUI thread."""
     if mendeleev_element is None:
-        return
-    if not getattr(_ensure_worker, '_started', False):
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        _ensure_worker._started = True
+        return None
+    try:
+        el = mendeleev_element(atomic_number)
+    except Exception:  # optional third-party data source boundary
+        return None
+
+    conf = _get_attr_value(
+        el, 'electronic_configuration', 'econf', 'ec', 'electron_configuration'
+    )
+    counts = {'s': 0, 'p': 0, 'd': 0, 'f': 0}
+    for token in _tokens_from_econf(conf):
+        match = re.match(r"^(\d+)([spdf])(\d+)$", str(token).strip())
+        if match:
+            counts[match.group(2)] += int(match.group(3))
+    return {
+        'name': _get_attr_value(el, 'name'),
+        'symbol': _get_attr_value(el, 'symbol'),
+        'atomic_weight': _get_attr_value(el, 'atomic_weight', 'atomic_mass'),
+        'valence': _get_attr_value(el, 'nvalence', 'valence'),
+        'en': _get_attr_value(el, 'en_pauling', 'electronegativity'),
+        'ea': _get_attr_value(el, 'electron_affinity'),
+        'ox': _get_attr_value(el, 'oxistates', 'oxidation_states'),
+        'econf': conf,
+        'spdf': counts,
+    }
+
+
+class _ElementInfoTaskSignals(QObject):
+    loaded = pyqtSignal(int, object)
+
+
+class _ElementInfoTask(QRunnable):
+    def __init__(self, atomic_number: int):
+        super().__init__()
+        self.atomic_number = atomic_number
+        self.signals = _ElementInfoTaskSignals()
+
+    def run(self) -> None:
+        self.signals.loaded.emit(
+            self.atomic_number, _load_element_info(self.atomic_number)
+        )
+
+
+class _ElementInfoLoader(QObject):
+    """Cache element metadata and publish completed background loads."""
+
+    loaded = pyqtSignal(int, object)
+
+    def __init__(self):
+        super().__init__()
+        self._cache: Dict[int, Dict[str, object]] = {}
+        self._pending: set[int] = set()
+        self._pool = QThreadPool(self)
+        # mendeleev access used to be serialized by one worker; keep that property.
+        self._pool.setMaxThreadCount(1)
+
+    def cached(self, atomic_number: int) -> Optional[Dict[str, object]]:
+        return self._cache.get(atomic_number)
+
+    def request(self, atomic_number: int) -> None:
+        if (
+            mendeleev_element is None
+            or atomic_number in self._cache
+            or atomic_number in self._pending
+        ):
+            return
+        self._pending.add(atomic_number)
+        task = _ElementInfoTask(atomic_number)
+        task.signals.loaded.connect(self._finished)
+        self._pool.start(task)
+
+    def _finished(self, atomic_number: int, data: object) -> None:
+        self._pending.discard(atomic_number)
+        if isinstance(data, dict):
+            self._cache[atomic_number] = data
+        self.loaded.emit(atomic_number, data)
+
+
+_ELEMENT_INFO_LOADER: Optional[_ElementInfoLoader] = None
+
+def _element_info_loader() -> _ElementInfoLoader:
+    global _ELEMENT_INFO_LOADER
+    if _ELEMENT_INFO_LOADER is None:
+        _ELEMENT_INFO_LOADER = _ElementInfoLoader()
+    return _ELEMENT_INFO_LOADER
 
 def _get_attr_value(obj, *names):
     for name in names:
@@ -171,12 +203,51 @@ def _compress_to_noble_shorthand(config_str):
     return config_str
 
 
+def _format_element_info(
+    atomic_number: int, symbol: str, data: Optional[Dict[str, object]] = None
+) -> str:
+    """Format both cached and freshly loaded element information."""
+    lines = [f"Symbol: {symbol}", f"Z: {atomic_number}"]
+    if not data:
+        return "\n".join(lines)
+
+    name = data.get('name')
+    if name:
+        lines.insert(0, f"Name: {name} ({data.get('symbol') or symbol})")
+    fields = (
+        ('atomic_weight', 'Atomic weight'),
+        ('valence', 'Valence'),
+        ('en', 'EN (Pauling)'),
+        ('ea', 'Electron affinity'),
+        ('ox', 'Ox states'),
+    )
+    for key, label in fields:
+        value = data.get(key)
+        if value:
+            lines.append(f"{label}: {value}")
+    if data.get('econf'):
+        lines.append(f"Config: {_compress_to_noble_shorthand(data['econf'])}")
+
+    spdf = data.get('spdf')
+    if isinstance(spdf, dict):
+        parts = []
+        for orb in ('s', 'p', 'd', 'f'):
+            value = spdf.get(orb)
+            if isinstance(value, int) and value > 0:
+                parts.append(f"{orb}:{value}")
+        if parts:
+            lines.append("Orbitals " + ", ".join(parts))
+    return "\n".join(lines)
+
+
 class ElementSelectorDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Select Element")
         self.selected_symbol: Optional[str] = None
-        self._hover_btn: Optional[QPushButton] = None
+        self._hovered_element: Optional[Tuple[int, str]] = None
+        self._info_loader = _element_info_loader()
+        self._info_loader.loaded.connect(self._element_info_loaded)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -206,8 +277,8 @@ class ElementSelectorDialog(QDialog):
                 "QPushButton:hover { background-color: %s; color: #000000; border: 2px solid #222; }" % (color, color)
             )
             btn.clicked.connect(lambda _=False, s=sym: self._choose(s))
-            btn.enterEvent = self._make_enter_handler(z, sym, btn)  # type: ignore
-            btn.leaveEvent = self._make_leave_handler(btn)  # type: ignore
+            btn.enterEvent = self._make_enter_handler(z, sym)  # type: ignore
+            btn.leaveEvent = self._make_leave_handler(z)  # type: ignore
             grid.addWidget(btn, r, c)
 
         # Info / status panel on the right
@@ -237,83 +308,30 @@ class ElementSelectorDialog(QDialog):
         self.selected_symbol = symbol
         self.accept()
 
-    def _make_enter_handler(self, z: int, sym: str, btn: QPushButton):
-        def handler(event):
-            self._hover_btn = btn
-            data = _ELEMENT_DATA.get(z, {'symbol': sym, 'z': z})
-            lines = [f"Symbol: {sym}", f"Z: {z}"]
-            md = data.get('mendeleev')
-            if md:
-                if md.get('name'): lines.insert(0, f"Name: {md.get('name')} ({md.get('symbol')})")
-                if md.get('atomic_weight'): lines.append(f"Atomic weight: {md.get('atomic_weight')}")
-                if md.get('valence'): lines.append(f"Valence: {md.get('valence')}")
-                if md.get('en'): lines.append(f"EN (Pauling): {md.get('en')}")
-                if md.get('ea'): lines.append(f"Electron affinity: {md.get('ea')}")
-                if md.get('ox'): lines.append(f"Ox states: {md.get('ox')}")
-                if md.get('econf'):
-                    lines.append(f"Config: {_compress_to_noble_shorthand(md.get('econf'))}")
-                spdf = md.get('spdf')
-                if isinstance(spdf, dict):
-                    parts = []
-                    for orb in ('s','p','d','f'):
-                        v = spdf.get(orb)
-                        if isinstance(v, int) and v>0:
-                            parts.append(f"{orb}:{v}")
-                    if parts:
-                        lines.append("Orbitals " + ", ".join(parts))
-            elif mendeleev_element is not None:
-                # request background load
-                with _WORKER_COND:
-                    if z not in _PENDING:
-                        _PENDING.add(z)
-                        _WORKER_COND.notify()
-                _ensure_worker()
-                lines.append("Loading...")
-                # poll for readiness and refresh while hovering
-                self._schedule_hover_refresh(z, sym, btn, attempts=30, interval_ms=150)
-            self.info_label.setText("\n".join(lines))
+    def _make_enter_handler(self, z: int, sym: str):
+        def handler(_event):
+            self._hovered_element = (z, sym)
+            data = self._info_loader.cached(z)
+            text = _format_element_info(z, sym, data)
+            if data is None and mendeleev_element is not None:
+                text += "\nLoading..."
+                self._info_loader.request(z)
+            self.info_label.setText(text)
         return handler
 
-    def _make_leave_handler(self, btn: QPushButton):
-        def handler(event):
-            if self._hover_btn is btn:
-                self._hover_btn = None
-            self.info_label.setText("Hover element for info")
+    def _make_leave_handler(self, z: int):
+        def handler(_event):
+            if self._hovered_element and self._hovered_element[0] == z:
+                self._hovered_element = None
+                self.info_label.setText("Hover element for info")
         return handler
 
-    def _schedule_hover_refresh(self, z: int, sym: str, btn: QPushButton, attempts: int = 20, interval_ms: int = 100) -> None:
-        if attempts <= 0:
+    def _element_info_loaded(self, z: int, data: object) -> None:
+        if not self._hovered_element or self._hovered_element[0] != z:
             return
-        def check():
-            if self._hover_btn is not btn:
-                return
-            data = _ELEMENT_DATA.get(z, {'symbol': sym, 'z': z})
-            md = data.get('mendeleev')
-            if md is None:
-                QTimer.singleShot(interval_ms, lambda: self._schedule_hover_refresh(z, sym, btn, attempts-1, interval_ms))
-                return
-            # update label with enriched info
-            lines = [f"Symbol: {sym}", f"Z: {z}"]
-            if md:
-                if md.get('name'): lines.insert(0, f"Name: {md.get('name')} ({md.get('symbol')})")
-                if md.get('atomic_weight'): lines.append(f"Atomic weight: {md.get('atomic_weight')}")
-                if md.get('valence'): lines.append(f"Valence: {md.get('valence')}")
-                if md.get('en'): lines.append(f"EN (Pauling): {md.get('en')}")
-                if md.get('ea'): lines.append(f"Electron affinity: {md.get('ea')}")
-                if md.get('ox'): lines.append(f"Ox states: {md.get('ox')}")
-                if md.get('econf'):
-                    lines.append(f"Config: {_compress_to_noble_shorthand(md.get('econf'))}")
-                spdf = md.get('spdf')
-                if isinstance(spdf, dict):
-                    parts = []
-                    for orb in ('s','p','d','f'):
-                        v = spdf.get(orb)
-                        if isinstance(v, int) and v>0:
-                            parts.append(f"{orb}:{v}")
-                    if parts:
-                        lines.append("Orbitals " + ", ".join(parts))
-            self.info_label.setText("\n".join(lines))
-        QTimer.singleShot(interval_ms, check)
+        _, symbol = self._hovered_element
+        info = data if isinstance(data, dict) else None
+        self.info_label.setText(_format_element_info(z, symbol, info))
 
     def result_symbol(self) -> Optional[str]:
         return self.selected_symbol
