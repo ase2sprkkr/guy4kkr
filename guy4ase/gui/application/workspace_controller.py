@@ -186,12 +186,14 @@ class WorkspaceController(QObject):
         """Borrow Atoms and capture independent calculation inputs."""
 
         def capture(atoms: Any) -> CalculationRequest:
-            parameters = self.workspace.input_parameters
-            directory = self.workspace.directory
-            if atoms is None or parameters is None or not directory:
+            if not self.workspace.can_calculate():
                 raise ValueError(
                     "Structure, input parameters and directory are required."
                 )
+            parameters = self.workspace.input_parameters
+            directory = self.workspace.directory
+            assert parameters is not None
+            assert directory
             return CalculationRequest(
                 atoms=atoms,
                 input_parameters=parameters.copy(copy_values=True),

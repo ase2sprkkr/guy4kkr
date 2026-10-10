@@ -39,6 +39,14 @@ class WorkspaceState:
         """Classify the current structure directly from ``atoms``."""
         return detect_structure_kind(self.atoms)
 
+    def can_calculate(self) -> bool:
+        """Return whether the workspace has all inputs required to run."""
+        return (
+            self.atoms is not None
+            and self.input_parameters is not None
+            and bool(self.directory)
+        )
+
     def scf_status(self) -> str | None:
         """Return the normalized SCFSTATUS stored in the attached potential."""
         atoms = self.atoms

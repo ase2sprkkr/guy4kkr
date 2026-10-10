@@ -1,12 +1,14 @@
 """Stateless Qt workflows for creating and transforming structures."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
 from ase2sprkkr.bindings.empty_spheres import add_empty_spheres
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
@@ -26,7 +28,8 @@ from guy4ase.gui.misc.structure_wait import (
 from guy4ase.physics.lattice import detect_structure_kind
 
 
-def _copy_optional_atoms(atoms: Any) -> Any:
+def copy_structure_snapshot(atoms: Any) -> Any:
+    """Return a detached structure snapshot, preserving ``None``."""
     return None if atoms is None else atoms.copy()
 
 
@@ -42,6 +45,97 @@ def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
         "boundary conditions and, for a 2D structure, its left, central, "
         "and right regions before calculating.",
     )
+
+
+def edit_current_structure(
+    controller: WorkspaceController,
+    parent: QWidget,
+    editor: Callable[..., Any],
+    *,
+    error_title: str,
+) -> bool:
+    """Edit a revision-tagged structure snapshot and commit it on acceptance."""
+    snapshot = wait_for_structure(
+        parent,
+        partial(
+            controller.read_structure,
+            copy_structure_snapshot,
+            reason="reading the structure for an editor",
+        ),
+    )
+    if isinstance(snapshot, Busy):
+        return False
+    generation, source = snapshot
+    if source is None:
+        QMessageBox.information(
+            parent, "No Structure", "Load or create a structure first."
+        )
+        return False
+
+    try:
+        atoms = editor(source, parent=parent)
+        if atoms is None:
+            return False
+        change = wait_for_structure(
+            parent,
+            partial(
+                controller.replace_structure,
+                atoms,
+                expected_generation=generation,
+                restarted=True,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - editor/backend boundary
+        QMessageBox.critical(
+            parent,
+            error_title,
+            f"Failed to edit structure:\n{exc}",
+        )
+        return False
+
+    if isinstance(change, Busy):
+        return False
+    return document_change_applied(parent, change)
+
+
+def edit_site_elements(
+    controller: WorkspaceController,
+    parent: QWidget,
+) -> bool:
+    """Edit site occupations and commit the accepted draft transactionally."""
+    draft_result = wait_for_structure(
+        parent,
+        partial(
+            controller.read_structure,
+            lambda atoms: ElementAssignmentDraft(
+                copy_structure_snapshot(atoms)
+            ),
+            reason="reading the structure for element assignment",
+        ),
+    )
+    if isinstance(draft_result, Busy):
+        return False
+    generation, draft = draft_result
+    if draft is None:
+        return False
+
+    result = select_site_elements(
+        draft, parent=parent, back=False, apply=False
+    )
+    if result is None or isinstance(result, str):
+        return False
+
+    change = wait_for_structure(
+        parent,
+        partial(
+            controller.apply_structure_edit,
+            lambda _atoms: result.apply(),
+            expected_generation=generation,
+        ),
+    )
+    if isinstance(change, Busy):
+        return False
+    return document_change_applied(parent, change)
 
 
 def create_structure(
@@ -124,7 +218,7 @@ def build_2d_structure(
         parent,
         partial(
             controller.read_structure,
-            _copy_optional_atoms,
+            copy_structure_snapshot,
             reason="reading the structure for the 2D editor",
         ),
     )
