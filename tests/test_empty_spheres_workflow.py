@@ -51,6 +51,23 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     assert controller.generation == generation + 1
 
 
+def test_empty_sphere_result_keeps_search_parameters():
+    workspace = WorkspaceState(atoms=Atoms("Fe"))
+    controller = WorkspaceController(workspace)
+
+    controller.update_empty_spheres(
+        lambda atoms, _previous: (atoms, 0),
+        expected_generation=controller.generation,
+        parameters={"min_radius": 0.7, "mesh": (20, 22, 24)},
+    )
+
+    assert isinstance(workspace.result, EmptySpheresResult)
+    assert dict(workspace.result.parameters) == {
+        "min_radius": 0.7,
+        "mesh": (20, 22, 24),
+    }
+
+
 def test_use_for_new_calculation_keeps_density_and_marks_restart():
     atoms = SimpleNamespace(
         potential=SimpleNamespace(

@@ -7,10 +7,12 @@ from typing import Any
 from ase2sprkkr.bindings.empty_spheres import add_empty_spheres
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
 from guy4ase.gui.dialogs.structures.database import select_structure_prototype
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
+from guy4ase.gui.dialogs.structures.empty_spheres import select_empty_spheres_parameters
 from guy4ase.gui.dialogs.structures.online_database import select_online_structure
 from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup,
@@ -169,6 +171,17 @@ def update_empty_spheres(
     """Find empty spheres explicitly and publish the resulting structure."""
     generation = controller.generation
     recalculate = bool(controller.workspace.empty_spheres_added)
+    previous_result = controller.workspace.result
+    initial_parameters = (
+        previous_result.parameters
+        if isinstance(previous_result, EmptySpheresResult)
+        else None
+    )
+    parameters = select_empty_spheres_parameters(
+        initial=initial_parameters, parent=parent
+    )
+    if parameters is None:
+        return False
 
     def edit(atoms: Any, previous_count: int) -> tuple[Any, int]:
         if previous_count:
@@ -184,10 +197,12 @@ def update_empty_spheres(
                 )
             del candidate[-previous_count:]
             base_count = len(candidate)
-            add_empty_spheres(candidate)
+            add_empty_spheres(candidate, method="inhouse", **parameters)
             return candidate, len(candidate) - base_count
 
-        candidate = add_empty_spheres(atoms, copy=True)
+        candidate = add_empty_spheres(
+            atoms, copy=True, method="inhouse", **parameters
+        )
         if candidate is atoms:
             return atoms, 0
         return candidate, len(candidate) - len(atoms)
@@ -199,6 +214,7 @@ def update_empty_spheres(
                 controller.update_empty_spheres,
                 edit,
                 expected_generation=generation,
+                parameters=parameters,
             ),
         )
         if isinstance(change, Busy) or not document_change_applied(

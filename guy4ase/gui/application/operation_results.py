@@ -1,8 +1,11 @@
 """Lightweight results produced by GUI-side operations."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,16 @@ class EmptySpheresResult:
     """Result of one explicit empty-sphere search/recalculation."""
 
     found: int
+    parameters: Mapping[str, Any] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "parameters",
+            MappingProxyType(deepcopy(dict(self.parameters))),
+        )
 
     @property
     def output_values(self) -> dict[str, EmptySpheresCount]:

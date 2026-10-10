@@ -1,7 +1,7 @@
 """Semantic document transitions over the shared GUI workspace."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
@@ -457,6 +457,7 @@ class WorkspaceController(QObject):
         edit: Callable[[Any, int], tuple[Any, int]],
         *,
         expected_generation: int,
+        parameters: Mapping[str, Any] | None = None,
     ) -> DocumentChange | Busy:
         """Commit one explicit empty-sphere search/recalculation."""
 
@@ -473,7 +474,7 @@ class WorkspaceController(QObject):
                 raise ValueError("Empty-sphere count cannot be negative.")
 
             structure_changed = updated is not atoms
-            result = EmptySpheresResult(found=count)
+            result = EmptySpheresResult(found=count, parameters=parameters or {})
             self.workspace.empty_spheres_added = count
             self.workspace.result = result
             if structure_changed:
