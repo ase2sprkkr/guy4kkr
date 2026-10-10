@@ -36,7 +36,10 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
-from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.gui.input_parameters.validation import (
+    InputParametersValidationError,
+    validate_setup,
+)
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
     SPACE_LG,
@@ -328,7 +331,7 @@ class GuidedInputParametersDialog(QDialog):
             return
         try:
             validate_setup(self.session.working_parameters)
-        except Exception as exc:
+        except InputParametersValidationError as exc:
             self._show_model_error(exc)
             return
         self.accept()
@@ -345,23 +348,20 @@ class GuidedInputParametersDialog(QDialog):
         """Edit a detached copy; accepting installs the result as one undoable change."""
         if not self._commit_pending():
             return
-        try:
-            temporary = self.session.fork()
-            accepted = edit_input_parameters_session(
-                temporary,
-                parent=self,
-                show_changed_only=False,
-                atoms=self.atoms,
-            )
-            if accepted is not None:
-                assert not isinstance(accepted, tuple)
-                self.session.replace_from_session(
-                    accepted,
-                    text="Apply expert settings",
-                    source_page="expert",
-                )
-        except Exception as exc:
-            QMessageBox.critical(self, "Expert Settings Error", str(exc))
+        temporary = self.session.fork()
+        accepted = edit_input_parameters_session(
+            temporary,
+            parent=self,
+            show_changed_only=False,
+            atoms=self.atoms,
+        )
+        if accepted is None:
+            return
+        self.session.replace_from_session(
+            accepted,
+            text="Apply expert settings",
+            source_page="expert",
+        )
 
     def _load_input(self) -> None:
         choose_and_load_input_parameters(self.session, self)

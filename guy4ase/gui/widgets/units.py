@@ -35,11 +35,7 @@ def create_units_combo(parent: QWidget | None, callback: Callable[[float], None]
     def on_changed(_index: int) -> None:
         label = combo.currentText()
         factor = length_units.get(label, 1.0)
-        try:
-            callback(factor)
-        except Exception:
-            # Swallow callback errors to avoid crashing the UI; developers can connect their own safe slots
-            pass
+        callback(factor)
 
     combo.currentIndexChanged.connect(on_changed)
     return combo

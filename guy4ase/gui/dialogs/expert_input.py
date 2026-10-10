@@ -24,7 +24,10 @@ from guy4ase.gui.input_parameters.session import (
     InputParametersSession,
     create_input_parameters_session,
 )
-from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.gui.input_parameters.validation import (
+    InputParametersValidationError,
+    validate_setup,
+)
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
 
@@ -135,7 +138,7 @@ class InputParametersDialog(QDialog):
             return
         try:
             validate_setup(self.session.working_parameters)
-        except Exception as error:  # noqa: BLE001 - backend validation boundary.
+        except InputParametersValidationError as error:
             self._validation_error.setText(str(error))
             self._validation_error.show()
             return
@@ -165,9 +168,8 @@ def edit_input_parameters(
     show_changed_only: bool = False,
     calculate_mode: bool = False,
     directory: str | None = None,
-    return_directory: bool = False,
     atoms: Any = None,
-) -> Any:
+) -> InputParameters | None:
     """Open the expert editor and return its accepted isolated draft."""
     session = create_input_parameters_session(params)
     accepted = edit_input_parameters_session(
@@ -176,13 +178,10 @@ def edit_input_parameters(
         show_changed_only=show_changed_only,
         calculate_mode=calculate_mode,
         directory=directory,
-        return_directory=return_directory,
         atoms=atoms,
     )
     if accepted is None:
         return None
-    if return_directory:
-        return accepted[0].result(), accepted[1]
     return accepted.result()
 
 
@@ -193,9 +192,8 @@ def edit_input_parameters_session(
     show_changed_only: bool = False,
     calculate_mode: bool = False,
     directory: str | None = None,
-    return_directory: bool = False,
     atoms: Any = None,
-) -> InputParametersSession | tuple[InputParametersSession, str] | None:
+) -> InputParametersSession | None:
     """Run Expert over an independent session and return it only on Accept."""
     dialog = InputParametersDialog(
         session,
@@ -207,8 +205,6 @@ def edit_input_parameters_session(
     )
     code = dialog.exec()
     if code == QDialog.DialogCode.Accepted:
-        if return_directory:
-            return session, dialog.directory()
         return session
     return None
 

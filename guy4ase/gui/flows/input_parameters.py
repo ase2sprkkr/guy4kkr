@@ -35,21 +35,34 @@ def load_input_parameters(
     parent: QWidget | None,
 ) -> bool:
     """Parse an input file and install it without leaking parser/UI policy."""
+    path = Path(file_path).resolve()
     try:
-        path = Path(file_path).resolve()
         parameters = InputParameters.from_file(path)
-        session.replace_parameters(
-            parameters,
-            text=f"Load {path.name}",
-            source_page="load",
-        )
-    except Exception as exc:  # noqa: BLE001 - parser/apply errors are heterogeneous.
+    except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
         QMessageBox.critical(
             parent,
             "Load Error",
             f"Failed to load input parameters:\n{exc}",
         )
         return False
+
+    expected_task = session.working_parameters.task_name.lower()
+    actual_task = parameters.task_name.lower()
+    if actual_task != expected_task:
+        QMessageBox.critical(
+            parent,
+            "Load Error",
+            "Failed to load input parameters:\n"
+            f"Expected {expected_task.upper()} input parameters, "
+            f"got {actual_task.upper()}.",
+        )
+        return False
+
+    session.replace_parameters(
+        parameters,
+        text=f"Load {path.name}",
+        source_page="load",
+    )
     return True
 
 
@@ -61,16 +74,13 @@ def edit_input_parameters_file(
     focus = QApplication.focusWidget()
     if focus is not None:
         focus.clearFocus()
-    try:
-        editor = InputFileEditor(
-            session.result(),
-            parent,
-            apply_parameters=lambda parameters: session.replace_parameters(
-                parameters,
-                text="Edit input file",
-                source_page="input_file",
-            ),
-        )
-        editor.exec()
-    except Exception as exc:  # noqa: BLE001 - modal callback boundary.
-        QMessageBox.critical(parent, "Input File Error", str(exc))
+    editor = InputFileEditor(
+        session.result(),
+        parent,
+        apply_parameters=lambda parameters: session.replace_parameters(
+            parameters,
+            text="Edit input file",
+            source_page="input_file",
+        ),
+    )
+    editor.exec()
