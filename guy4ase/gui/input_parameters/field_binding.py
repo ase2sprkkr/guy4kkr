@@ -29,72 +29,18 @@ def _indexed(value: Any, index: int) -> Any:
         return None
 
 
-class SessionFieldBinding:
-    """Bind an ordinary option directly to its authoritative session value."""
-
-    def __init__(
-        self,
-        session: Any,
-        placement: Any,
-        page_id: str,
-    ) -> None:
-        self.session = session
-        self.placement = placement
-        self.page_id = page_id
-        self.path: InputParameterPath = placement.path
-
-    @property
-    def option(self) -> Any:
-        return self.session.option(self.path)
+class _SessionBindingBase:
+    """Shared session transaction plumbing for field bindings."""
 
     @property
     def parameters(self) -> Any:
         return self.session.working_parameters
 
-    @property
-    def allows_unset(self) -> bool:
-        optional = self.option._definition.is_optional
-        return bool(
-            optional(self.option) if callable(optional) else optional
-        ) or self.option.default_value is not None
-
-    @property
-    def value_type(self) -> Any:
-        return self.option._definition.type
-
-    @property
-    def read_only(self) -> bool:
-        return False
-
-    @property
-    def allow_empty(self) -> bool:
-        return False
-
-    def read(self) -> FieldValue:
-        """Return the field value to display without mutating session state."""
-        option = self.option
-        complete_value = self.model_value_from(self.parameters)
-        return FieldValue(
-            complete_value,
-            option.default_value,
-            implicit_default=not option.is_set() and complete_value is not None,
-            explicit=option.is_set(),
-        )
-
     def set_value(self, value: Any) -> Any:
-        """Commit the complete option value as one session edit."""
         return self.update_value(
             lambda _current: value,
             text=f"Change {self.placement.label.rstrip(':')}",
         )
-
-    def model_value_from(self, parameters: Any) -> Any:
-        """Return this option's logical model value from a parameter snapshot."""
-        return resolve_option(parameters, self.path)(all_values=True)
-
-    def replace_in(self, parameters: Any, value: Any) -> None:
-        """Replace this option in a candidate snapshot without opening a transaction."""
-        resolve_option(parameters, self.path).set(value)
 
     def update_value(
         self,
@@ -147,7 +93,64 @@ class SessionFieldBinding:
         )
 
 
-class ProjectedFieldBinding:
+class SessionFieldBinding(_SessionBindingBase):
+    """Bind an ordinary option directly to its authoritative session value."""
+
+    def __init__(
+        self,
+        session: Any,
+        placement: Any,
+        page_id: str,
+    ) -> None:
+        self.session = session
+        self.placement = placement
+        self.page_id = page_id
+        self.path: InputParameterPath = placement.path
+
+    @property
+    def option(self) -> Any:
+        return self.session.option(self.path)
+
+    @property
+    def allows_unset(self) -> bool:
+        optional = self.option._definition.is_optional
+        return bool(
+            optional(self.option) if callable(optional) else optional
+        ) or self.option.default_value is not None
+
+    @property
+    def value_type(self) -> Any:
+        return self.option._definition.type
+
+    @property
+    def read_only(self) -> bool:
+        return False
+
+    @property
+    def allow_empty(self) -> bool:
+        return False
+
+    def read(self) -> FieldValue:
+        """Return the field value to display without mutating session state."""
+        option = self.option
+        complete_value = self.model_value_from(self.parameters)
+        return FieldValue(
+            complete_value,
+            option.default_value,
+            implicit_default=not option.is_set() and complete_value is not None,
+            explicit=option.is_set(),
+        )
+
+    def model_value_from(self, parameters: Any) -> Any:
+        """Return this option's logical model value from a parameter snapshot."""
+        return resolve_option(parameters, self.path)(all_values=True)
+
+    def replace_in(self, parameters: Any, value: Any) -> None:
+        """Replace this option in a candidate snapshot without opening a transaction."""
+        resolve_option(parameters, self.path).set(value)
+
+
+class ProjectedFieldBinding(_SessionBindingBase):
     """A composable child view into a parent binding's model value."""
 
     def __init__(
@@ -183,10 +186,6 @@ class ProjectedFieldBinding:
         return None
 
     @property
-    def parameters(self) -> Any:
-        return self.session.working_parameters
-
-    @property
     def value_type(self) -> Any:
         return self._value_type
 
@@ -219,61 +218,6 @@ class ProjectedFieldBinding:
             self._project_default(parent_state.default),
             implicit_default=parent_state.implicit_default,
             explicit=parent_state.explicit,
-        )
-
-    def set_value(self, value: Any) -> Any:
-        return self.update_value(
-            lambda _current: value,
-            text=f"Change {self.placement.label.rstrip(':')}",
-        )
-
-    def update_value(
-        self,
-        transform: Callable[[Any], Any],
-        *,
-        text: str,
-        field_index: int | None = None,
-    ) -> Any:
-        def operation(candidate: Any) -> None:
-            old_value = self.model_value_from(candidate)
-            self.replace_in(candidate, transform(old_value))
-
-        return self.session.mutate(
-            operation,
-            source_page=self.page_id,
-            path=self.path,
-            field_index=field_index,
-            text=text,
-        )
-
-    def option_at(self, path: InputParameterPath) -> Any:
-        return self.session.option(path)
-
-    def value_at(self, path: InputParameterPath) -> Any:
-        return self.session.value(path)
-
-    def set_path_value(self, path: InputParameterPath, value: Any, *, text: str) -> Any:
-        return self.session.set_value(
-            path,
-            value,
-            source_page=self.page_id,
-            text=text,
-        )
-
-    def mutate(
-        self,
-        callback: Callable[[Any], Any],
-        *,
-        text: str,
-        path: InputParameterPath | None = None,
-        field_index: int | None = None,
-    ) -> Any:
-        return self.session.mutate(
-            callback,
-            source_page=self.page_id,
-            path=path or self.path,
-            field_index=field_index,
-            text=text,
         )
 
 
