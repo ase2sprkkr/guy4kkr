@@ -39,17 +39,13 @@ class StructureSourceDialog(QDialog):
         self,
         parent: QWidget | None = None,
         *,
-        recent_files: RecentFiles | None = None,
+        recent_files: RecentFiles,
         title: str = "Choose Structure",
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(620)
         self._candidate: StructureCandidate | None = None
-
-        if recent_files is None:
-            recent_files = RecentFiles()
-            recent_files.load()
         self._recent_files = recent_files
 
         layout = QVBoxLayout(self)
@@ -225,7 +221,7 @@ class StructureSourceDialog(QDialog):
 def select_structure_source(
     parent: QWidget | None = None,
     *,
-    recent_files: RecentFiles | None = None,
+    recent_files: RecentFiles,
     title: str = "Choose Structure",
 ) -> StructureCandidate | None:
     """Run the guided source chooser and return its detached candidate."""
