@@ -206,11 +206,8 @@ class ElementAssignmentDialog(QDialog):
             pos_lbl = QLabel("Positions")
             pos_lbl.setFont(f)
             pos_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            try:
-                pm = first.positions_group.layout().contentsMargins()
-                pos_lbl.setContentsMargins(pm.left(), 0, 0, 0)
-            except Exception:
-                pass
+            pm = first.positions_group.layout().contentsMargins()
+            pos_lbl.setContentsMargins(pm.left(), 0, 0, 0)
             pos_lbl.setFixedWidth(first.positions_group.sizeHint().width())
 
             header_grid.addWidget(occ_lbl, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

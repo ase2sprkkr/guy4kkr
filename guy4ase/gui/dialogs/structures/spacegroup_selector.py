@@ -244,13 +244,10 @@ class SpaceGroupSelectorDialog(QDialog):
         right_v.addWidget(mat_group, 0)
         splitter.addWidget(right)
         # Initial splitter sizes: left table, middle wyckoff, right preview
-        try:
-            splitter.setStretchFactor(0, 0)
-            splitter.setStretchFactor(1, 1)
-            splitter.setStretchFactor(2, 2)
-            splitter.setSizes([300, 520, 560])
-        except Exception:
-            pass
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([300, 520, 560])
 
         # Error/status label (like Tk version): shows what is missing to continue
         self.error_label = QLabel("")
@@ -502,10 +499,7 @@ class SpaceGroupSelectorDialog(QDialog):
             self.table.setItem(r, 2, QTableWidgetItem(str(lat)))
         self.table.setSortingEnabled(True)
         # Default sort by the first column (space group number), ascending
-        try:
-            self.table.sortItems(0, Qt.SortOrder.AscendingOrder)
-        except Exception:
-            pass
+        self.table.sortItems(0, Qt.SortOrder.AscendingOrder)
         if rows:
             self.table.selectRow(0)
         else:
@@ -513,11 +507,7 @@ class SpaceGroupSelectorDialog(QDialog):
 
     def _debounce_table_filter(self) -> None:
         """Debounce search input before refreshing the table view."""
-
-        try:
-            self._filter_timer.start(150)
-        except Exception:
-            self._populate_table()
+        self._filter_timer.start(150)
 
     def _on_lattice_value(self, key: str, val: float) -> None:
         """Persist lattice text edits and trigger downstream updates."""
@@ -850,4 +840,3 @@ def select_spacegroup_from_prototype(
         back=back,
         prototype=prototype,
     )
-

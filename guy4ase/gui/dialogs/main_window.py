@@ -182,10 +182,7 @@ class MainWindow(QMainWindow):
             if self.save_input_btn is not None:
                 self.save_input_btn.setEnabled(False)
             return
-        try:
-            txt = self.workspace.input_parameters.to_string(validate=False)
-        except Exception:
-            txt = str(self.workspace.input_parameters)
+        txt = self.workspace.input_parameters.to_string(validate=False)
         self.input_params_preview.setPlainText(txt)
         if self.save_input_btn is not None:
             self.save_input_btn.setEnabled(True)
@@ -287,10 +284,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._build_actions_panel())
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
-        try:
-            splitter.setSizes([1000, 350])
-        except Exception:
-            pass
+        splitter.setSizes([1000, 350])
 
     def _build_menu_bar(self) -> None:
         # Menu bar
@@ -426,7 +420,6 @@ class MainWindow(QMainWindow):
         self.welcome_widget = QWidget(self._left_stack)
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         welcome_label = QLabel("No Structure Loaded")
         welcome_label.setStyleSheet("font-size: 18pt; font-weight: bold; color: #666;")
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -900,24 +893,21 @@ class MainWindow(QMainWindow):
         if self.workspace.atoms is None:
             return
 
-        try:
-            cell = self.workspace.atoms.get_cell()
-            lengths = cell.lengths()
-            angles = cell.angles()
+        cell = self.workspace.atoms.get_cell()
+        lengths = cell.lengths()
+        angles = cell.angles()
 
-            self.lattice_labels['a'].setText(f"{lengths[0]:.4f} Å")
-            self.lattice_labels['b'].setText(f"{lengths[1]:.4f} Å")
-            self.lattice_labels['c'].setText(f"{lengths[2]:.4f} Å")
-            self.lattice_labels['α'].setText(f"{angles[0]:.2f}°")
-            self.lattice_labels['β'].setText(f"{angles[1]:.2f}°")
-            self.lattice_labels['γ'].setText(f"{angles[2]:.2f}°")
+        self.lattice_labels['a'].setText(f"{lengths[0]:.4f} Å")
+        self.lattice_labels['b'].setText(f"{lengths[1]:.4f} Å")
+        self.lattice_labels['c'].setText(f"{lengths[2]:.4f} Å")
+        self.lattice_labels['α'].setText(f"{angles[0]:.2f}°")
+        self.lattice_labels['β'].setText(f"{angles[1]:.2f}°")
+        self.lattice_labels['γ'].setText(f"{angles[2]:.2f}°")
 
-            # Update matrix
-            for i in range(3):
-                for j in range(3):
-                    self.lattice_matrix_labels[i][j].setText(f"{cell[i, j]:8.4f}")
-        except Exception as e:
-            print(f"Lattice params error: {e}")
+        # Update matrix
+        for i in range(3):
+            for j in range(3):
+                self.lattice_matrix_labels[i][j].setText(f"{cell[i, j]:8.4f}")
 
     def _update_positions_table(self) -> None:
         """Update atomic positions table."""
