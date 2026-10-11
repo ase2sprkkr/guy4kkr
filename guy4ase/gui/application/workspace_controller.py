@@ -32,6 +32,10 @@ class DocumentChange(Enum):
     STALE = auto()
 
 
+class CalculationNotReady(RuntimeError):
+    """The workspace does not contain all inputs required for calculation."""
+
+
 @dataclass(frozen=True)
 class CalculationRequest:
     """Values captured when the user asks to start a calculation.
@@ -103,7 +107,7 @@ class WorkspaceController(QObject):
         parameters = self.input_parameters
         directory = self.workspace.directory
         if atoms is None or parameters is None or not directory:
-            raise ValueError(
+            raise CalculationNotReady(
                 "Structure, input parameters and directory are required."
             )
         return CalculationRequest(
