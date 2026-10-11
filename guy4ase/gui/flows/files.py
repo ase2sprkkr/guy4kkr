@@ -84,28 +84,29 @@ def load_structure(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
+    generation = controller.generation
+    path = Path(file_path).resolve()
     try:
-        generation = controller.generation
-        path = Path(file_path).resolve()
         atoms = ase_read(path)
-        potential_path = (
-            str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
-        )
-        change = wait_for_structure(
-            parent,
-            partial(
-                controller.replace_structure,
-                atoms,
-                potential_path=potential_path,
-                directory=str(path.parent),
-                expected_generation=generation,
-            ),
-        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent, "Load Error", f"Failed to load structure:\n{exc}"
         )
         return False
+
+    potential_path = (
+        str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
+    )
+    change = wait_for_structure(
+        parent,
+        partial(
+            controller.replace_structure,
+            atoms,
+            potential_path=potential_path,
+            directory=str(path.parent),
+            expected_generation=generation,
+        ),
+    )
     if isinstance(change, Busy) or not document_change_applied(parent, change):
         return False
     warn_if_structure_kind_is_unknown(atoms, parent)
@@ -138,15 +139,10 @@ def load_input_parameters(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
+    generation = controller.generation
+    path = Path(file_path).resolve()
     try:
-        generation = controller.generation
-        path = Path(file_path).resolve()
         parameters = InputParameters.from_file(path)
-        change = controller.replace_input_parameters(
-            parameters,
-            directory=str(path.parent),
-            expected_generation=generation,
-        )
     except Exception as exc:  # noqa: BLE001 - parser errors are presented
         QMessageBox.critical(
             parent,
@@ -154,6 +150,12 @@ def load_input_parameters(
             f"Failed to load input parameters:\n{exc}",
         )
         return False
+
+    change = controller.replace_input_parameters(
+        parameters,
+        directory=str(path.parent),
+        expected_generation=generation,
+    )
     if not document_change_applied(parent, change):
         return False
     recent_files.remember("input", file_path)
@@ -182,17 +184,9 @@ def load_output(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
+    generation = controller.generation
     try:
-        generation = controller.generation
         loaded = load_result_file(file_path)
-        adoption = wait_for_structure(
-            parent,
-            partial(
-                controller.adopt_external_result,
-                loaded,
-                expected_generation=generation,
-            ),
-        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent,
@@ -200,6 +194,15 @@ def load_output(
             f"Failed to load SPRKKR output:\n{exc}",
         )
         return False
+
+    adoption = wait_for_structure(
+        parent,
+        partial(
+            controller.adopt_external_result,
+            loaded,
+            expected_generation=generation,
+        ),
+    )
     if isinstance(adoption, Busy):
         return False
     if not adoption.adopted:
@@ -237,27 +240,31 @@ def save_structure(
         file_path += f".{match.group(1)}"
 
     path = Path(file_path).resolve()
+    write_error: Exception | None = None
 
     def write_structure(atoms) -> None:
+        nonlocal write_error
         if atoms is None:
             raise ValueError("No structure is loaded.")
-        ase_write(path, atoms)
+        try:
+            ase_write(path, atoms)
+        except Exception as exc:  # noqa: BLE001 - backend writers vary
+            write_error = exc
 
-    try:
-        outcome = wait_for_structure(
-            parent,
-            partial(
-                controller.access_structure,
-                write_structure,
-                reason="saving the structure",
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 - backend writers vary
-        QMessageBox.critical(
-            parent, "Save Error", f"Failed to save structure:\n{exc}"
-        )
-        return False
+    outcome = wait_for_structure(
+        parent,
+        partial(
+            controller.access_structure,
+            write_structure,
+            reason="saving the structure",
+        ),
+    )
     if isinstance(outcome, Busy):
+        return False
+    if write_error is not None:
+        QMessageBox.critical(
+            parent, "Save Error", f"Failed to save structure:\n{write_error}"
+        )
         return False
     recent_files.remember("structure", file_path)
     return True

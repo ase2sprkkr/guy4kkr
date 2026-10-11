@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.dialogs import guided_input
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
+from guy4ase.gui.flows import files as workspace_file_flows
 from guy4ase.gui.flows import input_parameters as input_parameter_flows
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.input_parameters.validation import (
@@ -116,6 +117,175 @@ def test_guided_expert_does_not_hide_dialog_error(monkeypatch, application):
     with pytest.raises(RuntimeError, match="expert bug"):
         dialog._open_expert_settings()
     dialog.close()
+
+
+def test_workspace_structure_load_does_not_hide_retry_error(
+    monkeypatch, tmp_path, application
+):
+    controller = type(
+        "Controller",
+        (),
+        {"generation": 1, "replace_structure": lambda *_args, **_kwargs: None},
+    )()
+    monkeypatch.setattr(workspace_file_flows, "ase_read", lambda _path: object())
+    monkeypatch.setattr(
+        workspace_file_flows,
+        "wait_for_structure",
+        lambda *_args, **_kwargs: _raise(RuntimeError("retry invariant")),
+    )
+    messages = []
+    monkeypatch.setattr(
+        workspace_file_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    with pytest.raises(RuntimeError, match="retry invariant"):
+        workspace_file_flows.load_structure(
+            controller, object(), tmp_path / "Fe.cif", None
+        )
+    assert messages == []
+
+
+def test_workspace_input_load_does_not_hide_controller_error(
+    monkeypatch, tmp_path, application
+):
+    parameters = object()
+
+    class Controller:
+        generation = 1
+
+        def replace_input_parameters(self, *_args, **_kwargs):
+            raise RuntimeError("controller invariant")
+
+    monkeypatch.setattr(
+        workspace_file_flows.InputParameters,
+        "from_file",
+        lambda _path: parameters,
+    )
+    messages = []
+    monkeypatch.setattr(
+        workspace_file_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    with pytest.raises(RuntimeError, match="controller invariant"):
+        workspace_file_flows.load_input_parameters(
+            Controller(), object(), tmp_path / "Fe.inp", None
+        )
+    assert messages == []
+
+
+def test_workspace_output_load_does_not_hide_controller_error(
+    monkeypatch, tmp_path, application
+):
+    loaded = object()
+
+    class Controller:
+        generation = 1
+
+        def adopt_external_result(self, *_args, **_kwargs):
+            raise RuntimeError("controller invariant")
+
+    monkeypatch.setattr(
+        workspace_file_flows, "load_result_file", lambda _path: loaded
+    )
+    monkeypatch.setattr(
+        workspace_file_flows,
+        "wait_for_structure",
+        lambda _parent, operation: operation(),
+    )
+    messages = []
+    monkeypatch.setattr(
+        workspace_file_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    with pytest.raises(RuntimeError, match="controller invariant"):
+        workspace_file_flows.load_output(
+            Controller(), object(), tmp_path / "Fe.out", None
+        )
+    assert messages == []
+
+
+def test_workspace_structure_save_does_not_hide_controller_error(
+    monkeypatch, tmp_path, application
+):
+    path = tmp_path / "Fe.xyz"
+
+    class Controller:
+        workspace = type("Workspace", (), {"atoms": object()})()
+
+        def access_structure(self, *_args, **_kwargs):
+            raise RuntimeError("controller invariant")
+
+    monkeypatch.setattr(
+        workspace_file_flows.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(path), ""),
+    )
+    monkeypatch.setattr(
+        workspace_file_flows,
+        "wait_for_structure",
+        lambda _parent, operation: operation(),
+    )
+    messages = []
+    monkeypatch.setattr(
+        workspace_file_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    with pytest.raises(RuntimeError, match="controller invariant"):
+        workspace_file_flows.save_structure(Controller(), object(), None)
+    assert messages == []
+
+
+def test_workspace_file_loads_still_report_backend_errors(
+    monkeypatch, tmp_path, application
+):
+    controller = type("Controller", (), {"generation": 1})()
+    messages = []
+    monkeypatch.setattr(
+        workspace_file_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    monkeypatch.setattr(
+        workspace_file_flows,
+        "ase_read",
+        lambda _path: _raise(RuntimeError("structure parse")),
+    )
+    assert not workspace_file_flows.load_structure(
+        controller, object(), tmp_path / "Fe.cif", None
+    )
+
+    monkeypatch.setattr(
+        workspace_file_flows.InputParameters,
+        "from_file",
+        lambda _path: _raise(RuntimeError("input parse")),
+    )
+    assert not workspace_file_flows.load_input_parameters(
+        controller, object(), tmp_path / "Fe.inp", None
+    )
+
+    monkeypatch.setattr(
+        workspace_file_flows,
+        "load_result_file",
+        lambda _path: _raise(RuntimeError("output parse")),
+    )
+    assert not workspace_file_flows.load_output(
+        controller, object(), tmp_path / "Fe.out", None
+    )
+
+    assert messages == [
+        "Failed to load structure:\nstructure parse",
+        "Failed to load input parameters:\ninput parse",
+        "Failed to load SPRKKR output:\noutput parse",
+    ]
 
 
 class _ValidationParameters:
