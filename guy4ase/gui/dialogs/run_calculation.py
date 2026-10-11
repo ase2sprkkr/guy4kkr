@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.widgets.input_parameters.dataset import (
     dataset_value,
@@ -64,7 +65,7 @@ class _SprkkrRunWorker(QObject):
     output = pyqtSignal(str, str)  # (text, kind)
     status = pyqtSignal(str)
     error = pyqtSignal(str)
-    finished = pyqtSignal(object)  # result
+    finished = pyqtSignal(object)  # LoadedResult
     cancelled = pyqtSignal()
     activityStarted = pyqtSignal(object)
     activityEnded = pyqtSignal(object)
@@ -129,15 +130,20 @@ class _SprkkrRunWorker(QObject):
                 self._emit_cancelled()
                 return
 
+            self.status.emit("Loading result…")
+            loaded = load_result(
+                result,
+                fallback_directory=self._request.directory,
+            )
             self.status.emit("Finished")
-            self.finished.emit(result)
+            self.finished.emit(loaded)
         except asyncio.CancelledError:
             self._emit_cancelled()
         except Exception as exc:  # noqa: BLE001 - worker exception boundary
             if running and self._cancellation.requested:
                 self._emit_cancelled()
             else:
-                logger.exception("SPR-KKR calculation failed")
+                logger.exception("SPR-KKR calculation or result loading failed")
                 self.error.emit(str(exc))
         finally:
             self.activityEnded.emit(self.run_id)
