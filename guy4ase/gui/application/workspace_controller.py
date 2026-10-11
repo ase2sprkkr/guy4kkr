@@ -332,7 +332,12 @@ class WorkspaceController(QObject):
     def use_for_new_calculation(
         self, *, expected_generation: int | None = None
     ) -> DocumentChange:
-        """Reset calculation state while keeping Atoms and starting density."""
+        """Start a new calculation from the current structure and potential.
+
+        Clear only the current result and mark the workspace as restarted.
+        The structure, potential path, empty-sphere state and result history are
+        preserved as input/context for the new calculation.
+        """
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
         had_result = self.workspace.result is not None
