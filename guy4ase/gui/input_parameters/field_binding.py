@@ -455,8 +455,7 @@ def mapping_value_binding(
         return result or None
 
     def occurrence_state(parent_state: FieldValue) -> FieldValue:
-        stored = getattr(parent.session.option(parent.path), "_value", None)
-        explicit = isinstance(stored, Mapping) and key in stored
+        explicit = key in parent.session.option(parent.path)
         value = project(parent_state.value)
         return FieldValue(
             value,
