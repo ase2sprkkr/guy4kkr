@@ -50,9 +50,7 @@ class InputParametersDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         if isinstance(parameters, InputParametersSession):
-            # The caller owns an explicitly supplied session and may need it
-            # after this dialog has closed (Guided applies it on Accept).
-            self.session = parameters
+            self.session = parameters.fork(self)
         else:
             self.session = create_input_parameters_session(parameters, self)
         self._calculate_mode = calculate_mode
@@ -201,7 +199,7 @@ def edit_input_parameters_session(
     directory: str | None = None,
     atoms: Any = None,
 ) -> InputParametersSession | None:
-    """Run Expert over an independent session and return it only on Accept."""
+    """Run Expert over an isolated fork and return the fork only on Accept."""
     dialog = InputParametersDialog(
         session,
         parent=parent,
@@ -212,7 +210,7 @@ def edit_input_parameters_session(
     )
     code = dialog.exec()
     if code == QDialog.DialogCode.Accepted:
-        return session
+        return dialog.session
     return None
 
 

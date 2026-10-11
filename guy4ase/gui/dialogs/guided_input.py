@@ -343,12 +343,11 @@ class GuidedInputParametersDialog(QDialog):
         QMessageBox.critical(self, "Invalid Settings", message)
 
     def _open_expert_settings(self) -> None:
-        """Edit a detached copy; accepting installs the result as one undoable change."""
+        """Edit an isolated Expert draft and import it as one undoable change."""
         if not self._commit_pending():
             return
-        temporary = self.session.fork()
         accepted = edit_input_parameters_session(
-            temporary,
+            self.session,
             parent=self,
             show_changed_only=False,
             atoms=self.atoms,

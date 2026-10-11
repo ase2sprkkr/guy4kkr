@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, MutableMapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol
 
 import numpy as np
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -17,8 +17,8 @@ from guy4ase.gui.input_parameters.bindings import (
     values_equal,
 )
 
-DormantKey: TypeAlias = tuple[InputParameterPath, int]
-DormantState: TypeAlias = MutableMapping[DormantKey, Any]
+DormantKey = tuple[InputParameterPath, int]
+DormantState = MutableMapping[DormantKey, Any]
 
 
 class SessionTransactionPlugin(Protocol):

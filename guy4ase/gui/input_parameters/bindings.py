@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import Any
 
 import numpy as np
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
-InputParameterPath: TypeAlias = tuple[str, ...]
+InputParameterPath = tuple[str, ...]
 
 
 def resolve_option(parameters: InputParameters, path: InputParameterPath) -> Any:
