@@ -42,9 +42,15 @@ def build_recent_launch_menu(
     parent: QWidget,
     history: RecentFiles,
     open_recent: Callable[[RecentKind, str], None],
+    *,
+    menu: QMenu | None = None,
 ) -> QMenu:
-    """Build the shared Structures/Outputs menu for a Continue action."""
-    menu = QMenu(parent)
+    """Build or refresh the shared Structures/Outputs Continue menu."""
+    if menu is None:
+        menu = QMenu(parent)
+    else:
+        menu.clear()
+
     for title, kind in (
         ("Structures", "structure"),
         ("Outputs", "output"),
