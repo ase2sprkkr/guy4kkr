@@ -24,7 +24,6 @@ def test_settings_round_trip(tmp_path):
 def test_corrupt_settings_keep_defaults(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text("{not json", encoding="utf-8")
-
     settings = ApplicationSettings(path)
     settings.load()
 
@@ -44,16 +43,11 @@ def test_visualization_uses_configured_viewer(monkeypatch):
     atoms.info["non_viewer_state"] = lambda: None
 
     class Controller:
-        def read_structure(self, reader, *, reason):
-            assert reason == "reading the structure for visualization"
-            return 7, reader(atoms)
+        @property
+        def atoms(self):
+            return atoms
 
     opened = []
-    monkeypatch.setattr(
-        visualization,
-        "wait_for_structure",
-        lambda _parent, operation: operation(),
-    )
     monkeypatch.setattr(
         visualization,
         "ase_view",

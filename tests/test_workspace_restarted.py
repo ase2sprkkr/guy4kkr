@@ -61,13 +61,17 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
     assert not controller.workspace.is_scf_converged()
 
 
-def test_restart_scf_marks_workspace_restarted_even_if_atoms_still_have_data():
+def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     atoms = _scf_atoms()
     controller = WorkspaceController(WorkspaceState(atoms=atoms))
 
-    change = controller.restart_scf(expected_generation=controller.generation)
+    change = controller.use_for_new_calculation(
+        expected_generation=controller.generation
+    )
 
     assert change is DocumentChange.APPLIED
+    assert controller.workspace.atoms is atoms
+    assert atoms.sprkkr_is_scf_converged()
     assert controller.workspace.restarted
     assert controller.workspace.scf_status() == "START"
     assert not controller.workspace.is_scf_converged()

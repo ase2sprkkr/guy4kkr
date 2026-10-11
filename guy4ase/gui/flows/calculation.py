@@ -12,7 +12,6 @@ from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
-from guy4ase.gui.flows.structures import copy_structure_snapshot
 from guy4ase.gui.misc.structure_wait import (
     document_change_applied,
     wait_for_structure,
@@ -151,17 +150,8 @@ def configure_and_run_task(
         ):
             return None
 
-        snapshot = wait_for_structure(
-            parent,
-            partial(
-                controller.read_structure,
-                copy_structure_snapshot,
-                reason="reading the structure for the task editor",
-            ),
-        )
-        if isinstance(snapshot, Busy):
-            return None
-        generation, atoms = snapshot
+        generation = controller.generation
+        atoms = controller.atoms
         if atoms is None:
             QMessageBox.information(
                 parent,

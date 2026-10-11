@@ -33,15 +33,16 @@ def test_workspace_can_calculate_requires_all_inputs():
     assert workspace.can_calculate()
 
 
-def test_edit_current_structure_uses_detached_revision_snapshot():
+def test_edit_current_structure_reads_published_structure_and_commits_replacement():
     original = Atoms("Fe")
     controller = WorkspaceController(WorkspaceState(atoms=original))
 
     def edit(atoms, *, parent):
         assert parent is None
-        assert atoms is not original
-        atoms.symbols = "Cu"
-        return atoms
+        assert atoms is original
+        edited = atoms.copy()
+        edited.symbols = "Cu"
+        return edited
 
     assert structure_flows.edit_current_structure(
         controller,
@@ -50,6 +51,7 @@ def test_edit_current_structure_uses_detached_revision_snapshot():
         error_title="Edit Error",
     )
     assert controller.workspace.atoms is not original
+    assert original.get_chemical_symbols() == ["Fe"]
     assert controller.workspace.atoms.get_chemical_symbols() == ["Cu"]
     assert controller.workspace.restarted
 
@@ -70,7 +72,7 @@ def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
         assert not show_changed_only
         assert parameters is not original_parameters
         assert parameters.name == "original-copy"
-        assert atoms is not original_atoms
+        assert atoms is original_atoms
         return edited_parameters
 
     monkeypatch.setattr(
