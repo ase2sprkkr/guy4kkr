@@ -1,4 +1,4 @@
-"""Mutable workspace storage and its read-only application view."""
+"""Mutable workspace storage owned by ``WorkspaceController``."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -85,67 +85,3 @@ class WorkspaceState:
         if self.has_vacuum_sites():
             return None
         return "add"
-
-
-class WorkspaceView:
-    """Live read-only view of controller-owned workspace storage.
-
-    Returned model objects such as ``atoms`` remain borrowed references and
-    retain their own mutability contracts. The document slots themselves cannot
-    be reassigned through this view; all publication goes through the controller.
-    """
-
-    __slots__ = ("__state",)
-
-    def __init__(self, state: WorkspaceState) -> None:
-        self.__state = state
-
-    @property
-    def atoms(self) -> Any | None:
-        return self.__state.atoms
-
-    @property
-    def input_parameters(self) -> Any | None:
-        return self.__state.input_parameters
-
-    @property
-    def directory(self) -> str | None:
-        return self.__state.directory
-
-    @property
-    def potential_path(self) -> str | None:
-        return self.__state.potential_path
-
-    @property
-    def result(self) -> Any | None:
-        return self.__state.result
-
-    @property
-    def result_history(self) -> tuple[Any, ...]:
-        return self.__state.result_history
-
-    @property
-    def empty_spheres_added(self) -> int | None:
-        return self.__state.empty_spheres_added
-
-    @property
-    def restarted(self) -> bool:
-        return self.__state.restarted
-
-    def structure_kind(self) -> StructureKind | None:
-        return self.__state.structure_kind()
-
-    def can_calculate(self) -> bool:
-        return self.__state.can_calculate()
-
-    def scf_status(self) -> str | None:
-        return self.__state.scf_status()
-
-    def is_scf_converged(self) -> bool:
-        return self.__state.is_scf_converged()
-
-    def has_vacuum_sites(self) -> bool:
-        return self.__state.has_vacuum_sites()
-
-    def empty_spheres_action(self) -> str | None:
-        return self.__state.empty_spheres_action()
