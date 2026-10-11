@@ -248,37 +248,21 @@ def plot_structure_axis_projection(ax, atoms: Any, axis: int, *, canvas=None) ->
         canvas.draw_idle()
 
 
-def bounding_box_corners(corners, preserve_ratio=True, padding=0.05):
-    """
-    Compute bounding box corners of a hexahedron.
-
-    Parameters:
-        corners: np.array of shape [8,3] - 3D coordinates of the hexahedron
-        preserve_ratio: bool - if True, scales the box to preserve ratios (cube)
-
-    Returns:
-        min_corner: np.array of shape [3] - one corner of the bounding box
-        max_corner: np.array of shape [3] - opposite corner of the bounding box
-    """
+def _cubic_plot_bounds(corners, padding=0.05):
+    """Return equally sized axis limits around eight 3D cell corners."""
     corners = np.asarray(corners)
-    assert corners.shape == (8,3), "Input must be [8,3] array"
+    if corners.shape != (8, 3):
+        raise ValueError("corners must have shape (8, 3)")
+    if padding < 0:
+        raise ValueError("padding must be non-negative")
 
     min_corner = corners.min(axis=0)
     max_corner = corners.max(axis=0)
+    max_side = (max_corner - min_corner).max()
+    center = (max_corner + min_corner) / 2
+    half_side = (0.5 + padding) * max_side
+    return center - half_side, center + half_side
 
-    padding += 0.5
-    if preserve_ratio:
-        # make it cube-like, take max side length
-        max_side = (max_corner - min_corner).max()
-        center = (max_corner + min_corner) / 2
-        min_corner = center - padding * max_side
-        max_corner = center + padding * max_side
-    elif padding > 0:
-        diff = max_corner - min_corner
-        min_corner -= padding * diff
-        max_corner += padding * diff
-
-    return min_corner, max_corner
 
 corner_indices = np.array(list(product((0,1), repeat=3))).T
 edge_indices =np.array([(0,1),(0,2),(0,4),(7,6),(7,5),(7,3),(1,3),(1,5),(2,3),(2,6),(4,5),(4,6)])
@@ -303,7 +287,7 @@ def plot_lattice(ax, lattice):
             ax.plot(edge[:, 0], edge[:, 1], edge[:, 2], color='black', linewidth=0.8)
 
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
-    mn,mx = bounding_box_corners(corners)
+    mn,mx = _cubic_plot_bounds(corners)
     ax.set_xlim(mn[0], mx[0])
     ax.set_ylim(mn[1], mx[1])
     ax.set_zlim(mn[2], mx[2])
