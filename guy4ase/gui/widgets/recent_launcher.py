@@ -27,10 +27,9 @@ def recent_path_label(path: str | Path, base: str | Path | None = None) -> str:
     """Prefer a short descendant path; never display ``..``-based relatives."""
     absolute = Path(path).expanduser().resolve()
     absolute_text = str(absolute)
-    if base is None:
-        return absolute_text
+    base_path = Path.cwd() if base is None else Path(base).expanduser().resolve()
     try:
-        relative = absolute.relative_to(Path(base).expanduser().resolve())
+        relative = absolute.relative_to(base_path)
     except ValueError:
         return absolute_text
     relative_text = str(relative)
