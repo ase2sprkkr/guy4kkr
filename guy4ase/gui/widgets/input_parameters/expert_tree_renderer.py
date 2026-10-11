@@ -65,14 +65,14 @@ def _option_value(option: Any) -> Any:
     try:
         return option.get()
     except Exception:  # noqa: BLE001 - generated getters can fail on incomplete data.
-        return getattr(option, "_value", None)
+        return None
 
 
 def _all_values(option: Any) -> Any:
     try:
         return option(all_values=True)
     except Exception:  # noqa: BLE001 - generated getters can fail on incomplete data.
-        return getattr(option, "_value", None)
+        return None
 
 
 class ExpertTreeRenderer:
