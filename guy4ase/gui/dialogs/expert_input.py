@@ -28,6 +28,10 @@ from guy4ase.gui.input_parameters.validation import (
     InputParametersValidationError,
     validate_setup,
 )
+from guy4ase.gui.widgets.input_parameters.dataset import (
+    DatasetEditor,
+    apply_default_dataset,
+)
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
 
@@ -75,6 +79,9 @@ class InputParametersDialog(QDialog):
             root.addLayout(directory_row)
         else:
             self._directory_edit = None
+
+        self.dataset_editor = DatasetEditor(self.session, self)
+        root.addWidget(self.dataset_editor)
 
         self.tree_editor = ExpertInputTreeEditor(
             self.session,
@@ -222,4 +229,5 @@ def select_input_parameters(
     )
     params_def = task_module.input_parameters()
     params = params_def.create_object()
+    apply_default_dataset(params, atoms)
     return edit_input_parameters(params, parent=parent, atoms=atoms)

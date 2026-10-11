@@ -50,6 +50,10 @@ from guy4ase.gui.style import (
     navigation_tile_stylesheet,
     secondary_text_stylesheet,
 )
+from guy4ase.gui.widgets.input_parameters.dataset import (
+    DatasetEditor,
+    apply_default_dataset,
+)
 from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
 from guy4ase.physics.lattice import detect_structure_kind
@@ -116,6 +120,9 @@ class GuidedInputParametersDialog(QDialog):
         intro.setObjectName("guidedDialogSubtitle")
         intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         root.addWidget(intro)
+
+        self.dataset_editor = DatasetEditor(self.session, self)
+        root.addWidget(self.dataset_editor)
 
         body = QHBoxLayout()
         self.navigation = QListWidget(self)
@@ -386,6 +393,7 @@ def select_guided_input_parameters(
         is_2d=detect_structure_kind(atoms) == "2d",
     )
     parameters = InputParameters.create(spec.parameter_task)
+    apply_default_dataset(parameters, atoms)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,
