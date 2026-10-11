@@ -62,9 +62,6 @@ class _SessionBindingBase:
             text=text,
         )
 
-    def option_at(self, path: InputParameterPath) -> Any:
-        return self.session.option(path)
-
     def value_at(self, path: InputParameterPath) -> Any:
         return self.session.value(path)
 
@@ -113,10 +110,11 @@ class SessionFieldBinding(_SessionBindingBase):
 
     @property
     def allows_unset(self) -> bool:
-        optional = self.option._definition.is_optional
+        option = self.option
+        optional = option._definition.is_optional
         return bool(
-            optional(self.option) if callable(optional) else optional
-        ) or self.option.default_value is not None
+            optional(option) if callable(optional) else optional
+        ) or option.default_value is not None
 
     @property
     def value_type(self) -> Any:
@@ -133,12 +131,13 @@ class SessionFieldBinding(_SessionBindingBase):
     def read(self) -> FieldValue:
         """Return the field value to display without mutating session state."""
         option = self.option
-        complete_value = self.model_value_from(self.parameters)
+        complete_value = self.session.value(self.path)
+        explicit = option.is_set()
         return FieldValue(
             complete_value,
             option.default_value,
-            implicit_default=not option.is_set() and complete_value is not None,
-            explicit=option.is_set(),
+            implicit_default=not explicit and complete_value is not None,
+            explicit=explicit,
         )
 
     def model_value_from(self, parameters: Any) -> Any:
@@ -537,11 +536,12 @@ class IndexedFieldBinding(SessionFieldBinding):
     def read(self) -> FieldValue:
         option = self.option
         complete_value = self.session.value(self.path)
+        explicit = option.is_set()
         return FieldValue(
             self.session.display_value(self.path, self.index),
             _indexed(option.default_value, self.index),
-            implicit_default=not option.is_set() and complete_value is not None,
-            explicit=option.is_set(),
+            implicit_default=not explicit and complete_value is not None,
+            explicit=explicit,
         )
 
     def set_value(self, value: Any) -> Any:
