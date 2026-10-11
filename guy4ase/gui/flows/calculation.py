@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
@@ -94,12 +93,8 @@ def run_calculation(
                 f"loaded:\n{adoption.potential_error}",
             )
 
-    def finished(result) -> None:
+    def finished(loaded) -> None:
         try:
-            loaded = load_result(
-                result,
-                fallback_directory=request.directory,
-            )
             adoption = controller.adopt_calculation_result(
                 loaded,
                 expected_generation=request.generation,
