@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenu, QWidget
+from PyQt6.QtWidgets import QMenu, QToolButton, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 
@@ -46,6 +46,8 @@ def build_recent_launch_menu(
     menu: QMenu | None = None,
 ) -> QMenu:
     """Build or refresh the shared Structures/Outputs Continue menu."""
+    if menu is None and isinstance(parent, QToolButton):
+        menu = parent.menu()
     if menu is None:
         menu = QMenu(parent)
     else:
