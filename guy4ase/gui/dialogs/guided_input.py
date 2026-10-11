@@ -8,7 +8,6 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -310,19 +309,11 @@ class GuidedInputParametersDialog(QDialog):
         return self.form.editors_for(path)
 
     def _commit_pending(self) -> bool:
-        """Finish the focused edit and reveal errors; do not commit visual fallbacks.
+        """Synchronously commit editor drafts and reveal tracked errors."""
+        self.dataset_editor.commit()
+        for view in self.form.field_views:
+            view.editor.commit()
 
-        Other editors already commit on their own signals. This checks tracked
-        widget errors, not whole-model validity or save-time required options.
-        """
-        focused = QApplication.focusWidget()
-        if focused is not None:
-            focused.clearFocus()
-            QApplication.processEvents()
-        # Editors commit on editingFinished (or immediately for discrete
-        # controls).  Do not commit every displayed value here: optional values
-        # may be represented by a visual fallback while still being unset in
-        # InputParameters.
         errors = self.form.errors
         if errors:
             path = next(iter(errors))
