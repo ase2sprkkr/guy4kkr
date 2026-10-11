@@ -22,6 +22,7 @@ from guy4ase.gui.flows.structure_candidates import (
     structure_open_filter,
 )
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
+from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
@@ -130,7 +131,12 @@ def load_input_parameters(
     generation = controller.generation
     path = Path(file_path).resolve()
     try:
-        parameters = InputParameters.from_file(path)
+        parameters = run_modal_task(
+            parent,
+            lambda: InputParameters.from_file(path),
+            title="Loading Input",
+            label="Reading input parameters…",
+        )
     except Exception as exc:  # noqa: BLE001 - parser errors are presented
         QMessageBox.critical(
             parent,
@@ -174,7 +180,12 @@ def load_output(
 ) -> bool:
     generation = controller.generation
     try:
-        loaded = load_result_file(file_path)
+        loaded = run_modal_task(
+            parent,
+            lambda: load_result_file(file_path),
+            title="Loading Result",
+            label="Parsing SPR-KKR output…",
+        )
     except Exception as exc:  # noqa: BLE001 - backend readers vary
         QMessageBox.critical(
             parent,
