@@ -33,6 +33,12 @@ def copy_structure_snapshot(atoms: Any) -> Any:
     return None if atoms is None else atoms.copy()
 
 
+def _element_assignment_draft(atoms: Any) -> ElementAssignmentDraft | None:
+    """Build an element-assignment draft only when a structure exists."""
+    snapshot = copy_structure_snapshot(atoms)
+    return None if snapshot is None else ElementAssignmentDraft(snapshot)
+
+
 def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
     """Explain that loaded atoms are not a supported bulk/layered document."""
     if detect_structure_kind(atoms) != "unknown":
@@ -107,9 +113,7 @@ def edit_site_elements(
         parent,
         partial(
             controller.read_structure,
-            lambda atoms: ElementAssignmentDraft(
-                copy_structure_snapshot(atoms)
-            ),
+            _element_assignment_draft,
             reason="reading the structure for element assignment",
         ),
     )
@@ -117,6 +121,9 @@ def edit_site_elements(
         return False
     generation, draft = draft_result
     if draft is None:
+        QMessageBox.information(
+            parent, "No Structure", "Load or create a structure first."
+        )
         return False
 
     result = select_site_elements(draft, parent=parent, apply=False)

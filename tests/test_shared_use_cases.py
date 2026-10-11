@@ -100,3 +100,23 @@ def test_choose_working_directory_is_shared_flow(monkeypatch, tmp_path):
         None,
     )
     assert controller.workspace.directory == str(chosen)
+
+
+def test_edit_site_elements_rejects_missing_structure_before_draft(monkeypatch):
+    controller = WorkspaceController(WorkspaceState())
+    messages = []
+
+    def fail_if_called(_atoms):
+        raise AssertionError("ElementAssignmentDraft must not receive None")
+
+    monkeypatch.setattr(structure_flows, "ElementAssignmentDraft", fail_if_called)
+    monkeypatch.setattr(
+        structure_flows.QMessageBox,
+        "information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    assert not structure_flows.edit_site_elements(controller, None)
+    assert messages == [
+        ("No Structure", "Load or create a structure first."),
+    ]
