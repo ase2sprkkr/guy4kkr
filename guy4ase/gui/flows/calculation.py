@@ -8,7 +8,10 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import load_result
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    CalculationNotReady,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
@@ -63,7 +66,7 @@ def run_calculation(
 
     try:
         request = controller.create_calculation_request()
-    except ValueError:
+    except CalculationNotReady:
         return None
 
     def adoption_completed(adoption) -> None:
