@@ -19,6 +19,12 @@ from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup,
     select_spacegroup_from_prototype,
 )
+from guy4ase.gui.flows.structure_candidates import (
+    create_structure_candidate,
+    create_structure_from_database_candidate,
+    download_structure_candidate,
+    edit_structure_candidate,
+)
 from guy4ase.gui.misc.dialog_flow import DialogAction, chain_dialogs
 from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.physics.lattice import detect_structure_kind
@@ -53,19 +59,15 @@ def edit_current_structure(
         )
         return False
 
-    try:
-        change = controller.apply_structure_edit(
-            lambda candidate: editor(candidate, parent=parent),
-            expected_generation=generation,
-        )
-    except Exception as exc:  # noqa: BLE001 - editor/backend boundary
-        QMessageBox.critical(
+    change = controller.apply_structure_edit(
+        lambda candidate: edit_structure_candidate(
+            candidate,
+            editor,
             parent,
-            error_title,
-            f"Failed to edit structure:\n{exc}",
-        )
-        return False
-
+            error_title=error_title,
+        ),
+        expected_generation=generation,
+    )
     if change is None:
         return False
     return document_change_applied(parent, change)
@@ -102,18 +104,21 @@ def create_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
     generation = controller.generation
-    atoms = chain_dialogs(
-        select_spacegroup,
-        select_site_elements,
-        parent=parent,
+    candidate = create_structure_candidate(
+        parent,
+        chain=chain_dialogs,
+        spacegroup_selector=select_spacegroup,
+        site_selector=select_site_elements,
     )
-    if atoms is not None:
-        change = controller.replace_structure(
-            atoms,
-            expected_generation=generation,
-        )
-        if not document_change_applied(parent, change):
-            return None
+    if candidate is None:
+        return None
+    atoms = candidate.atoms
+    change = controller.replace_structure(
+        atoms,
+        expected_generation=generation,
+    )
+    if not document_change_applied(parent, change):
+        return None
     return atoms
 
 
@@ -121,20 +126,23 @@ def create_structure_from_database(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
     generation = controller.generation
-    atoms = chain_dialogs(
-        select_structure_prototype,
-        select_spacegroup_from_prototype,
-        select_site_elements,
-        parent=parent,
+    candidate = create_structure_from_database_candidate(
+        parent,
+        chain=chain_dialogs,
+        prototype_selector=select_structure_prototype,
+        spacegroup_selector=select_spacegroup_from_prototype,
+        site_selector=select_site_elements,
     )
-    if atoms is not None:
-        change = controller.replace_structure(
-            atoms,
-            expected_generation=generation,
-        )
-        if not document_change_applied(parent, change):
-            return None
-        warn_if_structure_kind_is_unknown(atoms, parent)
+    if candidate is None:
+        return None
+    atoms = candidate.atoms
+    change = controller.replace_structure(
+        atoms,
+        expected_generation=generation,
+    )
+    if not document_change_applied(parent, change):
+        return None
+    warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
 
@@ -142,15 +150,20 @@ def download_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
     generation = controller.generation
-    atoms = select_online_structure(parent=parent)
-    if atoms is not None:
-        change = controller.replace_structure(
-            atoms,
-            expected_generation=generation,
-        )
-        if not document_change_applied(parent, change):
-            return None
-        warn_if_structure_kind_is_unknown(atoms, parent)
+    candidate = download_structure_candidate(
+        parent,
+        selector=select_online_structure,
+    )
+    if candidate is None:
+        return None
+    atoms = candidate.atoms
+    change = controller.replace_structure(
+        atoms,
+        expected_generation=generation,
+    )
+    if not document_change_applied(parent, change):
+        return None
+    warn_if_structure_kind_is_unknown(atoms, parent)
     return atoms
 
 

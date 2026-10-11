@@ -17,17 +17,17 @@ from guy4ase.gui.application.workspace_controller import (
     ResultAdoption,
     WorkspaceController,
 )
+from guy4ase.gui.flows.structure_candidates import (
+    load_structure_candidate,
+    structure_open_filter,
+)
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
 def _structure_open_filter() -> str:
-    extensions = sorted(
-        f"*.{extension}"
-        for file_format in ioformats.values()
-        for extension in (file_format.extensions or [])
-    )
-    return f"Structure Files ({' '.join(extensions)});;All Files (*)"
+    """Compatibility wrapper around the shared structure source filter."""
+    return structure_open_filter()
 
 
 def _show_potential_warning(
@@ -81,13 +81,10 @@ def load_structure(
 ) -> bool:
     generation = controller.generation
     path = Path(file_path).resolve()
-    try:
-        atoms = ase_read(path)
-    except Exception as exc:  # noqa: BLE001 - backend readers vary
-        QMessageBox.critical(
-            parent, "Load Error", f"Failed to load structure:\n{exc}"
-        )
+    candidate = load_structure_candidate(path, parent, reader=ase_read)
+    if candidate is None:
         return False
+    atoms = candidate.atoms
 
     potential_path = (
         str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
