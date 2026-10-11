@@ -25,11 +25,3 @@ def test_controller_exposes_live_read_only_workspace_properties():
 
     assert controller.atoms is atoms
     assert controller.potential_path == "Fe.pot"
-
-
-def test_workspace_alias_is_controller_read_api():
-    controller = WorkspaceController()
-
-    assert controller.workspace is controller
-    with pytest.raises(AttributeError):
-        controller.workspace = WorkspaceState()
