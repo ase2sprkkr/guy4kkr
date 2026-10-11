@@ -4,13 +4,16 @@ from types import SimpleNamespace
 
 import pytest
 from ase import Atoms
+from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
+from guy4ase.gui.dialogs import run_calculation as run_dialog
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
@@ -67,6 +70,85 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
             SimpleNamespace(count=0),
             None,
         )
+
+
+def test_run_result_handoff_loads_once_and_preserves_backend_result(
+    tmp_path, monkeypatch
+):
+    _application = QApplication.instance() or QApplication([])
+    backend_result = object()
+    output_path = tmp_path / "Fe.out"
+    loaded = LoadedResult(
+        result=backend_result,
+        output_path=output_path,
+        potential_path=None,
+        atoms=None,
+        potential_error=None,
+        directory=str(tmp_path),
+    )
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters("scf"),
+            directory=str(tmp_path),
+        )
+    )
+    history = RecentFiles(tmp_path / "recent.json")
+    active_runs = SimpleNamespace(
+        count=0,
+        register=lambda _run_id: None,
+        unregister=lambda _run_id: None,
+    )
+
+    def capture_start(window, request):
+        window._test_request = request
+
+    monkeypatch.setattr(
+        calculation_flow.SprkkrRunWindow,
+        "_start",
+        capture_start,
+    )
+
+    load_calls = []
+
+    def fake_load_result(result, *, fallback_directory):
+        load_calls.append((result, fallback_directory))
+        assert result is backend_result
+        return loaded
+
+    monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
+
+    class Process:
+        def run(self):
+            return backend_result
+
+        def stop_the_process(self):
+            raise AssertionError("process must not be cancelled")
+
+    class Calculator:
+        def calculate(self, **_kwargs):
+            return Process()
+
+    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
+
+    window = calculation_flow.run_calculation(
+        controller,
+        history,
+        active_runs,
+        None,
+    )
+    assert window is not None
+
+    worker = run_dialog._SprkkrRunWorker(window._test_request)
+    worker.finished.connect(window._on_finished)
+    worker.run()
+
+    assert load_calls == [(backend_result, str(tmp_path))]
+    assert controller.workspace.result is backend_result
+    assert controller.workspace.result_history == (backend_result,)
+    assert history.paths("output") == (str(output_path.resolve()),)
+
+    window.close()
 
 
 def test_edit_current_structure_reads_published_structure_and_commits_replacement():
