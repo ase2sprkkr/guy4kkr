@@ -9,14 +9,18 @@ from PyQt6.QtWidgets import (
     QAbstractButton,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from guy4ase.gui.style import SPACE_LG, SPACE_SM, action_card_stylesheet, heading_font
+from guy4ase.gui.style import (
+    SPACE_LG,
+    SPACE_SM,
+    action_card_stylesheet,
+    heading_font,
+)
 
 ActionCategory = Literal[
     "structure", "load", "calculation", "destructive", "neutral"

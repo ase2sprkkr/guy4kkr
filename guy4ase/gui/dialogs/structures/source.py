@@ -3,14 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QGroupBox,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -18,6 +21,15 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.flows import structure_candidates
 from guy4ase.gui.flows.structure_candidates import StructureCandidate
+from guy4ase.gui.style import (
+    SPACE_LG,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XXL,
+    heading_font,
+    secondary_text_stylesheet,
+)
+from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
 
 
 class StructureSourceDialog(QDialog):
@@ -32,7 +44,7 @@ class StructureSourceDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(620)
         self._candidate: StructureCandidate | None = None
 
         if recent_files is None:
@@ -41,70 +53,128 @@ class StructureSourceDialog(QDialog):
         self._recent_files = recent_files
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(SPACE_XXL, SPACE_XL, SPACE_XXL, SPACE_XL)
+        layout.setSpacing(SPACE_LG)
+
+        heading = QLabel(title, self)
+        heading.setFont(heading_font(heading.font(), "dialog"))
+        layout.addWidget(heading)
+
         intro = QLabel(
             "Choose how to obtain the structure. The selected structure is kept "
             "detached until the enclosing workflow accepts it.",
             self,
         )
         intro.setWordWrap(True)
+        intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         layout.addWidget(intro)
 
-        create_group = QGroupBox("Create structure", self)
-        create_layout = QVBoxLayout(create_group)
+        create_layout = self._add_section(layout, "Create structure")
         self._add_action(
             create_layout,
             "Create a 3D Structure",
             "Build a periodic bulk crystal",
             self._create,
+            category="structure",
+            icon=QStyle.StandardPixmap.SP_FileIcon,
         )
         self._add_action(
             create_layout,
             "Create Structure from Prototype Database",
             "Start from a crystallographic structure prototype",
             self._create_from_database,
+            category="structure",
+            icon=QStyle.StandardPixmap.SP_DirIcon,
         )
-        layout.addWidget(create_group)
 
-        load_group = QGroupBox("Load structure", self)
-        load_layout = QVBoxLayout(load_group)
+        load_layout = self._add_section(layout, "Load structure")
         self._add_action(
             load_layout,
             "Download Structure from Online Database",
             "Search an online crystallographic database",
             self._download,
+            category="load",
+            icon=QStyle.StandardPixmap.SP_ArrowDown,
         )
         self._add_action(
             load_layout,
             "Load a Structure",
             "Open a supported atomic structure file",
             self._load_file,
+            category="load",
+            icon=QStyle.StandardPixmap.SP_DialogOpenButton,
         )
-
-        recent = self._recent_files.paths("structure")
-        self._recent_combo: QComboBox | None = None
-        if recent:
-            recent_label = QLabel("Recent structures", load_group)
-            load_layout.addWidget(recent_label)
-            self._recent_combo = QComboBox(load_group)
-            for path in recent:
-                self._recent_combo.addItem(Path(path).name, path)
-            self._recent_combo.setToolTip("Recently used structure files")
-            load_layout.addWidget(self._recent_combo)
-            use_recent = QPushButton("Use Selected Recent Structure", load_group)
-            use_recent.clicked.connect(self._load_recent)
-            load_layout.addWidget(use_recent)
-        layout.addWidget(load_group)
+        self._add_recent_action(load_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    @staticmethod
-    def _add_action(layout, title: str, description: str, callback) -> None:
-        button = QPushButton(f"{title}\n{description}")
-        button.setMinimumHeight(54)
-        button.setToolTip(description)
+    def _add_section(self, root: QVBoxLayout, title: str) -> QVBoxLayout:
+        section = QWidget(self)
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(SPACE_SM)
+        label = QLabel(title, section)
+        label.setFont(heading_font(label.font(), "section"))
+        section_layout.addWidget(label)
+        root.addWidget(section)
+        return section_layout
+
+    def _add_action(
+        self,
+        layout: QVBoxLayout,
+        title: str,
+        description: str,
+        callback,
+        *,
+        category: ActionCategory,
+        icon: QStyle.StandardPixmap,
+    ) -> None:
+        button = QPushButton(self)
+        configure_action_card(
+            button,
+            title,
+            description,
+            self.style().standardIcon(icon),
+            category=category,
+        )
         button.clicked.connect(callback)
+        layout.addWidget(button)
+
+    def _add_recent_action(self, layout: QVBoxLayout) -> None:
+        recent = self._recent_files.paths("structure")
+        if not recent:
+            return
+
+        default_path = recent[0]
+        button = QToolButton(self)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        button.setToolTip(default_path)
+        configure_action_card(
+            button,
+            f"Recent: {Path(default_path).name}",
+            "Reuse a recently loaded structure",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            category="load",
+            icon_size=QSize(24, 24),
+            minimum_height=56,
+            menu_button=True,
+        )
+        button.clicked.connect(
+            lambda _checked=False, path=default_path: self._load_recent_path(path)
+        )
+
+        menu = QMenu(button)
+        for path in recent:
+            action = QAction(path, menu)
+            action.triggered.connect(
+                lambda _checked=False, item_path=path: self._load_recent_path(
+                    item_path
+                )
+            )
+            menu.addAction(action)
+        button.setMenu(menu)
         layout.addWidget(button)
 
     def _accept_candidate(self, candidate: StructureCandidate | None) -> None:
@@ -134,10 +204,8 @@ class StructureSourceDialog(QDialog):
             self._recent_files.remember("structure", candidate.source_path)
         self._accept_candidate(candidate)
 
-    def _load_recent(self) -> None:
-        if self._recent_combo is None:
-            return
-        path = Path(str(self._recent_combo.currentData()))
+    def _load_recent_path(self, value: str | Path) -> None:
+        path = Path(value)
         if not path.exists():
             QMessageBox.warning(
                 self,
