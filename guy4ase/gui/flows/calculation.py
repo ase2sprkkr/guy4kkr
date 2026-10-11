@@ -1,7 +1,6 @@
 """Stateless Qt workflow for running and adopting a calculation."""
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
@@ -9,13 +8,10 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import load_result
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
+from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
 def choose_working_directory(
@@ -66,12 +62,8 @@ def run_calculation(
         return None
 
     try:
-        request = wait_for_structure(
-            parent, controller.create_calculation_request
-        )
+        request = controller.create_calculation_request()
     except ValueError:
-        return None
-    if isinstance(request, Busy):
         return None
 
     def adoption_completed(adoption) -> None:
@@ -99,13 +91,9 @@ def run_calculation(
                 result,
                 fallback_directory=request.directory,
             )
-            adoption = wait_for_structure(
-                parent,
-                partial(
-                    controller.adopt_calculation_result,
-                    loaded,
-                    expected_generation=request.generation,
-                ),
+            adoption = controller.adopt_calculation_result(
+                loaded,
+                expected_generation=request.generation,
             )
         except Exception as exc:  # noqa: BLE001 - backend metadata varies
             QMessageBox.critical(
@@ -115,17 +103,14 @@ def run_calculation(
                 f"adopted:\n{exc}",
             )
             return
-        if not isinstance(adoption, Busy):
-            adoption_completed(adoption)
+        adoption_completed(adoption)
 
     window = SprkkrRunWindow(
         request=request,
-        structure_gate=controller.structure_gate,
         parent=parent,
         on_finished=finished,
         on_activity_started=active_runs.register,
         on_activity_ended=active_runs.unregister,
-        on_prepared=controller.notify_structure_prepared,
     )
     window.show()
     return window

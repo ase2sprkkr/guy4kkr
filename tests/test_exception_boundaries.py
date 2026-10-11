@@ -119,20 +119,16 @@ def test_guided_expert_does_not_hide_dialog_error(monkeypatch, application):
     dialog.close()
 
 
-def test_workspace_structure_load_does_not_hide_retry_error(
+def test_workspace_structure_load_does_not_hide_controller_error(
     monkeypatch, tmp_path, application
 ):
-    controller = type(
-        "Controller",
-        (),
-        {"generation": 1, "replace_structure": lambda *_args, **_kwargs: None},
-    )()
+    class Controller:
+        generation = 1
+
+        def replace_structure(self, *_args, **_kwargs):
+            raise RuntimeError("controller invariant")
+
     monkeypatch.setattr(workspace_file_flows, "ase_read", lambda _path: object())
-    monkeypatch.setattr(
-        workspace_file_flows,
-        "wait_for_structure",
-        lambda *_args, **_kwargs: _raise(RuntimeError("retry invariant")),
-    )
     messages = []
     monkeypatch.setattr(
         workspace_file_flows.QMessageBox,
@@ -140,9 +136,9 @@ def test_workspace_structure_load_does_not_hide_retry_error(
         lambda _parent, _title, text: messages.append(text),
     )
 
-    with pytest.raises(RuntimeError, match="retry invariant"):
+    with pytest.raises(RuntimeError, match="controller invariant"):
         workspace_file_flows.load_structure(
-            controller, object(), tmp_path / "Fe.cif", None
+            Controller(), object(), tmp_path / "Fe.cif", None
         )
     assert messages == []
 
@@ -191,11 +187,6 @@ def test_workspace_output_load_does_not_hide_controller_error(
     monkeypatch.setattr(
         workspace_file_flows, "load_result_file", lambda _path: loaded
     )
-    monkeypatch.setattr(
-        workspace_file_flows,
-        "wait_for_structure",
-        lambda _parent, operation: operation(),
-    )
     messages = []
     monkeypatch.setattr(
         workspace_file_flows.QMessageBox,
@@ -216,20 +207,14 @@ def test_workspace_structure_save_does_not_hide_controller_error(
     path = tmp_path / "Fe.xyz"
 
     class Controller:
-        workspace = type("Workspace", (), {"atoms": object()})()
-
-        def access_structure(self, *_args, **_kwargs):
+        @property
+        def atoms(self):
             raise RuntimeError("controller invariant")
 
     monkeypatch.setattr(
         workspace_file_flows.QFileDialog,
         "getSaveFileName",
         lambda *_args: (str(path), ""),
-    )
-    monkeypatch.setattr(
-        workspace_file_flows,
-        "wait_for_structure",
-        lambda _parent, operation: operation(),
     )
     messages = []
     monkeypatch.setattr(

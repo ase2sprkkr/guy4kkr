@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,19 +26,15 @@ from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
-from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
+from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -143,9 +138,6 @@ class WorkflowWindow(QMainWindow):
         )
         self.controller = controller
         self.workspace = self.controller.workspace
-        self._structure_access = QtStructureAccess(
-            self.controller.structure_gate, self
-        )
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings or ApplicationSettings()
@@ -509,12 +501,6 @@ class WorkflowWindow(QMainWindow):
         self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:
-        self._structure_access.retry(
-            self._refresh_locked,
-            reason="refreshing the workflow overview",
-        )
-
-    def _refresh_locked(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
         atoms = self.workspace.atoms
@@ -742,16 +728,10 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            change = wait_for_structure(
-                self,
-                partial(
-                    self.controller.use_for_new_calculation,
-                    expected_generation=generation,
-                ),
+            change = self.controller.use_for_new_calculation(
+                expected_generation=generation,
             )
-            if isinstance(change, Busy) or not document_change_applied(
-                self, change
-            ):
+            if not document_change_applied(self, change):
                 return
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Start New Calculation", str(exc))
@@ -766,7 +746,7 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        wait_for_structure(self, self.controller.reset)
+        self.controller.reset()
 
     def _visualize_structure(self) -> None:
         visualization_flow.visualize_structure(self.controller, self.settings, self)

@@ -26,11 +26,6 @@ class _Process:
         return object()
 
 
-class _Gate:
-    def call(self, _reason, operation):
-        return operation()
-
-
 class _Calculator:
     def __init__(self, process) -> None:
         self._process = process
@@ -49,11 +44,7 @@ def _make_worker(monkeypatch, process, cancellation=None):
         directory=".",
         generation=0,
     )
-    return _SprkkrRunWorker(
-        request,
-        _Gate(),
-        cancellation,
-    )
+    return _SprkkrRunWorker(request, cancellation)
 
 
 def test_stop_before_process_prevents_start():

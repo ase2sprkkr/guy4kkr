@@ -19,10 +19,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
-    StructureAccessGate,
-)
+from guy4ase.gui.application.workspace_controller import CalculationRequest
 
 
 logger = logging.getLogger(__name__)
@@ -66,19 +63,16 @@ class _SprkkrRunWorker(QObject):
     error = pyqtSignal(str)
     finished = pyqtSignal(object)  # result
     cancelled = pyqtSignal()
-    preparationFinished = pyqtSignal(object)  # borrowed atoms, lock is released
     activityStarted = pyqtSignal(object)
     activityEnded = pyqtSignal(object)
 
     def __init__(
         self,
         request: CalculationRequest,
-        structure_gate: StructureAccessGate,
         cancellation: _RunCancellation | None = None,
     ):
         super().__init__()
         self._request = request
-        self._structure_gate = structure_gate
         self._cancellation = cancellation or _RunCancellation()
         self.run_id = object()
         self._file_id = uuid4().hex[:12]
@@ -96,35 +90,21 @@ class _SprkkrRunWorker(QObject):
                 # Called from the runner while it produces output.
                 self.output.emit(text, kind)
 
-            self.status.emit("Waiting to prepare shared structure…")
-            # calculate(run_async=True) performs all shared-Atoms work and
-            # writes the input/potential files. KkrProcess.run() below only
-            # starts the prepared subprocess and parses its files.
-            try:
-                def prepare() -> Any:
-                    self.status.emit("Preparing calculation…")
-                    calc = SPRKKR()
-                    prefix = f"%a_%T_{self._file_id}"
-                    return calc.calculate(
-                        atoms=self._request.atoms,
-                        input_parameters=self._request.input_parameters,
-                        directory=self._request.directory,
-                        input_file=f"{prefix}.inp",
-                        potential_file=f"{prefix}.pot",
-                        output_file=f"{prefix}.out",
-                        empty_spheres=False,
-                        run_async=True,
-                        read_callback=read_callback,
-                        print_output=False,
-                    )
-
-                process = self._structure_gate.call(
-                    "preparing a calculation", prepare
-                )
-            finally:
-                # A failed preparation may still have lazily materialized the
-                # shared structure. The lock is already released here.
-                self.preparationFinished.emit(self._request.atoms)
+            self.status.emit("Preparing calculation…")
+            calc = SPRKKR()
+            prefix = f"%a_%T_{self._file_id}"
+            process = calc.calculate(
+                atoms=self._request.atoms,
+                input_parameters=self._request.input_parameters,
+                directory=self._request.directory,
+                input_file=f"{prefix}.inp",
+                potential_file=f"{prefix}.pot",
+                output_file=f"{prefix}.out",
+                empty_spheres=False,
+                run_async=True,
+                read_callback=read_callback,
+                print_output=False,
+            )
 
             if not self._cancellation.register(process):
                 self._emit_cancelled()
@@ -160,11 +140,9 @@ class SprkkrRunWindow(QDialog):
         parent: Any | None = None,
         *,
         request: CalculationRequest | None = None,
-        structure_gate: StructureAccessGate | None = None,
         on_finished: Callable[[Any], None] | None = None,
         on_activity_started: Callable[[Any], None] | None = None,
         on_activity_ended: Callable[[Any], None] | None = None,
-        on_prepared: Callable[[Any], None] | None = None,
     ):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -176,7 +154,6 @@ class SprkkrRunWindow(QDialog):
         self._finished_callback = on_finished
         self._activity_started_callback = on_activity_started
         self._activity_ended_callback = on_activity_ended
-        self._prepared_callback = on_prepared
         self._close_requested = False
 
         layout = QVBoxLayout(self)
@@ -190,7 +167,6 @@ class SprkkrRunWindow(QDialog):
                 directory=directory,
                 generation=0,
             )
-        self._structure_gate = structure_gate or StructureAccessGate()
 
         header = QLabel(f"Directory: {request.directory}")
         header.setWordWrap(True)
@@ -232,9 +208,7 @@ class SprkkrRunWindow(QDialog):
     ) -> None:
         thread = QThread(self)
         self._cancellation = _RunCancellation()
-        worker = _SprkkrRunWorker(
-            request, self._structure_gate, self._cancellation
-        )
+        worker = _SprkkrRunWorker(request, self._cancellation)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -247,8 +221,6 @@ class SprkkrRunWindow(QDialog):
             worker.activityStarted.connect(self._activity_started_callback)
         if self._activity_ended_callback is not None:
             worker.activityEnded.connect(self._activity_ended_callback)
-        if self._prepared_callback is not None:
-            worker.preparationFinished.connect(self._prepared_callback)
 
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)

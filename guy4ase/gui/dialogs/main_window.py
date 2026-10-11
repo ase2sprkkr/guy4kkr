@@ -44,7 +44,6 @@ from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
-from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.physics.composition import site_composition, structure_formula
@@ -71,9 +70,6 @@ class MainWindow(QMainWindow):
 
         self.controller = controller
         self.workspace = self.controller.workspace
-        self._structure_access = QtStructureAccess(
-            self.controller.structure_gate, self
-        )
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings or ApplicationSettings()
@@ -125,12 +121,6 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_structure_changed(self, _atoms: Any) -> None:
-        self._structure_access.retry(
-            self._workspace_structure_changed_locked,
-            reason="refreshing the structure view",
-        )
-
-    def _workspace_structure_changed_locked(self) -> None:
         self._update_potential_path_label()
         self._update_structure_view()
         self._refresh_action_availability()
@@ -876,19 +866,14 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        def update() -> None:
-            if self.workspace.atoms is None:
-                return
-            if row < 0 or row >= len(self.workspace.atoms):
-                return
-            if self._hovered_atom_index == row:
-                return
-            self._hovered_atom_index = row
-            self._update_visualization()
-
-        self._structure_access.retry(
-            update, reason="highlighting an atom"
-        )
+        if self.workspace.atoms is None:
+            return
+        if row < 0 or row >= len(self.workspace.atoms):
+            return
+        if self._hovered_atom_index == row:
+            return
+        self._hovered_atom_index = row
+        self._update_visualization()
 
     def _on_assign_elements(self) -> None:
         structure_flows.edit_site_elements(self.controller, self)
@@ -931,10 +916,7 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _update_visualization_nonblocking(self) -> None:
-        self._structure_access.retry(
-            self._update_visualization,
-            reason="refreshing the structure visualization",
-        )
+        self._update_visualization()
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""

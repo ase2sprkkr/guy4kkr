@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from functools import partial
 from pathlib import Path
 
 from ase.io import read as ase_read
@@ -14,16 +13,12 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.result_loading import load_result_file
 from guy4ase.gui.application.workspace_controller import (
-    Busy,
     DocumentChange,
     ResultAdoption,
     WorkspaceController,
 )
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
+from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
 def _structure_open_filter() -> str:
@@ -97,17 +92,13 @@ def load_structure(
     potential_path = (
         str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
     )
-    change = wait_for_structure(
-        parent,
-        partial(
-            controller.replace_structure,
-            atoms,
-            potential_path=potential_path,
-            directory=str(path.parent),
-            expected_generation=generation,
-        ),
+    change = controller.replace_structure(
+        atoms,
+        potential_path=potential_path,
+        directory=str(path.parent),
+        expected_generation=generation,
     )
-    if isinstance(change, Busy) or not document_change_applied(parent, change):
+    if not document_change_applied(parent, change):
         return False
     warn_if_structure_kind_is_unknown(atoms, parent)
     recent_files.remember("structure", file_path)
@@ -195,16 +186,10 @@ def load_output(
         )
         return False
 
-    adoption = wait_for_structure(
-        parent,
-        partial(
-            controller.adopt_external_result,
-            loaded,
-            expected_generation=generation,
-        ),
+    adoption = controller.adopt_external_result(
+        loaded,
+        expected_generation=generation,
     )
-    if isinstance(adoption, Busy):
-        return False
     if not adoption.adopted:
         document_change_applied(parent, DocumentChange.STALE)
         return False
@@ -219,7 +204,8 @@ def save_structure(
     recent_files: RecentFiles,
     parent: QWidget,
 ) -> bool:
-    if controller.workspace.atoms is None:
+    atoms = controller.atoms
+    if atoms is None:
         return False
     formats = {
         " ".join(f"*.{ext}" for ext in file_format.extensions): file_format.name
@@ -240,30 +226,11 @@ def save_structure(
         file_path += f".{match.group(1)}"
 
     path = Path(file_path).resolve()
-    write_error: Exception | None = None
-
-    def write_structure(atoms) -> None:
-        nonlocal write_error
-        if atoms is None:
-            raise ValueError("No structure is loaded.")
-        try:
-            ase_write(path, atoms)
-        except Exception as exc:  # noqa: BLE001 - backend writers vary
-            write_error = exc
-
-    outcome = wait_for_structure(
-        parent,
-        partial(
-            controller.access_structure,
-            write_structure,
-            reason="saving the structure",
-        ),
-    )
-    if isinstance(outcome, Busy):
-        return False
-    if write_error is not None:
+    try:
+        ase_write(path, atoms)
+    except Exception as exc:  # noqa: BLE001 - backend writers vary
         QMessageBox.critical(
-            parent, "Save Error", f"Failed to save structure:\n{write_error}"
+            parent, "Save Error", f"Failed to save structure:\n{exc}"
         )
         return False
     recent_files.remember("structure", file_path)
@@ -275,7 +242,7 @@ def save_input_parameters(
     recent_files: RecentFiles,
     parent: QWidget,
 ) -> bool:
-    parameters = controller.workspace.input_parameters
+    parameters = controller.input_parameters
     if parameters is None:
         return False
     file_path, _ = QFileDialog.getSaveFileName(
