@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -45,6 +44,10 @@ from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.plots.lattice import plot_atoms_preview
+from guy4ase.gui.widgets.recent_launcher import (
+    build_recent_launch_menu,
+    recent_launch,
+)
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.physics.composition import site_composition, structure_formula
 
@@ -246,66 +249,29 @@ class MainWindow(QMainWindow):
         if btn is None:
             return
 
-        structures = self.recent_history.paths("structure")
-        outputs = self.recent_history.paths("output")
-        has_recent = bool(structures or outputs)
-        btn.setVisible(has_recent)
-        if not has_recent:
+        launch = recent_launch(self.recent_history)
+        btn.setVisible(launch is not None)
+        if launch is None:
             return
 
-        default_kind = self.recent_history.last_kind
-        if default_kind == 'structure' and not structures:
-            default_kind = None
-        if default_kind == 'output' and not outputs:
-            default_kind = None
-        if default_kind not in {'structure', 'output'}:
-            if outputs:
-                default_kind = 'output'
-            else:
-                default_kind = 'structure'
-        default_path = self.recent_history.paths(default_kind)[0]
+        btn.setText(launch.title)
+        btn.setToolTip(launch.path)
+        self._recent_start_menu = build_recent_launch_menu(
+            btn,
+            self.recent_history,
+            self.open_recent_file,
+        )
+        btn.setMenu(self._recent_start_menu)
 
-        btn.setText(f"Continue: {Path(default_path).name}")
-        btn.setToolTip(default_path)
-
-        menu = self._recent_start_menu
-        if menu is None:
-            menu = QMenu(btn)
-            self._recent_start_menu = menu
-            btn.setMenu(menu)
-
-        menu.clear()
-        structures_menu = menu.addMenu("Structures")
-        if structures:
-            for file_path in structures:
-                action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('structure', p))
-                structures_menu.addAction(action)
-        else:
-            empty_action = QAction("(No recent files)", self)
-            empty_action.setEnabled(False)
-            structures_menu.addAction(empty_action)
-
-        outputs_menu = menu.addMenu("Outputs")
-        if outputs:
-            for file_path in outputs:
-                action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('output', p))
-                outputs_menu.addAction(action)
-        else:
-            empty_action = QAction("(No recent files)", self)
-            empty_action.setEnabled(False)
-            outputs_menu.addAction(empty_action)
-
-        # Primary click action loads most recent
         try:
             btn.clicked.disconnect()
         except TypeError:
             pass
-        if default_kind == 'output':
-            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('output', p))
-        else:
-            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('structure', p))
+        btn.clicked.connect(
+            lambda _checked=False, item=launch: self.open_recent_file(
+                item.kind, item.path
+            )
+        )
 
     def _build_ui(self) -> None:
         """Build the main UI layout from its visual sections."""
