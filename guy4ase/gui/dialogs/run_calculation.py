@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable
 from threading import Lock
 from typing import Any
@@ -23,6 +25,9 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class _RunCancellation:
     """Bridge a GUI stop request to a process that may not exist yet."""
 
@@ -30,6 +35,11 @@ class _RunCancellation:
         self._lock = Lock()
         self._requested = False
         self._process: Any | None = None
+
+    @property
+    def requested(self) -> bool:
+        with self._lock:
+            return self._requested
 
     def register(self, process: Any) -> bool:
         """Register the process and return whether it may be started."""
@@ -55,6 +65,7 @@ class _SprkkrRunWorker(QObject):
     status = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)  # result
+    cancelled = pyqtSignal()
     preparationFinished = pyqtSignal(object)  # borrowed atoms, lock is released
     activityStarted = pyqtSignal(object)
     activityEnded = pyqtSignal(object)
@@ -72,9 +83,14 @@ class _SprkkrRunWorker(QObject):
         self.run_id = object()
         self._file_id = uuid4().hex[:12]
 
+    def _emit_cancelled(self) -> None:
+        self.status.emit("Cancelled")
+        self.cancelled.emit()
+
     @pyqtSlot()
     def run(self) -> None:
         self.activityStarted.emit(self.run_id)
+        running = False
         try:
             def read_callback(text: str, kind: str) -> None:
                 # Called from the runner while it produces output.
@@ -111,14 +127,26 @@ class _SprkkrRunWorker(QObject):
                 self.preparationFinished.emit(self._request.atoms)
 
             if not self._cancellation.register(process):
-                raise RuntimeError("Stopped")
+                self._emit_cancelled()
+                return
 
+            running = True
             self.status.emit("Running…")
             result = process.run()
+            if self._cancellation.requested:
+                self._emit_cancelled()
+                return
+
             self.status.emit("Finished")
             self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
+        except asyncio.CancelledError:
+            self._emit_cancelled()
+        except Exception as exc:  # noqa: BLE001 - worker exception boundary
+            if running and self._cancellation.requested:
+                self._emit_cancelled()
+            else:
+                logger.exception("SPR-KKR calculation failed")
+                self.error.emit(str(exc))
         finally:
             self.activityEnded.emit(self.run_id)
 
@@ -214,6 +242,7 @@ class SprkkrRunWindow(QDialog):
         worker.status.connect(self._set_status)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
+        worker.cancelled.connect(self._on_cancelled)
         if self._activity_started_callback is not None:
             worker.activityStarted.connect(self._activity_started_callback)
         if self._activity_ended_callback is not None:
@@ -223,8 +252,10 @@ class SprkkrRunWindow(QDialog):
 
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)
+        worker.cancelled.connect(worker.deleteLater)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
         thread.finished.connect(self._thread_finished)
 
         self._thread = thread
@@ -265,6 +296,10 @@ class SprkkrRunWindow(QDialog):
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
         self._append_output(f"\n[ERROR] {message}\n", "stderr")
+        self._stop_btn.setEnabled(False)
+
+    @pyqtSlot()
+    def _on_cancelled(self) -> None:
         self._stop_btn.setEnabled(False)
 
     @pyqtSlot(object)
