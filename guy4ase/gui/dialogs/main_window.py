@@ -865,7 +865,10 @@ class MainWindow(QMainWindow):
 
     def build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
         structure_flows.build_2d_structure(
-            self.controller, self, surface_mode=surface_mode
+            self.controller,
+            self.recent_history,
+            self,
+            surface_mode=surface_mode,
         )
 
     def eventFilter(self, obj, event):  # type: ignore[override]

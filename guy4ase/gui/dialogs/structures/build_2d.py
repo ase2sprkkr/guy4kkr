@@ -325,15 +325,9 @@ def select_build_2d_structure(
     atoms: Any,
     parent: Optional[QWidget] = None,
     *,
+    recent_files: RecentFiles,
     surface_mode: bool = False,
 ) -> Optional[Any]:
-    if parent is None:
-        raise ValueError("Build2D structure selection requires an application parent.")
-    recent_files = getattr(parent, "recent_history", None)
-    if not isinstance(recent_files, RecentFiles):
-        raise ValueError(
-            "Build2D structure selection requires the application's RecentFiles service."
-        )
     dialog = Build2DStructureDialog(
         atoms,
         parent=parent,
