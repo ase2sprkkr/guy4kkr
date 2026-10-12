@@ -93,7 +93,7 @@ def test_default_placeholder_focus_and_clear_do_not_materialize_defaults(app, ex
     d = InputParametersDialog(p) if expert else GuidedInputParametersDialog('scf', p)
     if expert:
         _, control = tree_editor(d, 'MIX')
-        current = d.result
+        current = d.parameters
     else:
         editor = d.editors_for(('SCF', 'MIX'))[0]
         d.select_page(editor.page_id)
@@ -141,7 +141,7 @@ def test_typing_over_numeric_default_placeholder(app, expert):
     if expert:
         item, control = tree_editor(d, 'MIX')
         d.tree_editor.tree.scrollToItem(item)
-        current = d.result
+        current = d.parameters
     else:
         editor = d.editors_for(('SCF', 'MIX'))[0]
         d.select_page(editor.page_id)
@@ -220,13 +220,13 @@ def test_invalid_expert_text_blocks_ok_until_corrected(app):
     editor.editingFinished.emit()
     assert 'MDIR:' in d.tree_editor.error_text
     d._on_ok()
-    assert QDialog.result(d) != QDialog.DialogCode.Accepted
-    assert d.result().MODE.MDIR() is None
+    assert d.result() != QDialog.DialogCode.Accepted
+    assert d.parameters().MODE.MDIR() is None
     editor.setText('{0,0,1}')
     editor.editingFinished.emit()
     assert not d.tree_editor.error_text
     d._on_ok()
-    assert QDialog.result(d) == QDialog.DialogCode.Accepted
+    assert d.result() == QDialog.DialogCode.Accepted
     d.close()
 
 
@@ -239,9 +239,9 @@ def test_expert_numeric_error_is_inline_and_keeps_model(app):
     editor = d.tree_editor.tree.itemWidget(item.child(0), 2)
     editor.setValue(1)
     assert '[0]:' in d.tree_editor.error_text
-    assert d.result().ENERGY.NE()[0] == 200
+    assert d.parameters().ENERGY.NE()[0] == 200
     d._on_ok()
-    assert QDialog.result(d) != QDialog.DialogCode.Accepted
+    assert d.result() != QDialog.DialogCode.Accepted
     editor.setValue(200)
     assert not d.tree_editor.error_text
     d.close()
@@ -253,7 +253,7 @@ def test_expert_cancel_is_isolated(app):
     d = InputParametersDialog(p)
     _, editor = tree_editor(d, 'MIX')
     editor.setValue(.37)
-    assert d.result().SCF.MIX() == .37
+    assert d.parameters().SCF.MIX() == .37
     assert p.to_string(validate=False) == before
     d.reject()
     assert p.to_string(validate=False) == before
