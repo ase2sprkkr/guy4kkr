@@ -22,6 +22,13 @@ def available_viewers() -> tuple[str, ...]:
     return tuple(sorted(str(name) for name in VIEWERS))
 
 
+_DATASET_MODE_LABELS = (
+    ("empty", "Leave unset (ASE2SPRKKR automatic)"),
+    ("datetime", "Structure + date/time"),
+    ("uuid", "Structure + UUID"),
+)
+
+
 class SettingsDialog(QDialog):
     """Edit application-wide preferences."""
 
@@ -48,6 +55,20 @@ class SettingsDialog(QDialog):
         form.addRow("Structure viewer:", self.viewer)
         layout.addWidget(visualization)
 
+        sprkkr = QGroupBox("SPR-KKR", self)
+        sprkkr_form = QFormLayout(sprkkr)
+        self.dataset_default_mode = QComboBox(sprkkr)
+        for value, label in _DATASET_MODE_LABELS:
+            self.dataset_default_mode.addItem(label, value)
+        index = self.dataset_default_mode.findData(settings.dataset_default_mode)
+        self.dataset_default_mode.setCurrentIndex(max(index, 0))
+        self.dataset_default_mode.setToolTip(
+            "Default DATASET for newly created calculations. An explicit value "
+            "entered in the calculation editor always takes precedence."
+        )
+        sprkkr_form.addRow("Default DATASET:", self.dataset_default_mode)
+        layout.addWidget(sprkkr)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel,
@@ -58,10 +79,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def accept(self) -> None:  # type: ignore[override]
-        previous = self._settings.viewer
+        previous_viewer = self._settings.viewer
+        previous_dataset_mode = self._settings.dataset_default_mode
         self._settings.viewer = self.viewer.currentText()
+        self._settings.dataset_default_mode = str(
+            self.dataset_default_mode.currentData()
+        )
         if not self._settings.save():
-            self._settings.viewer = previous
+            self._settings.viewer = previous_viewer
+            self._settings.dataset_default_mode = previous_dataset_mode
             QMessageBox.critical(
                 self,
                 "Cannot Save Settings",

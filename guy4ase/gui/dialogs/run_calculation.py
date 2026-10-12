@@ -5,7 +5,6 @@ import logging
 from collections.abc import Callable
 from threading import Lock
 from typing import Any
-from uuid import uuid4
 
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -20,6 +19,10 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.widgets.input_parameters.dataset import (
+    dataset_value,
+    filename_component,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -75,11 +78,20 @@ class _SprkkrRunWorker(QObject):
         self._request = request
         self._cancellation = cancellation or _RunCancellation()
         self.run_id = object()
-        self._file_id = uuid4().hex[:12]
 
     def _emit_cancelled(self) -> None:
         self.status.emit("Cancelled")
         self.cancelled.emit()
+
+    def _file_names(self) -> tuple[str, str, str]:
+        """Use DATASET as the visible namespace for files owned by this run."""
+        dataset = dataset_value(self._request.input_parameters)
+        if dataset is None:
+            return "%a_%T.inp", "%a.pot", "%a_%T.out"
+        base = filename_component(dataset)
+        if not base:
+            return "%a_%T.inp", "%a.pot", "%a_%T.out"
+        return f"{base}_%T.inp", f"{base}.pot", f"{base}_%T.out"
 
     @pyqtSlot()
     def run(self) -> None:
@@ -92,14 +104,14 @@ class _SprkkrRunWorker(QObject):
 
             self.status.emit("Preparing calculation…")
             calc = SPRKKR()
-            prefix = f"%a_%T_{self._file_id}"
+            input_file, potential_file, output_file = self._file_names()
             process = calc.calculate(
                 atoms=self._request.atoms,
                 input_parameters=self._request.input_parameters,
                 directory=self._request.directory,
-                input_file=f"{prefix}.inp",
-                potential_file=f"{prefix}.pot",
-                output_file=f"{prefix}.out",
+                input_file=input_file,
+                potential_file=potential_file,
+                output_file=output_file,
                 empty_spheres=False,
                 run_async=True,
                 read_callback=read_callback,

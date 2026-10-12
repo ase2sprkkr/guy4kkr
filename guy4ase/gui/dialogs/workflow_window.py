@@ -4,14 +4,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt, QUrl
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
+from PyQt6.QtGui import QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -46,6 +45,10 @@ from guy4ase.gui.style import (
     group_panel_stylesheet,
     heading_font,
     secondary_text_stylesheet,
+)
+from guy4ase.gui.widgets.recent_launcher import (
+    build_recent_launch_menu,
+    recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -438,36 +441,19 @@ class WorkflowWindow(QMainWindow):
         self._action_group(group).addWidget(button)
 
     def _add_recent_load_action(self) -> None:
-        recent_files = self.recent_history.snapshot
-        recent_structures = recent_files['structure']
-        recent_outputs = recent_files['output']
-        if not recent_structures and not recent_outputs:
+        launch = recent_launch(self.recent_history)
+        if launch is None:
             return
 
-        default_kind = self.recent_history.last_kind
-        if default_kind == 'structure' and not recent_structures:
-            default_kind = None
-        if default_kind == 'output' and not recent_outputs:
-            default_kind = None
-        if default_kind not in {'structure', 'output'}:
-            default_kind = 'output' if recent_outputs else 'structure'
-
-        recent_by_kind = {
-            'structure': recent_structures,
-            'output': recent_outputs,
-        }
-        default_path = recent_by_kind[default_kind][0]
-
         button = QToolButton(self._actions)
-        title = f"Continue: {Path(default_path).name}"
-        button.setToolTip(default_path)
+        button.setToolTip(launch.path)
         button.setMinimumHeight(52)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         _set_action_button_content(
             button,
-            title,
+            launch.title,
             "",
             self.style().standardIcon(
                 QStyle.StandardPixmap.SP_ArrowForward
@@ -477,27 +463,17 @@ class WorkflowWindow(QMainWindow):
         )
         button.setStyleSheet(self._action_style('load', 'QToolButton'))
         button.clicked.connect(
-            lambda _checked=False, kind=default_kind, path=default_path: self._load_recent(kind, path)
+            lambda _checked=False, item=launch: self._load_recent(
+                item.kind, item.path
+            )
         )
-
-        menu = QMenu(button)
-        for title, kind, paths in (
-            ('Structures', 'structure', recent_structures),
-            ('Outputs', 'output', recent_outputs),
-        ):
-            submenu = menu.addMenu(title)
-            if not paths:
-                empty_action = QAction("(No recent files)", submenu)
-                empty_action.setEnabled(False)
-                submenu.addAction(empty_action)
-                continue
-            for path in paths:
-                action = QAction(path, submenu)
-                action.triggered.connect(
-                    lambda _checked=False, item_kind=kind, item_path=path: self._load_recent(item_kind, item_path)
-                )
-                submenu.addAction(action)
-        button.setMenu(menu)
+        button.setMenu(
+            build_recent_launch_menu(
+                button,
+                self.recent_history,
+                self._load_recent,
+            )
+        )
         self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:

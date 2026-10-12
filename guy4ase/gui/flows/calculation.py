@@ -15,6 +15,7 @@ from guy4ase.gui.application.workspace_controller import (
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
+from guy4ase.gui.widgets.input_parameters.dataset import dataset_value
 
 
 def choose_working_directory(
@@ -36,14 +37,16 @@ def choose_working_directory(
     return True
 
 
-def _continue_with_parallel_run(parent: QWidget) -> bool:
+def _continue_with_parallel_run(parent: QWidget, dataset: str | None) -> bool:
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Icon.Warning)
     message.setWindowTitle("Calculation Already Running")
     message.setText("A calculation is already running in this workspace.")
+    current = f"Current DATASET: {dataset}" if dataset else "Current DATASET is unset."
     message.setInformativeText(
-        "Another run will share the selected directory. Potential file "
-        "collisions are not isolated automatically."
+        "Another run will share the selected directory. SPR-KKR derives auxiliary "
+        "result filenames from CONTROL.DATASET, so parallel runs are isolated only "
+        "when they use different DATASET values.\n\n" + current
     )
     cancel = message.addButton(QMessageBox.StandardButton.Cancel)
     proceed = message.addButton(
@@ -61,12 +64,15 @@ def run_calculation(
     parent: QWidget,
 ) -> SprkkrRunWindow | None:
     """Open a run window and adopt its result through the controller."""
-    if active_runs.count and not _continue_with_parallel_run(parent):
-        return None
-
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
+        return None
+
+    if active_runs.count and not _continue_with_parallel_run(
+        parent,
+        dataset_value(request.input_parameters),
+    ):
         return None
 
     def adoption_completed(adoption) -> None:
