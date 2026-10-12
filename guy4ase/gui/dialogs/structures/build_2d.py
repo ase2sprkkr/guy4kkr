@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs.structures.source import select_structure_source
 from guy4ase.gui.dialogs.structures.transforms import rotate_atoms, scale_atoms
-from guy4ase.gui.flows.structure_candidates import edit_structure_candidate
 from guy4ase.gui.plots.lattice import plot_structure_axis_projection
 from guy4ase.gui.widgets.structures.structure_pane import StructurePane
 from guy4ase.physics.lattice import match_structure_axis_length
@@ -226,12 +225,7 @@ class Build2DStructureDialog(QDialog):
                 f"No structure available for {description.lower()}.", error=True
             )
             return
-        updated = edit_structure_candidate(
-            pane.atoms,
-            operation,
-            self,
-            error_title=description,
-        )
+        updated = operation(pane.atoms, parent=self)
         if updated is None:
             return
         pane.set_atoms(updated)

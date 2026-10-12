@@ -76,13 +76,6 @@ def test_build2d_flow_threads_recent_files_to_selector(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         structure_flows,
-        "edit_structure_candidate",
-        lambda candidate, editor, editor_parent, *, error_title: editor(
-            candidate, parent=editor_parent
-        ),
-    )
-    monkeypatch.setattr(
-        structure_flows,
         "select_build_2d_structure",
         lambda candidate, parent=None, *, recent_files, surface_mode=False: (
             captured.update(

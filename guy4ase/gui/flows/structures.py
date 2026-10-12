@@ -23,7 +23,6 @@ from guy4ase.gui.flows.structure_candidates import (
     create_structure_candidate,
     create_structure_from_database_candidate,
     download_structure_candidate,
-    edit_structure_candidate,
 )
 from guy4ase.gui.misc.dialog_flow import DialogAction, chain_dialogs
 from guy4ase.gui.misc.structure_wait import document_change_applied
@@ -64,12 +63,7 @@ def edit_current_structure(
         return False
 
     change = controller.apply_structure_edit(
-        lambda candidate: edit_structure_candidate(
-            candidate,
-            editor,
-            parent,
-            error_title=error_title,
-        ),
+        lambda candidate: editor(candidate, parent=parent),
         expected_generation=generation,
     )
     if change is None:
@@ -194,12 +188,7 @@ def build_2d_structure(
         )
 
     change = controller.apply_structure_edit(
-        lambda candidate: edit_structure_candidate(
-            candidate,
-            edit,
-            parent,
-            error_title="Build 2D Structure Error",
-        ),
+        lambda candidate: edit(candidate, parent=parent),
         expected_generation=generation,
     )
     if change is None:
