@@ -112,7 +112,8 @@ class InputParametersDialog(QDialog):
             return
         self.accept()
 
-    def result(self) -> InputParameters:
+    def parameters(self) -> InputParameters:
+        """Return a detached copy of the currently edited parameters."""
         return self.session.result()
 
 
