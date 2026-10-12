@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -23,6 +23,44 @@ def _result_is_scf(result: Any) -> bool:
         return str(result.task_name).strip().lower() == "scf"
     except (AttributeError, TypeError, ValueError):
         return False
+
+
+class Generation(NamedTuple):
+    """Workspace revision split into calculation epoch and local revision.
+
+    ``major`` changes when an operation invalidates calculations already in
+    flight. ``minor`` changes for published workspace changes, such as adopting
+    a calculation result, which must invalidate stale editor drafts but not
+    sibling calculations started from the same major generation.
+    """
+
+    major: int = 0
+    minor: int = 0
+
+    def next_major(self) -> Generation:
+        return Generation(self.major + 1, 0)
+
+    def next_minor(self) -> Generation:
+        return Generation(self.major, self.minor + 1)
+
+    def same_major(self, other: Generation) -> bool:
+        return self.major == other.major
+
+    def __add__(self, value: int) -> Generation:
+        """Advance the major generation; kept useful for revision assertions."""
+        if not isinstance(value, int):
+            return NotImplemented
+        return Generation(self.major + value, 0)
+
+    def __eq__(self, other: object) -> bool:
+        # ``generation == 0`` existed in a few regression tests before the
+        # generation became two-dimensional. Treat an int as major with zero
+        # minor; normal production code should compare Generation values.
+        if isinstance(other, int):
+            return self.major == other and self.minor == 0
+        return tuple.__eq__(self, other)
+
+    __hash__ = tuple.__hash__
 
 
 class DocumentChange(Enum):
@@ -48,7 +86,7 @@ class CalculationRequest:
     atoms: Any
     input_parameters: Any
     directory: str
-    generation: int
+    generation: Generation
 
 
 @dataclass(frozen=True)
@@ -67,8 +105,9 @@ class WorkspaceController(QObject):
 
     Published ``atoms`` and ``input_parameters`` are read-only by contract.
     Structure edits use copy-on-write and publish a new object only after the
-    edit succeeds. The revision rejects stale editor drafts and calculation
-    results.
+    edit succeeds. Full generations reject stale editor/document transactions;
+    calculation results only require the major generation to stay current so
+    parallel runs from the same calculation epoch can all be adopted.
     """
 
     structureChanged = pyqtSignal(object)
@@ -85,7 +124,7 @@ class WorkspaceController(QObject):
         self.workspace = workspace or WorkspaceState()
         if self.workspace.result is not None and not self.workspace.result_history:
             self.workspace.result_history = (self.workspace.result,)
-        self._generation = 0
+        self._generation = Generation()
 
     @property
     def atoms(self) -> Any:
@@ -98,7 +137,7 @@ class WorkspaceController(QObject):
         return self.workspace.input_parameters
 
     @property
-    def generation(self) -> int:
+    def generation(self) -> Generation:
         return self._generation
 
     def create_calculation_request(self) -> CalculationRequest:
@@ -117,11 +156,19 @@ class WorkspaceController(QObject):
             generation=self._generation,
         )
 
-    def _generation_is_current(self, expected: int | None) -> bool:
+    def _generation_is_current(self, expected: Generation | None) -> bool:
         return expected is None or expected == self._generation
 
+    def _calculation_generation_is_current(self, expected: Generation) -> bool:
+        return expected.same_major(self._generation)
+
     def _changed(self) -> None:
-        self._generation += 1
+        """Publish a change which invalidates calculations already in flight."""
+        self._generation = self._generation.next_major()
+
+    def _result_changed(self) -> None:
+        """Publish a result without invalidating sibling calculations."""
+        self._generation = self._generation.next_minor()
 
     def _clear_result_history(self) -> bool:
         """Clear the current result and browsing history."""
@@ -161,7 +208,7 @@ class WorkspaceController(QObject):
         *,
         potential_path: str | None = None,
         directory: Any = _KEEP_DIRECTORY,
-        expected_generation: int | None = None,
+        expected_generation: Generation | None = None,
         restarted: bool = False,
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
@@ -184,7 +231,7 @@ class WorkspaceController(QObject):
         self,
         edit: Callable[[Any], Any],
         *,
-        expected_generation: int,
+        expected_generation: Generation,
     ) -> DocumentChange | None:
         """Apply an edit to a detached copy and atomically publish the result.
 
@@ -221,7 +268,7 @@ class WorkspaceController(QObject):
         parameters: Any,
         *,
         directory: Any = _KEEP_DIRECTORY,
-        expected_generation: int | None = None,
+        expected_generation: Generation | None = None,
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
@@ -252,7 +299,7 @@ class WorkspaceController(QObject):
         self,
         loaded: LoadedResult,
         *,
-        expected_generation: int,
+        expected_generation: Generation,
     ) -> ResultAdoption:
         """Install a fully loaded external result as a new document."""
         adoption = self._result_adoption(loaded)
@@ -295,11 +342,11 @@ class WorkspaceController(QObject):
         self,
         loaded: LoadedResult,
         *,
-        expected_generation: int,
+        expected_generation: Generation,
     ) -> ResultAdoption:
-        """Adopt a loaded result produced from the current revision."""
+        """Adopt a result if its calculation epoch is still current."""
         adoption = self._result_adoption(loaded)
-        if not self._generation_is_current(expected_generation):
+        if not self._calculation_generation_is_current(expected_generation):
             return replace(adoption, adopted=False)
 
         if loaded.atoms is not None:
@@ -308,7 +355,7 @@ class WorkspaceController(QObject):
             if _result_is_scf(loaded.result):
                 self.workspace.restarted = False
         self._remember_result(loaded.result)
-        self._changed()
+        self._result_changed()
 
         if loaded.atoms is not None:
             self.structureChanged.emit(loaded.atoms)
@@ -330,7 +377,7 @@ class WorkspaceController(QObject):
         self.directoryChanged.emit(None)
 
     def use_for_new_calculation(
-        self, *, expected_generation: int | None = None
+        self, *, expected_generation: Generation | None = None
     ) -> DocumentChange:
         """Start a new calculation from the current structure and potential.
 
@@ -352,7 +399,7 @@ class WorkspaceController(QObject):
         self,
         edit: Callable[[Any, int], tuple[Any, int, bool]],
         *,
-        expected_generation: int,
+        expected_generation: Generation,
         parameters: Mapping[str, Any] | None = None,
     ) -> DocumentChange:
         """Commit one explicit empty-sphere search/recalculation transactionally."""
