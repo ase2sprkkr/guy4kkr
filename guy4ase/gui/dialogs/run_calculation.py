@@ -139,7 +139,11 @@ class _SprkkrRunWorker(QObject):
         running = False
         try:
             self.status.emit("Preparing calculation…")
-            calculator = SPRKKR(profile=self._profile_name)
+            calculator = (
+                SPRKKR()
+                if self._profile_name is None
+                else SPRKKR(profile=self._profile_name)
+            )
             runner = self._launch(calculator)
             if runner is None:
                 self._emit_cancelled()
