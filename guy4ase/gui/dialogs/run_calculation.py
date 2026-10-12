@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.application.result_loading import load_result
-from guy4ase.gui.application.workspace_controller import CalculationRequest, Generation
+from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.widgets.input_parameters.dataset import (
     dataset_value,
     filename_component,
@@ -317,12 +317,9 @@ class _SprkkrRunWorker(QObject):
 class SprkkrRunWindow(QDialog):
     def __init__(
         self,
-        atoms: Any = None,
-        input_parameters: Any = None,
-        directory: str | None = None,
+        request: CalculationRequest,
         parent: Any | None = None,
         *,
-        request: CalculationRequest | None = None,
         run_registry: RunRegistry | None = None,
         launch_lock: Lock | None = None,
         on_finished: Callable[[Any], None] | None = None,
@@ -340,16 +337,6 @@ class SprkkrRunWindow(QDialog):
         self._close_requested = False
 
         layout = QVBoxLayout(self)
-
-        if request is None:
-            if directory is None:
-                raise ValueError("A calculation directory is required.")
-            request = CalculationRequest(
-                atoms=atoms,
-                input_parameters=input_parameters,
-                directory=directory,
-                generation=Generation(),
-            )
 
         header = QLabel(f"Directory: {request.directory}")
         header.setWordWrap(True)
