@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from ase import Atoms
 
-from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
-    StructureAccessGate,
-)
+from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.dialogs import run_calculation as run_dialog
 
 
@@ -29,8 +26,8 @@ def test_gui_runs_use_distinct_result_files(monkeypatch, tmp_path):
         generation=0,
     )
 
-    run_dialog._SprkkrRunWorker(request, StructureAccessGate()).run()
-    run_dialog._SprkkrRunWorker(request, StructureAccessGate()).run()
+    run_dialog._SprkkrRunWorker(request).run()
+    run_dialog._SprkkrRunWorker(request).run()
 
     assert len(calls) == 2
     for key in ("input_file", "potential_file", "output_file"):

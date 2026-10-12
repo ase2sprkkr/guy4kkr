@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    CalculationNotReady,
+    WorkspaceController,
+)
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
@@ -31,6 +37,36 @@ def test_workspace_can_calculate_requires_all_inputs():
 
     workspace.directory = "calculation"
     assert workspace.can_calculate()
+
+
+def test_create_calculation_request_reports_missing_preconditions():
+    controller = WorkspaceController(WorkspaceState())
+
+    with pytest.raises(CalculationNotReady):
+        controller.create_calculation_request()
+
+
+def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
+    class BrokenParameters:
+        def copy(self, *, copy_values: bool):
+            assert copy_values
+            raise ValueError("broken parameter copy")
+
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=BrokenParameters(),
+            directory=str(tmp_path),
+        )
+    )
+
+    with pytest.raises(ValueError, match="broken parameter copy"):
+        calculation_flow.run_calculation(
+            controller,
+            RecentFiles(),
+            SimpleNamespace(count=0),
+            None,
+        )
 
 
 def test_edit_current_structure_reads_published_structure_and_commits_replacement():

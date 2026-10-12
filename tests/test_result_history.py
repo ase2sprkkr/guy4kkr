@@ -104,9 +104,8 @@ def test_empty_sphere_result_replaces_history_when_structure_changes():
     controller = WorkspaceController(workspace)
 
     def add_one(atoms, _previous):
-        updated = atoms.copy()
-        updated += Atoms("X")
-        return updated, 1
+        atoms += Atoms("X")
+        return atoms, 1, True
 
     controller.update_empty_spheres(
         add_one,
@@ -124,7 +123,7 @@ def test_empty_sphere_result_is_added_when_structure_does_not_change():
     controller = WorkspaceController(workspace)
 
     controller.update_empty_spheres(
-        lambda current, _previous: (current, 0),
+        lambda current, _previous: (current, 0, False),
         expected_generation=controller.generation,
     )
 

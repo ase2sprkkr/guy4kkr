@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable
 from threading import Lock
 from typing import Any
@@ -17,10 +19,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
-    StructureAccessGate,
-)
+from guy4ase.gui.application.workspace_controller import CalculationRequest
+
+
+logger = logging.getLogger(__name__)
 
 
 class _RunCancellation:
@@ -30,6 +32,11 @@ class _RunCancellation:
         self._lock = Lock()
         self._requested = False
         self._process: Any | None = None
+
+    @property
+    def requested(self) -> bool:
+        with self._lock:
+            return self._requested
 
     def register(self, process: Any) -> bool:
         """Register the process and return whether it may be started."""
@@ -55,70 +62,71 @@ class _SprkkrRunWorker(QObject):
     status = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)  # result
-    preparationFinished = pyqtSignal(object)  # borrowed atoms, lock is released
+    cancelled = pyqtSignal()
     activityStarted = pyqtSignal(object)
     activityEnded = pyqtSignal(object)
 
     def __init__(
         self,
         request: CalculationRequest,
-        structure_gate: StructureAccessGate,
         cancellation: _RunCancellation | None = None,
     ):
         super().__init__()
         self._request = request
-        self._structure_gate = structure_gate
         self._cancellation = cancellation or _RunCancellation()
         self.run_id = object()
         self._file_id = uuid4().hex[:12]
 
+    def _emit_cancelled(self) -> None:
+        self.status.emit("Cancelled")
+        self.cancelled.emit()
+
     @pyqtSlot()
     def run(self) -> None:
         self.activityStarted.emit(self.run_id)
+        running = False
         try:
             def read_callback(text: str, kind: str) -> None:
                 # Called from the runner while it produces output.
                 self.output.emit(text, kind)
 
-            self.status.emit("Waiting to prepare shared structure…")
-            # calculate(run_async=True) performs all shared-Atoms work and
-            # writes the input/potential files. KkrProcess.run() below only
-            # starts the prepared subprocess and parses its files.
-            try:
-                def prepare() -> Any:
-                    self.status.emit("Preparing calculation…")
-                    calc = SPRKKR()
-                    prefix = f"%a_%T_{self._file_id}"
-                    return calc.calculate(
-                        atoms=self._request.atoms,
-                        input_parameters=self._request.input_parameters,
-                        directory=self._request.directory,
-                        input_file=f"{prefix}.inp",
-                        potential_file=f"{prefix}.pot",
-                        output_file=f"{prefix}.out",
-                        empty_spheres=False,
-                        run_async=True,
-                        read_callback=read_callback,
-                        print_output=False,
-                    )
-
-                process = self._structure_gate.call(
-                    "preparing a calculation", prepare
-                )
-            finally:
-                # A failed preparation may still have lazily materialized the
-                # shared structure. The lock is already released here.
-                self.preparationFinished.emit(self._request.atoms)
+            self.status.emit("Preparing calculation…")
+            calc = SPRKKR()
+            prefix = f"%a_%T_{self._file_id}"
+            process = calc.calculate(
+                atoms=self._request.atoms,
+                input_parameters=self._request.input_parameters,
+                directory=self._request.directory,
+                input_file=f"{prefix}.inp",
+                potential_file=f"{prefix}.pot",
+                output_file=f"{prefix}.out",
+                empty_spheres=False,
+                run_async=True,
+                read_callback=read_callback,
+                print_output=False,
+            )
 
             if not self._cancellation.register(process):
-                raise RuntimeError("Stopped")
+                self._emit_cancelled()
+                return
 
+            running = True
             self.status.emit("Running…")
             result = process.run()
+            if self._cancellation.requested:
+                self._emit_cancelled()
+                return
+
             self.status.emit("Finished")
             self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
+        except asyncio.CancelledError:
+            self._emit_cancelled()
+        except Exception as exc:  # noqa: BLE001 - worker exception boundary
+            if running and self._cancellation.requested:
+                self._emit_cancelled()
+            else:
+                logger.exception("SPR-KKR calculation failed")
+                self.error.emit(str(exc))
         finally:
             self.activityEnded.emit(self.run_id)
 
@@ -132,11 +140,9 @@ class SprkkrRunWindow(QDialog):
         parent: Any | None = None,
         *,
         request: CalculationRequest | None = None,
-        structure_gate: StructureAccessGate | None = None,
         on_finished: Callable[[Any], None] | None = None,
         on_activity_started: Callable[[Any], None] | None = None,
         on_activity_ended: Callable[[Any], None] | None = None,
-        on_prepared: Callable[[Any], None] | None = None,
     ):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -148,7 +154,6 @@ class SprkkrRunWindow(QDialog):
         self._finished_callback = on_finished
         self._activity_started_callback = on_activity_started
         self._activity_ended_callback = on_activity_ended
-        self._prepared_callback = on_prepared
         self._close_requested = False
 
         layout = QVBoxLayout(self)
@@ -162,7 +167,6 @@ class SprkkrRunWindow(QDialog):
                 directory=directory,
                 generation=0,
             )
-        self._structure_gate = structure_gate or StructureAccessGate()
 
         header = QLabel(f"Directory: {request.directory}")
         header.setWordWrap(True)
@@ -204,9 +208,7 @@ class SprkkrRunWindow(QDialog):
     ) -> None:
         thread = QThread(self)
         self._cancellation = _RunCancellation()
-        worker = _SprkkrRunWorker(
-            request, self._structure_gate, self._cancellation
-        )
+        worker = _SprkkrRunWorker(request, self._cancellation)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -214,17 +216,18 @@ class SprkkrRunWindow(QDialog):
         worker.status.connect(self._set_status)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
+        worker.cancelled.connect(self._on_cancelled)
         if self._activity_started_callback is not None:
             worker.activityStarted.connect(self._activity_started_callback)
         if self._activity_ended_callback is not None:
             worker.activityEnded.connect(self._activity_ended_callback)
-        if self._prepared_callback is not None:
-            worker.preparationFinished.connect(self._prepared_callback)
 
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)
+        worker.cancelled.connect(worker.deleteLater)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
         thread.finished.connect(self._thread_finished)
 
         self._thread = thread
@@ -265,6 +268,10 @@ class SprkkrRunWindow(QDialog):
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
         self._append_output(f"\n[ERROR] {message}\n", "stderr")
+        self._stop_btn.setEnabled(False)
+
+    @pyqtSlot()
+    def _on_cancelled(self) -> None:
         self._stop_btn.setEnabled(False)
 
     @pyqtSlot(object)
