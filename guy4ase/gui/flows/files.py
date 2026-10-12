@@ -26,11 +26,6 @@ from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
-def _structure_open_filter() -> str:
-    """Compatibility wrapper around the shared structure source filter."""
-    return structure_open_filter()
-
-
 def _show_potential_warning(
     adoption: ResultAdoption, parent: QWidget
 ) -> None:
@@ -66,7 +61,7 @@ def choose_and_load_structure(
         parent,
         "Load Structure File",
         "",
-        _structure_open_filter(),
+        structure_open_filter(),
     )
     return bool(
         file_path
