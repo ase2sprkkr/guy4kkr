@@ -163,6 +163,11 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(has_structure)
 
+        has_input = self.workspace.input_parameters is not None
+        self.save_input_action.setEnabled(has_input)
+        if self.save_input_btn is not None:
+            self.save_input_btn.setEnabled(has_input)
+
         self.run_calculation_action.setEnabled(self.workspace.can_calculate())
 
         empty_spheres = self.workspace.empty_spheres_action()
@@ -179,13 +184,9 @@ class MainWindow(QMainWindow):
             return
         if self.workspace.input_parameters is None:
             self.input_params_preview.setPlainText("")
-            if self.save_input_btn is not None:
-                self.save_input_btn.setEnabled(False)
             return
         txt = self.workspace.input_parameters.to_string(validate=False)
         self.input_params_preview.setPlainText(txt)
-        if self.save_input_btn is not None:
-            self.save_input_btn.setEnabled(True)
 
     def _update_directory_label(self) -> None:
         if self._directory_label is None:
@@ -327,9 +328,9 @@ class MainWindow(QMainWindow):
         load_input_action = QAction("&Load Input File...", self)
         load_input_action.triggered.connect(self._on_load_sprkkr_input)
         input_menu.addAction(load_input_action)
-        save_input_action = QAction("&Save Input File...", self)
-        save_input_action.triggered.connect(self._on_save_sprkkr_input)
-        input_menu.addAction(save_input_action)
+        self.save_input_action = QAction("&Save Input File...", self)
+        self.save_input_action.triggered.connect(self._on_save_sprkkr_input)
+        input_menu.addAction(self.save_input_action)
         self._recent_menus['input'] = input_menu.addMenu("Open &Recent")
 
         output_menu = menubar.addMenu("&Output")
