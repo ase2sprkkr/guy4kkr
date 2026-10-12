@@ -30,6 +30,8 @@ class EmptySpheresResult:
 
     found: int
 
+    display_name: ClassVar[str] = "Empty spheres"
+
     @property
     def output_values(self) -> dict[str, EmptySpheresCount]:
         return {"empty_spheres": EmptySpheresCount(self.found)}

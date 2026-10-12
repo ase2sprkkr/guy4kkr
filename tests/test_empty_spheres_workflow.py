@@ -17,6 +17,7 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
 
     controller = WorkspaceController(workspace)
     generation = controller.generation
+    state_id = controller.state_id
     change = controller.update_empty_spheres(
         lambda atoms, _previous: (atoms, 0, False),
         expected_generation=generation,
@@ -26,18 +27,21 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert workspace.empty_spheres == EmptySpheresState(count=0)
     assert workspace.empty_spheres_added == 0
     assert workspace.empty_spheres_action() == "recalculate"
-    assert workspace.result == EmptySpheresResult(found=0)
-    assert controller.generation == generation.next_minor()
-    assert workspace.result_history[0].generation == controller.generation
+    assert controller.result_history[0].result == EmptySpheresResult(found=0)
+    assert controller.result_history[0].input_state_id == state_id
+    assert controller.result_history[0].output_state_id is None
+    assert controller.state_id == state_id
 
 
-def test_empty_sphere_update_publishes_found_count_as_result():
+def test_empty_sphere_update_publishes_found_count_and_new_state():
     original = Atoms("Fe")
-    workspace = WorkspaceState(atoms=original, result=object())
+    workspace = WorkspaceState(atoms=original, potential_path="Fe.pot")
     controller = WorkspaceController(workspace)
     published = []
     controller.resultChanged.connect(published.append)
     generation = controller.generation
+    structure_id = controller.structure_id
+    input_state_id = controller.state_id
 
     def add_one(atoms, _previous):
         assert atoms is not original
@@ -54,10 +58,14 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     assert len(original) == 1
     assert len(workspace.atoms) == 2
     assert workspace.empty_spheres == EmptySpheresState(count=1)
-    assert workspace.result == EmptySpheresResult(found=1)
-    assert published == [workspace.result]
+    record = controller.result_history[0]
+    assert record.result == EmptySpheresResult(found=1)
+    assert record.structure_id == structure_id
+    assert record.input_state_id == input_state_id
+    assert record.output_state_id == controller.state_id
+    assert published == [record.result]
+    assert workspace.potential_path is None
     assert controller.generation == generation.next_major()
-    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_state_keeps_search_parameters_across_later_results():
@@ -74,10 +82,9 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     state = workspace.empty_spheres
     assert state is not None
     assert dict(state.parameters) == search_parameters
-    assert workspace.result == EmptySpheresResult(found=0)
+    assert controller.result_history[0].result == EmptySpheresResult(found=0)
 
     controller.replace_input_parameters(object())
-    assert workspace.result is None
     assert workspace.empty_spheres is state
 
     result = SimpleNamespace(task_name="dos")
@@ -89,11 +96,11 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
             atoms=None,
             potential_error=None,
             directory=None,
-        ),
-        expected_major=controller.generation.major,
+        )
     )
 
-    assert workspace.result is result
+    assert controller.result_history[0].result is result
+    assert controller.result_history[1].result == EmptySpheresResult(found=0)
     assert workspace.empty_spheres is state
     assert dict(workspace.empty_spheres.parameters) == search_parameters
 
@@ -104,7 +111,6 @@ def test_empty_sphere_flow_prefills_parameters_from_workspace_state(monkeypatch)
     search_parameters = {"max_radius": 1.4, "mesh": (18, 20, 22)}
     workspace = WorkspaceState(
         atoms=Atoms("Fe"),
-        result=SimpleNamespace(task_name="dos"),
         empty_spheres=EmptySpheresState(0, search_parameters),
     )
     controller = WorkspaceController(workspace)
@@ -123,25 +129,24 @@ def test_empty_sphere_flow_prefills_parameters_from_workspace_state(monkeypatch)
     assert dict(seen[0]) == search_parameters
 
 
-def test_use_for_new_calculation_keeps_density_and_marks_restart():
+def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
     atoms = SimpleNamespace(
         potential=SimpleNamespace(
             SCF_INFO=SimpleNamespace(SCFSTATUS="CONVERGED")
         ),
         sprkkr_is_scf_converged=lambda: True,
     )
-    previous_result = object()
     empty_spheres = EmptySpheresState(
         3, {"min_radius": 0.8, "mesh": (20, 20, 20)}
     )
     workspace = WorkspaceState(
         atoms=atoms,
-        result=previous_result,
         potential_path="Fe.pot",
         empty_spheres=empty_spheres,
     )
     controller = WorkspaceController(workspace)
     generation = controller.generation
+    previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(
         expected_generation=generation
@@ -155,10 +160,8 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
     assert workspace.empty_spheres is empty_spheres
     assert workspace.empty_spheres_added == 3
     assert workspace.potential_path == "Fe.pot"
-    assert workspace.result is None
-    assert len(workspace.result_history) == 1
-    assert workspace.result_history[0].result is previous_result
-    assert not workspace.result_history[0].current
+    assert controller.state_id != previous_state_id
+    assert controller.result_store.state(controller.state_id).parent_id == previous_state_id
     assert controller.generation == generation.next_major()
 
 
