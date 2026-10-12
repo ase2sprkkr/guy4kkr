@@ -19,6 +19,7 @@ from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
+    Generation,
     WorkspaceController,
 )
 from guy4ase.gui.dialogs import run_calculation as run_dialog
@@ -62,7 +63,7 @@ def test_confirmed_structure_edit_is_copy_on_write():
     assert controller.workspace.atoms.get_chemical_symbols() == ["Cu"]
     assert controller.workspace.result is None
     assert controller.workspace.potential_path is None
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert structures == [controller.workspace.atoms]
     assert results == [None]
 
@@ -155,7 +156,7 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
     generation = controller.generation
     assert controller.replace_structure(replacement) is DocumentChange.APPLIED
     assert controller.atoms is replacement
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
 
     release_preparation.set()
     assert process_entered.wait(5)
@@ -166,7 +167,9 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
 
 def test_preparation_exception_ends_activity(monkeypatch, tmp_path):
     registry = ActiveRunRegistry()
-    request = CalculationRequest(Atoms("Fe"), _Parameters(1), str(tmp_path), 0)
+    request = CalculationRequest(
+        Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
+    )
 
     class Calculator:
         def calculate(self, **_kwargs):
@@ -192,7 +195,9 @@ def test_preparation_exception_ends_activity(monkeypatch, tmp_path):
 
 def test_unstarted_worker_reserves_no_activity(tmp_path):
     registry = ActiveRunRegistry()
-    request = CalculationRequest(Atoms("Fe"), _Parameters(1), str(tmp_path), 0)
+    request = CalculationRequest(
+        Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
+    )
     worker = run_dialog._SprkkrRunWorker(request)
     worker.activityStarted.connect(registry.register)
     worker.activityEnded.connect(registry.unregister)
@@ -253,7 +258,7 @@ def test_reset_advances_instead_of_resetting_generation():
 
     controller.reset()
 
-    assert controller.generation == before_reset + 1
+    assert controller.generation == before_reset.next_major()
 
 
 def test_file_loads_reject_an_intervening_document_change(
@@ -325,7 +330,7 @@ def test_directory_change_invalidates_and_rejects_stale_calculation_result(
 
     controller.change_directory(str(next_directory))
 
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert controller.workspace.result is None
     assert controller.workspace.directory == str(next_directory)
 
@@ -334,7 +339,7 @@ def test_directory_change_invalidates_and_rejects_stale_calculation_result(
         expected_generation=generation,
     )
     assert not adoption.adopted
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert controller.workspace.result is None
     assert controller.workspace.directory == str(next_directory)
 

@@ -7,7 +7,7 @@ from time import monotonic
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import CalculationRequest, Generation
 from guy4ase.gui.dialogs import run_calculation as run_dialog
 from guy4ase.gui.misc import modal_task
 
@@ -68,7 +68,7 @@ def test_run_activity_callback_is_forwarded_in_gui_thread(monkeypatch, tmp_path)
         atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=str(tmp_path),
-        generation=0,
+        generation=Generation(),
     )
     window = run_dialog.SprkkrRunWindow(
         request=request,

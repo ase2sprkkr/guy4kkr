@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ase import Atoms
 
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import CalculationRequest, Generation
 from guy4ase.gui.dialogs import run_calculation as run_dialog
 
 
@@ -23,7 +23,7 @@ def test_gui_runs_use_distinct_result_files(monkeypatch, tmp_path):
         atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=str(tmp_path),
-        generation=0,
+        generation=Generation(),
     )
 
     run_dialog._SprkkrRunWorker(request).run()

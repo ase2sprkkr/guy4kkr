@@ -27,6 +27,7 @@ from guy4ase.gui.application.result_loading import (
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
+    Generation,
     ResultAdoption,
     WorkspaceController,
 )
@@ -211,13 +212,13 @@ def test_changing_directory_invalidates_result_and_same_directory_is_noop():
 
     assert workspace.directory == "next"
     assert workspace.result is None
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert results == [None]
     assert directories == ["next"]
 
     controller.change_directory("next")
 
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert results == [None]
     assert directories == ["next"]
 
@@ -417,7 +418,7 @@ def test_use_for_new_calculation_changes_state_without_mutating_atoms():
     assert controller.workspace.potential_path == "Fe.pot"
     assert controller.workspace.restarted
     assert controller.workspace.result is None
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
 
 
 def _result(tmp_path):
@@ -826,7 +827,7 @@ def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
     with pytest.raises(ValueError, match="broken output"):
         load_result_file(tmp_path / "broken.out")
 
-    assert controller.generation == 0
+    assert controller.generation == Generation()
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
     assert workspace.directory == "original"
@@ -866,7 +867,7 @@ def test_result_artifact_resolution_failure_leaves_workspace_unchanged(
     with pytest.raises(RuntimeError, match="broken artifact metadata"):
         load_result_file(tmp_path / "Fe.out")
 
-    assert controller.generation == 0
+    assert controller.generation == Generation()
     assert workspace.atoms is atoms
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
@@ -1000,7 +1001,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
             str(tmp_path),
             str(potential),
             result_parameters,
-            1,
+            Generation(1, 0),
         )
     ]
 
