@@ -109,14 +109,22 @@ def run_calculation(
             return
         adoption_completed(adoption)
 
-    window = SprkkrRunWindow(
-        request=request,
-        parent=parent,
-        on_finished=finished,
-        on_activity_started=active_runs.register,
-        on_activity_ended=active_runs.unregister,
-    )
-    window.show()
+    # Reserve synchronously before the run window starts its worker thread. This
+    # closes the launch race where a second click could otherwise still observe
+    # an empty registry before the worker emitted activityStarted.
+    reservation = object()
+    active_runs.register(reservation)
+    try:
+        window = SprkkrRunWindow(
+            request=request,
+            parent=parent,
+            on_finished=finished,
+            on_activity_ended=lambda _run_id: active_runs.unregister(reservation),
+        )
+        window.show()
+    except Exception:
+        active_runs.unregister(reservation)
+        raise
     return window
 
 
