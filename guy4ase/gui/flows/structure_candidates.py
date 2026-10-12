@@ -23,6 +23,7 @@ from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup_from_prototype,
 )
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.gui.misc.modal_task import run_modal_task
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,12 @@ def load_structure_candidate(
     path = Path(file_path).resolve()
     read = reader or ase_read
     try:
-        atoms = read(path)
+        atoms = run_modal_task(
+            parent,
+            lambda: read(path),
+            title="Loading Structure",
+            label="Reading structure…",
+        )
     except Exception as exc:  # noqa: BLE001 - ASE/backend readers vary
         QMessageBox.critical(
             parent,
