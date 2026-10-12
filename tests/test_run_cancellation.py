@@ -3,6 +3,7 @@ import logging
 
 import pytest
 
+from guy4ase.gui.application.workspace_controller import Generation
 from guy4ase.gui.dialogs import run_calculation
 from guy4ase.gui.dialogs.run_calculation import (
     _RunCancellation,
@@ -42,7 +43,7 @@ def _make_worker(monkeypatch, process, cancellation=None):
         atoms=object(),
         input_parameters=object(),
         directory=".",
-        generation=0,
+        generation=Generation(),
     )
     return _SprkkrRunWorker(request, cancellation)
 

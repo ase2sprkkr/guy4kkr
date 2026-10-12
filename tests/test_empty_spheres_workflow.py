@@ -52,7 +52,7 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     assert len(workspace.atoms) == 2
     assert workspace.result == EmptySpheresResult(found=1)
     assert published == [workspace.result]
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
 
 
 def test_empty_sphere_result_keeps_search_parameters():
@@ -102,7 +102,7 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
     assert workspace.potential_path == "Fe.pot"
     assert workspace.result is None
     assert workspace.result_history == (previous_result,)
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():

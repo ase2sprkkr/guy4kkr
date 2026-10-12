@@ -41,23 +41,6 @@ class Generation:
     def same_major(self, other: Generation) -> bool:
         return self.major == other.major
 
-    def __add__(self, value: int) -> Generation:
-        if not isinstance(value, int):
-            return NotImplemented
-        return Generation(self.major + value, 0)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Generation):
-            return self.major == other.major and self.minor == other.minor
-        if isinstance(other, int):
-            return self.major == other and self.minor == 0
-        return NotImplemented
-
-    def __hash__(self) -> int:
-        if self.minor == 0:
-            return hash(self.major)
-        return hash((self.major, self.minor))
-
 
 class DocumentChange(Enum):
     """Semantic result of a revision-sensitive document command."""

@@ -16,13 +16,13 @@ def _loaded(tmp_path, name):
     return result, load_result(result, fallback_directory=tmp_path)
 
 
-def test_generation_equality_and_hash_are_consistent():
+def test_generation_is_a_regular_value_type_without_integer_compatibility():
     generation = Generation(1, 0)
 
     assert generation == Generation(1, 0)
-    assert generation == 1
-    assert hash(generation) == hash(1)
-    assert {generation: "value"}[1] == "value"
+    assert hash(generation) == hash(Generation(1, 0))
+    assert {generation: "value"}[Generation(1, 0)] == "value"
+    assert generation != 1
     assert Generation(1, 1) != 1
     assert generation != (1, 0)
 
@@ -41,13 +41,11 @@ def test_generation_major_and_minor_changes_have_distinct_semantics(tmp_path):
 
     assert adoption.adopted
     assert controller.workspace.result is result
-    assert controller.generation == Generation(initial.major, initial.minor + 1)
+    assert controller.generation == initial.next_minor()
 
     before_structure_change = controller.generation
     controller.replace_structure(Atoms("Cu"))
-    assert controller.generation == Generation(
-        before_structure_change.major + 1, 0
-    )
+    assert controller.generation == before_structure_change.next_major()
 
 
 def test_parallel_results_from_same_major_generation_are_both_adopted(tmp_path):
@@ -68,10 +66,8 @@ def test_parallel_results_from_same_major_generation_are_both_adopted(tmp_path):
 
     assert first.adopted
     assert second.adopted
-    assert after_first.major == source_generation.major
-    assert after_first.minor == source_generation.minor + 1
-    assert controller.generation.major == source_generation.major
-    assert controller.generation.minor == source_generation.minor + 2
+    assert after_first == source_generation.next_minor()
+    assert controller.generation == after_first.next_minor()
     assert controller.workspace.result is second_result
     assert controller.workspace.result_history[:2] == (
         second_result,

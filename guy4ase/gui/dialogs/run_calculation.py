@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.application.result_loading import load_result
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import CalculationRequest, Generation
 from guy4ase.gui.widgets.input_parameters.dataset import (
     dataset_value,
     filename_component,
@@ -183,7 +183,7 @@ class SprkkrRunWindow(QDialog):
                 atoms=atoms,
                 input_parameters=input_parameters,
                 directory=directory,
-                generation=0,
+                generation=Generation(),
             )
 
         header = QLabel(f"Directory: {request.directory}")
