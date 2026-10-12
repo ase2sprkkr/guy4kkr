@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState, WorkspaceView
+from guy4ase.gui.application.workspace import WorkspaceState
 
 _KEEP_DIRECTORY = object()
 _RESULT_HISTORY_LIMIT = 10
@@ -93,10 +93,10 @@ class ResultAdoption:
 class WorkspaceController(QObject):
     """Own semantic document transitions and its monotonic revision.
 
-    The mutable ``WorkspaceState`` is private. ``workspace`` exposes a stable,
-    live ``WorkspaceView`` whose document slots cannot be reassigned by callers.
-    Published ``atoms`` and ``input_parameters`` remain borrowed references and
-    follow their existing read-only-by-contract semantics.
+    The mutable ``WorkspaceState`` is private. Read access is exposed through
+    narrow properties and semantic queries on the controller. Published
+    ``atoms`` and ``input_parameters`` remain borrowed references and follow
+    their existing read-only-by-contract semantics.
     """
 
     structureChanged = pyqtSignal(object)
@@ -113,13 +113,12 @@ class WorkspaceController(QObject):
         self._workspace = workspace or WorkspaceState()
         if self._workspace.result is not None and not self._workspace.result_history:
             self._workspace.result_history = (self._workspace.result,)
-        self._workspace_view = WorkspaceView(self._workspace)
         self._generation = Generation()
 
     @property
-    def workspace(self) -> WorkspaceView:
-        """Return the stable live read-only view of the document."""
-        return self._workspace_view
+    def workspace(self) -> WorkspaceController:
+        """Compatibility alias for callers not yet migrated to controller reads."""
+        return self
 
     @property
     def atoms(self) -> Any:
@@ -132,8 +131,50 @@ class WorkspaceController(QObject):
         return self._workspace.input_parameters
 
     @property
+    def directory(self) -> str | None:
+        return self._workspace.directory
+
+    @property
+    def potential_path(self) -> str | None:
+        return self._workspace.potential_path
+
+    @property
+    def result(self) -> Any | None:
+        return self._workspace.result
+
+    @property
+    def result_history(self) -> tuple[Any, ...]:
+        return self._workspace.result_history
+
+    @property
+    def empty_spheres_added(self) -> int | None:
+        return self._workspace.empty_spheres_added
+
+    @property
+    def restarted(self) -> bool:
+        return self._workspace.restarted
+
+    @property
     def generation(self) -> Generation:
         return self._generation
+
+    def structure_kind(self):
+        return self._workspace.structure_kind()
+
+    def can_calculate(self) -> bool:
+        return self._workspace.can_calculate()
+
+    def scf_status(self) -> str | None:
+        return self._workspace.scf_status()
+
+    def is_scf_converged(self) -> bool:
+        return self._workspace.is_scf_converged()
+
+    def has_vacuum_sites(self) -> bool:
+        return self._workspace.has_vacuum_sites()
+
+    def empty_spheres_action(self) -> str | None:
+        return self._workspace.empty_spheres_action()
 
     def create_calculation_request(self) -> CalculationRequest:
         """Borrow read-only Atoms and capture independent calculation inputs."""
