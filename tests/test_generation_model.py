@@ -1,9 +1,10 @@
 from types import SimpleNamespace
 
+import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult, load_result
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import ResultRecord, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     Generation,
@@ -25,6 +26,35 @@ def test_generation_is_a_regular_value_type_without_integer_compatibility():
     assert generation != 1
     assert Generation(1, 1) != 1
     assert generation != (1, 0)
+
+
+def test_controller_restores_workspace_generation_and_current_provenance():
+    generation = Generation(8, 3)
+    result = SimpleNamespace(task_name="SCF")
+    workspace = WorkspaceState(
+        result=result,
+        result_history=(ResultRecord(result, generation),),
+        generation=generation,
+    )
+
+    controller = WorkspaceController(workspace)
+
+    assert controller.generation == generation
+    assert workspace.generation == generation
+    assert controller.result_history[0].generation == generation
+    assert controller.result_history[0].current
+
+
+def test_controller_rejects_inconsistent_current_result_provenance():
+    result = SimpleNamespace(task_name="SCF")
+    workspace = WorkspaceState(
+        result=result,
+        result_history=(ResultRecord(result, Generation(8, 3)),),
+        generation=Generation(8, 4),
+    )
+
+    with pytest.raises(ValueError, match="Current result provenance"):
+        WorkspaceController(workspace)
 
 
 def test_generation_major_and_minor_changes_have_distinct_semantics(tmp_path):
