@@ -108,13 +108,13 @@ class WorkspaceState:
         """Return ``add``/``recalculate`` for the explicit ES workflow.
 
         Imported or manually created vacuum sites are deliberately not treated
-        as generated empty spheres. Recalculation is offered only while we
-        still know exactly how many trailing sites Guy4ASE added.
+        as generated empty spheres. Once an explicit search has been performed,
+        recalculation remains available even if that search found no spheres.
         """
         if self.atoms is None:
             return None
         if self.empty_spheres_added is not None:
-            return "recalculate" if self.empty_spheres_added > 0 else None
+            return "recalculate"
         if self.has_vacuum_sites():
             return None
         return "add"

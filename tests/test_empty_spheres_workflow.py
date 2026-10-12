@@ -10,7 +10,7 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
-def test_empty_sphere_search_state_hides_repeated_failed_search():
+def test_empty_sphere_search_state_allows_repeated_failed_search():
     workspace = WorkspaceState(atoms=Atoms("Fe"))
     assert workspace.empty_spheres_action() == "add"
 
@@ -23,7 +23,7 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
 
     assert change is DocumentChange.APPLIED
     assert workspace.empty_spheres_added == 0
-    assert workspace.empty_spheres_action() is None
+    assert workspace.empty_spheres_action() == "recalculate"
     assert workspace.result == EmptySpheresResult(found=0)
     assert controller.generation == generation.next_minor()
     assert workspace.result_history[0].generation == controller.generation
