@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import WorkspaceState, WorkspaceView
 
 _KEEP_DIRECTORY = object()
 _RESULT_HISTORY_LIMIT = 10
@@ -26,13 +26,7 @@ def _result_is_scf(result: Any) -> bool:
 
 
 class Generation(NamedTuple):
-    """Workspace revision split into calculation epoch and local revision.
-
-    ``major`` changes when an operation invalidates calculations already in
-    flight. ``minor`` changes for published workspace changes, such as adopting
-    a calculation result, which must invalidate stale editor drafts but not
-    sibling calculations started from the same major generation.
-    """
+    """Workspace revision split into calculation epoch and local revision."""
 
     major: int = 0
     minor: int = 0
@@ -47,15 +41,11 @@ class Generation(NamedTuple):
         return self.major == other.major
 
     def __add__(self, value: int) -> Generation:
-        """Advance the major generation; kept useful for revision assertions."""
         if not isinstance(value, int):
             return NotImplemented
         return Generation(self.major + value, 0)
 
     def __eq__(self, other: object) -> bool:
-        # ``generation == 0`` existed in a few regression tests before the
-        # generation became two-dimensional. Treat an int as major with zero
-        # minor; normal production code should compare Generation values.
         if isinstance(other, int):
             return self.major == other and self.minor == 0
         return tuple.__eq__(self, other)
@@ -103,11 +93,10 @@ class ResultAdoption:
 class WorkspaceController(QObject):
     """Own semantic document transitions and its monotonic revision.
 
-    Published ``atoms`` and ``input_parameters`` are read-only by contract.
-    Structure edits use copy-on-write and publish a new object only after the
-    edit succeeds. Full generations reject stale editor/document transactions;
-    calculation results only require the major generation to stay current so
-    parallel runs from the same calculation epoch can all be adopted.
+    The mutable ``WorkspaceState`` is private. ``workspace`` exposes a stable,
+    live ``WorkspaceView`` whose document slots cannot be reassigned by callers.
+    Published ``atoms`` and ``input_parameters`` remain borrowed references and
+    follow their existing read-only-by-contract semantics.
     """
 
     structureChanged = pyqtSignal(object)
@@ -121,20 +110,26 @@ class WorkspaceController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self.workspace = workspace or WorkspaceState()
-        if self.workspace.result is not None and not self.workspace.result_history:
-            self.workspace.result_history = (self.workspace.result,)
+        self._workspace = workspace or WorkspaceState()
+        if self._workspace.result is not None and not self._workspace.result_history:
+            self._workspace.result_history = (self._workspace.result,)
+        self._workspace_view = WorkspaceView(self._workspace)
         self._generation = Generation()
+
+    @property
+    def workspace(self) -> WorkspaceView:
+        """Return the stable live read-only view of the document."""
+        return self._workspace_view
 
     @property
     def atoms(self) -> Any:
         """Return the current published structure; callers must not mutate it."""
-        return self.workspace.atoms
+        return self._workspace.atoms
 
     @property
     def input_parameters(self) -> Any:
         """Return current input parameters; callers must not mutate them."""
-        return self.workspace.input_parameters
+        return self._workspace.input_parameters
 
     @property
     def generation(self) -> Generation:
@@ -144,7 +139,7 @@ class WorkspaceController(QObject):
         """Borrow read-only Atoms and capture independent calculation inputs."""
         atoms = self.atoms
         parameters = self.input_parameters
-        directory = self.workspace.directory
+        directory = self._workspace.directory
         if atoms is None or parameters is None or not directory:
             raise CalculationNotReady(
                 "Structure, input parameters and directory are required."
@@ -163,43 +158,38 @@ class WorkspaceController(QObject):
         return expected.same_major(self._generation)
 
     def _changed(self) -> None:
-        """Publish a change which invalidates calculations already in flight."""
         self._generation = self._generation.next_major()
 
     def _result_changed(self) -> None:
-        """Publish a result without invalidating sibling calculations."""
         self._generation = self._generation.next_minor()
 
     def _clear_result_history(self) -> bool:
-        """Clear the current result and browsing history."""
         had_results = (
-            self.workspace.result is not None
-            or bool(self.workspace.result_history)
+            self._workspace.result is not None
+            or bool(self._workspace.result_history)
         )
-        self.workspace.result = None
-        self.workspace.result_history = ()
+        self._workspace.result = None
+        self._workspace.result_history = ()
         return had_results
 
     def _remember_result(
         self, result: Any, *, replace_history: bool = False
     ) -> None:
-        """Make a result current and remember it for later browsing."""
-        self.workspace.result = result
+        self._workspace.result = result
         if replace_history:
-            self.workspace.result_history = (result,)
+            self._workspace.result_history = (result,)
             return
-        self.workspace.result_history = (
-            result, *self.workspace.result_history
+        self._workspace.result_history = (
+            result, *self._workspace.result_history
         )[:_RESULT_HISTORY_LIMIT]
 
     def _set_directory(self, directory: Any) -> bool:
-        """Set a requested directory and report whether it actually changed."""
         if (
             directory is _KEEP_DIRECTORY
-            or directory == self.workspace.directory
+            or directory == self._workspace.directory
         ):
             return False
-        self.workspace.directory = directory
+        self._workspace.directory = directory
         return True
 
     def replace_structure(
@@ -214,10 +204,10 @@ class WorkspaceController(QObject):
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
         had_result = self._clear_result_history()
-        self.workspace.atoms = atoms
-        self.workspace.potential_path = potential_path
-        self.workspace.empty_spheres_added = None
-        self.workspace.restarted = restarted
+        self._workspace.atoms = atoms
+        self._workspace.potential_path = potential_path
+        self._workspace.empty_spheres_added = None
+        self._workspace.restarted = restarted
         directory_changed = self._set_directory(directory)
         self._changed()
         if had_result:
@@ -233,13 +223,6 @@ class WorkspaceController(QObject):
         *,
         expected_generation: Generation,
     ) -> DocumentChange | None:
-        """Apply an edit to a detached copy and atomically publish the result.
-
-        ``edit`` may run a long-lived dialog. Therefore the generation is
-        checked both before making the candidate and again after the callback
-        returns. Returning ``None`` means the edit was cancelled and leaves the
-        workspace untouched.
-        """
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
         source = self.atoms
@@ -253,10 +236,10 @@ class WorkspaceController(QObject):
             return DocumentChange.STALE
 
         had_result = self._clear_result_history()
-        self.workspace.atoms = atoms
-        self.workspace.restarted = True
-        self.workspace.potential_path = None
-        self.workspace.empty_spheres_added = None
+        self._workspace.atoms = atoms
+        self._workspace.restarted = True
+        self._workspace.potential_path = None
+        self._workspace.empty_spheres_added = None
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
@@ -272,10 +255,10 @@ class WorkspaceController(QObject):
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        had_result = self.workspace.result is not None
-        self.workspace.result = None
+        had_result = self._workspace.result is not None
+        self._workspace.result = None
         directory_changed = self._set_directory(directory)
-        self.workspace.input_parameters = parameters
+        self._workspace.input_parameters = parameters
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
@@ -285,11 +268,10 @@ class WorkspaceController(QObject):
         return DocumentChange.APPLIED
 
     def change_directory(self, directory: str | None) -> None:
-        """Change directory and invalidate any result bound to the old one."""
         if not self._set_directory(directory):
             return
-        had_result = self.workspace.result is not None
-        self.workspace.result = None
+        had_result = self._workspace.result is not None
+        self._workspace.result = None
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
@@ -301,21 +283,20 @@ class WorkspaceController(QObject):
         *,
         expected_generation: Generation,
     ) -> ResultAdoption:
-        """Install a fully loaded external result as a new document."""
         adoption = self._result_adoption(loaded)
         if not self._generation_is_current(expected_generation):
             return replace(adoption, adopted=False)
 
         self._remember_result(loaded.result, replace_history=True)
-        self.workspace.atoms = loaded.atoms
-        self.workspace.input_parameters = loaded.input_parameters
-        self.workspace.potential_path = (
+        self._workspace.atoms = loaded.atoms
+        self._workspace.input_parameters = loaded.input_parameters
+        self._workspace.potential_path = (
             str(loaded.potential_path)
             if loaded.atoms is not None
             else None
         )
-        self.workspace.empty_spheres_added = None
-        self.workspace.restarted = False
+        self._workspace.empty_spheres_added = None
+        self._workspace.restarted = False
         directory_changed = self._set_directory(loaded.directory)
         self._changed()
 
@@ -344,16 +325,15 @@ class WorkspaceController(QObject):
         *,
         expected_generation: Generation,
     ) -> ResultAdoption:
-        """Adopt a result if its calculation epoch is still current."""
         adoption = self._result_adoption(loaded)
         if not self._calculation_generation_is_current(expected_generation):
             return replace(adoption, adopted=False)
 
         if loaded.atoms is not None:
-            self.workspace.atoms = loaded.atoms
-            self.workspace.potential_path = str(loaded.potential_path)
+            self._workspace.atoms = loaded.atoms
+            self._workspace.potential_path = str(loaded.potential_path)
             if _result_is_scf(loaded.result):
-                self.workspace.restarted = False
+                self._workspace.restarted = False
         self._remember_result(loaded.result)
         self._result_changed()
 
@@ -364,11 +344,11 @@ class WorkspaceController(QObject):
 
     def reset(self) -> None:
         self._clear_result_history()
-        self.workspace.atoms = None
-        self.workspace.potential_path = None
-        self.workspace.input_parameters = None
-        self.workspace.empty_spheres_added = None
-        self.workspace.restarted = False
+        self._workspace.atoms = None
+        self._workspace.potential_path = None
+        self._workspace.input_parameters = None
+        self._workspace.empty_spheres_added = None
+        self._workspace.restarted = False
         self._set_directory(None)
         self._changed()
         self.resultChanged.emit(None)
@@ -379,17 +359,11 @@ class WorkspaceController(QObject):
     def use_for_new_calculation(
         self, *, expected_generation: Generation | None = None
     ) -> DocumentChange:
-        """Start a new calculation from the current structure and potential.
-
-        Clear only the current result and mark the workspace as restarted.
-        The structure, potential path, empty-sphere state and result history are
-        preserved as input/context for the new calculation.
-        """
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        had_result = self.workspace.result is not None
-        self.workspace.result = None
-        self.workspace.restarted = True
+        had_result = self._workspace.result is not None
+        self._workspace.result = None
+        self._workspace.restarted = True
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
@@ -402,14 +376,13 @@ class WorkspaceController(QObject):
         expected_generation: Generation,
         parameters: Mapping[str, Any] | None = None,
     ) -> DocumentChange:
-        """Commit one explicit empty-sphere search/recalculation transactionally."""
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
         source = self.atoms
         if source is None:
             raise ValueError("No structure is loaded.")
 
-        previous_count = self.workspace.empty_spheres_added or 0
+        previous_count = self._workspace.empty_spheres_added or 0
         updated, count, structure_changed = edit(source.copy(), previous_count)
         count = int(count)
         if count < 0:
@@ -418,12 +391,12 @@ class WorkspaceController(QObject):
             return DocumentChange.STALE
 
         result = EmptySpheresResult(found=count, parameters=parameters or {})
-        self.workspace.empty_spheres_added = count
+        self._workspace.empty_spheres_added = count
         if structure_changed:
             self._clear_result_history()
-            self.workspace.atoms = updated
-            self.workspace.potential_path = None
-            self.workspace.restarted = True
+            self._workspace.atoms = updated
+            self._workspace.potential_path = None
+            self._workspace.restarted = True
             self._changed()
         self._remember_result(result)
 
