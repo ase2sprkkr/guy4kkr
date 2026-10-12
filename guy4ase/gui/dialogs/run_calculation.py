@@ -235,10 +235,14 @@ class SprkkrRunWindow(QDialog):
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
         worker.cancelled.connect(self._on_cancelled)
-        if self._activity_started_callback is not None:
-            worker.activityStarted.connect(self._activity_started_callback)
-        if self._activity_ended_callback is not None:
-            worker.activityEnded.connect(self._activity_ended_callback)
+        worker.activityStarted.connect(
+            self._on_activity_started,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.activityEnded.connect(
+            self._on_activity_ended,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)
@@ -256,6 +260,16 @@ class SprkkrRunWindow(QDialog):
     def _thread_finished(self) -> None:
         if self._close_requested:
             self.close()
+
+    @pyqtSlot(object)
+    def _on_activity_started(self, run_id: object) -> None:
+        if self._activity_started_callback is not None:
+            self._activity_started_callback(run_id)
+
+    @pyqtSlot(object)
+    def _on_activity_ended(self, run_id: object) -> None:
+        if self._activity_ended_callback is not None:
+            self._activity_ended_callback(run_id)
 
     @pyqtSlot(str)
     def _set_status(self, text: str) -> None:

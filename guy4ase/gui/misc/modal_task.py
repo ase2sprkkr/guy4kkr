@@ -55,6 +55,26 @@ class _ModalTaskWorker(QObject):
             self.succeeded.emit(result)
 
 
+class _ModalTaskReceiver(QObject):
+    """Receive worker completion in the GUI thread and update the dialog."""
+
+    def __init__(self, dialog: _ModalTaskDialog) -> None:
+        super().__init__(dialog)
+        self._dialog = dialog
+        self.result: Any = _MISSING
+        self.error: Exception | None = None
+
+    @pyqtSlot(object)
+    def succeeded(self, value: Any) -> None:
+        self.result = value
+        self._dialog.finish_successfully()
+
+    @pyqtSlot(object)
+    def failed(self, exc: Exception) -> None:
+        self.error = exc
+        self._dialog.finish_with_error()
+
+
 def run_modal_task(
     parent: QWidget | None,
     operation: Callable[[], _T],
@@ -81,25 +101,19 @@ def run_modal_task(
     dialog.setAutoReset(False)
     dialog.setCancelButton(None)
 
-    result: Any = _MISSING
-    error: Exception | None = None
-
     thread = QThread()
     worker = _ModalTaskWorker(operation)
     worker.moveToThread(thread)
+    receiver = _ModalTaskReceiver(dialog)
 
-    def succeeded(value: Any) -> None:
-        nonlocal result
-        result = value
-        dialog.finish_successfully()
-
-    def failed(exc: Exception) -> None:
-        nonlocal error
-        error = exc
-        dialog.finish_with_error()
-
-    worker.succeeded.connect(succeeded)
-    worker.failed.connect(failed)
+    worker.succeeded.connect(
+        receiver.succeeded,
+        Qt.ConnectionType.QueuedConnection,
+    )
+    worker.failed.connect(
+        receiver.failed,
+        Qt.ConnectionType.QueuedConnection,
+    )
     worker.succeeded.connect(thread.quit)
     worker.failed.connect(thread.quit)
     worker.succeeded.connect(worker.deleteLater)
@@ -110,8 +124,8 @@ def run_modal_task(
     dialog.exec()
     thread.wait()
 
-    if error is not None:
-        raise error
-    if result is _MISSING:
+    if receiver.error is not None:
+        raise receiver.error
+    if receiver.result is _MISSING:
         raise RuntimeError("Modal task ended without a result.")
-    return result
+    return receiver.result
