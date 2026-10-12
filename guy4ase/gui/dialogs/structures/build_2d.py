@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -26,8 +25,14 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
+from guy4ase.gui.dialogs.structures.source import select_structure_source
 from guy4ase.gui.dialogs.structures.spacegroup_selector import select_spacegroup
 from guy4ase.gui.dialogs.structures.transforms import rotate_atoms, scale_atoms
+from guy4ase.gui.flows.structure_candidates import (
+    choose_structure_candidate,
+    create_structure_candidate,
+    edit_structure_candidate,
+)
 from guy4ase.gui.misc.dialog_flow import chain_dialogs
 from guy4ase.gui.plots.lattice import plot_structure_axis_projection
 from guy4ase.gui.widgets.structures.structure_pane import StructurePane
@@ -79,16 +84,12 @@ class Build2DStructureDialog(QDialog):
         right_group = QGroupBox("Replacement System")
         right_layout = QVBoxLayout(right_group)
 
-        right_buttons = QHBoxLayout()
-        self._load_right_btn = QPushButton("Load Structure...")
-        self._load_right_btn.clicked.connect(self._on_load_right)
-        right_buttons.addWidget(self._load_right_btn)
-
-        self._create_right_btn = QPushButton("Create Structure...")
-        self._create_right_btn.clicked.connect(self._on_create_right)
-        right_buttons.addWidget(self._create_right_btn)
-
-        right_layout.addLayout(right_buttons)
+        self._choose_right_btn = QPushButton("Choose Structure...")
+        self._choose_right_btn.setToolTip(
+            "Create, download, load, or reuse a recent replacement structure"
+        )
+        self._choose_right_btn.clicked.connect(self._on_choose_right)
+        right_layout.addWidget(self._choose_right_btn)
 
         self.right = StructurePane(
             empty_text="Vacuum", figure_size=(3.8, 2.8)
@@ -216,29 +217,35 @@ class Build2DStructureDialog(QDialog):
     def _structures_changed(self) -> None:
         self._update_result_preview()
 
-    def _on_load_right(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
+    def _on_choose_right(self) -> None:
+        candidate = select_structure_source(
             self,
-            "Load Right Structure",
-            "",
-            "Structure Files (*);;All Files (*)",
+            title="Choose Replacement Structure",
         )
-        if not file_path:
-            return
-        try:
-            self._set_right_atoms(ase_read(Path(file_path).resolve()))
-        except Exception as e:
-            self._set_status(f"Failed to load right structure: {str(e)}", error=True)
+        if candidate is not None:
+            self._set_right_atoms(candidate.atoms)
+
+    def _on_load_right(self) -> None:
+        """Compatibility entry point delegating to the shared candidate flow."""
+        candidate = choose_structure_candidate(
+            self,
+            title="Load Right Structure",
+            chooser=QFileDialog.getOpenFileName,
+            reader=ase_read,
+        )
+        if candidate is not None:
+            self._set_right_atoms(candidate.atoms)
 
     def _on_create_right(self) -> None:
-        result = chain_dialogs(
-            select_spacegroup,
-            select_site_elements,
-            parent=self,
+        """Compatibility entry point delegating to the shared candidate flow."""
+        candidate = create_structure_candidate(
+            self,
+            chain=chain_dialogs,
+            spacegroup_selector=select_spacegroup,
+            site_selector=select_site_elements,
         )
-        if result is None:
-            return
-        self._set_right_atoms(result)
+        if candidate is not None:
+            self._set_right_atoms(candidate.atoms)
 
     def _transform(self, pane: StructurePane, operation, description: str) -> None:
         if pane.atoms is None:
@@ -246,14 +253,16 @@ class Build2DStructureDialog(QDialog):
                 f"No structure available for {description.lower()}.", error=True
             )
             return
-        try:
-            updated = operation(pane.atoms, parent=self)
-            if updated is None:
-                return
-            pane.set_atoms(updated)
-            self._structures_changed()
-        except Exception as error:
-            self._set_status(f"{description} failed: {error}", error=True)
+        updated = edit_structure_candidate(
+            pane.atoms,
+            operation,
+            self,
+            error_title=description,
+        )
+        if updated is None:
+            return
+        pane.set_atoms(updated)
+        self._structures_changed()
 
     def _match_axis(
         self,
@@ -337,6 +346,7 @@ class Build2DStructureDialog(QDialog):
         if self._semiinfinite_atoms is None:
             return None
         return self._semiinfinite_atoms.copy()
+
 
 def select_build_2d_structure(
     atoms: Any,
