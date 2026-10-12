@@ -30,6 +30,10 @@ from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.physics.lattice import detect_structure_kind
 
 
+class _EmptySpheresBackendError(RuntimeError):
+    """Expected failure reported by the external empty-sphere finder."""
+
+
 def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
     """Explain that loaded atoms are not a supported bulk/layered document."""
     if detect_structure_kind(atoms) != "unknown":
@@ -179,27 +183,28 @@ def build_2d_structure(
             parent, "No Structure", "Load or create a structure first."
         )
         return None
-    try:
-        change = controller.apply_structure_edit(
-            lambda candidate: select_build_2d_structure(
-                candidate,
-                parent=parent,
-                surface_mode=surface_mode,
-            ),
-            expected_generation=generation,
+
+    def edit(candidate: Any, *, parent: QWidget | None = None) -> Any | None:
+        return select_build_2d_structure(
+            candidate,
+            parent=parent,
+            surface_mode=surface_mode,
         )
-        if change is None:
-            return None
-        if not document_change_applied(parent, change):
-            return None
-        return controller.atoms
-    except Exception as exc:  # noqa: BLE001 - dialog/backend boundary
-        QMessageBox.critical(
+
+    change = controller.apply_structure_edit(
+        lambda candidate: edit_structure_candidate(
+            candidate,
+            edit,
             parent,
-            "Build 2D Structure Error",
-            f"Failed to build 2D structure:\n{exc}",
-        )
+            error_title="Build 2D Structure Error",
+        ),
+        expected_generation=generation,
+    )
+    if change is None:
         return None
+    if not document_change_applied(parent, change):
+        return None
+    return controller.atoms
 
 
 def update_empty_spheres(
@@ -236,7 +241,10 @@ def update_empty_spheres(
             structure_changed = True
 
         base_count = len(atoms)
-        updated = add_empty_spheres(atoms, method="inhouse", **parameters)
+        try:
+            updated = add_empty_spheres(atoms, method="inhouse", **parameters)
+        except Exception as exc:  # noqa: BLE001 - optional finder/backend boundary
+            raise _EmptySpheresBackendError(str(exc)) from exc
         if updated is None:
             updated = atoms
         count = len(updated) - base_count
@@ -253,14 +261,15 @@ def update_empty_spheres(
             expected_generation=generation,
             parameters=parameters,
         )
-        if not document_change_applied(parent, change):
-            return False
-    except Exception as exc:  # noqa: BLE001 - optional finder/backend boundary
+    except _EmptySpheresBackendError as exc:
         QMessageBox.critical(
             parent,
             "Empty Spheres Error",
             f"Failed to update empty spheres:\n{exc}",
         )
+        return False
+
+    if not document_change_applied(parent, change):
         return False
 
     if controller.workspace.empty_spheres_added == 0:

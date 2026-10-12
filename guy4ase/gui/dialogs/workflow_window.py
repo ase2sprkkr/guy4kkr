@@ -624,14 +624,10 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            change = self.controller.use_for_new_calculation(
-                expected_generation=generation,
-            )
-            if not document_change_applied(self, change):
-                return
-        except Exception as exc:
-            QMessageBox.critical(self, "Cannot Start New Calculation", str(exc))
+        change = self.controller.use_for_new_calculation(
+            expected_generation=generation,
+        )
+        document_change_applied(self, change)
 
     def _start_over(self) -> None:
         answer = QMessageBox.question(
