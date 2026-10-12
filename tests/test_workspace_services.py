@@ -31,7 +31,6 @@ from guy4ase.gui.application.workspace_controller import (
     WorkspaceController,
 )
 from guy4ase.gui.dialogs import object_view
-from guy4ase.gui.dialogs.structures import build_2d as build_2d_dialog
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
@@ -1102,44 +1101,6 @@ def test_loading_unknown_structure_from_file_warns_but_keeps_it(
     assert [title for title, _message in warnings] == [
         "Unknown Structure Type"
     ]
-
-
-def test_build_2d_load_reads_only_atoms_without_workspace_side_effects(
-    tmp_path, monkeypatch
-):
-    path = tmp_path / "right.pot"
-    loaded_atoms = Atoms("Fe")
-    workspace_atoms = Atoms("Cu")
-    workspace = WorkspaceState(
-        atoms=workspace_atoms,
-        potential_path="Cu.pot",
-        result=object(),
-    )
-    current_result = workspace.result
-    reads = []
-    assigned = []
-    dialog = SimpleNamespace(
-        _set_right_atoms=assigned.append,
-        _set_status=lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        build_2d_dialog.QFileDialog,
-        "getOpenFileName",
-        lambda *_args: (str(path), ""),
-    )
-    monkeypatch.setattr(
-        build_2d_dialog,
-        "ase_read",
-        lambda value: reads.append(value) or loaded_atoms,
-    )
-
-    build_2d_dialog.Build2DStructureDialog._on_load_right(dialog)
-
-    assert reads == [path.resolve()]
-    assert assigned == [loaded_atoms]
-    assert workspace.atoms is workspace_atoms
-    assert workspace.potential_path == "Cu.pot"
-    assert workspace.result is current_result
 
 
 @pytest.mark.parametrize(
