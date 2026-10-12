@@ -46,6 +46,7 @@ from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
+    populate_recent_menu,
     recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
@@ -205,26 +206,15 @@ class MainWindow(QMainWindow):
         self._potential_path_label.setToolTip(self.controller.potential_path or "")
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
-        handlers = {
-            'structure': lambda path: self.open_recent_file('structure', path),
-            'input': lambda path: self.open_recent_file('input', path),
-            'output': lambda path: self.open_recent_file('output', path),
-        }
         menu = self._recent_menus[what]
         if menu is None:
             return
-        menu.clear()
-        recent_files = self.recent_history.paths(what)
-        if not recent_files:
-            empty_action = QAction("(No recent files)", self)
-            empty_action.setEnabled(False)
-            menu.addAction(empty_action)
-            return
-        handler = handlers[what]
-        for file_path in recent_files:
-            action = QAction(file_path, self)
-            action.triggered.connect(lambda _checked=False, p=file_path, h=handler: h(p))
-            menu.addAction(action)
+        populate_recent_menu(
+            menu,
+            self.recent_history,
+            what,
+            lambda path, item_kind=what: self.open_recent_file(item_kind, path),
+        )
 
     def _refresh_recent_menus(self) -> None:
         for what in ('structure', 'input', 'output'):
@@ -497,7 +487,6 @@ class MainWindow(QMainWindow):
         self._recent_start_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._recent_start_button.hide()
         welcome_layout.addWidget(self._recent_start_button, 0, Qt.AlignmentFlag.AlignCenter)
-
         welcome_layout.addStretch(1)
 
         self._left_stack.addWidget(self.welcome_widget)
