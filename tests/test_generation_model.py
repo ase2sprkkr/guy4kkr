@@ -36,7 +36,7 @@ def test_generation_major_and_minor_changes_have_distinct_semantics(tmp_path):
 
     result, loaded = _loaded(tmp_path, "first")
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=initial
+        loaded, expected_major=initial.major
     )
 
     assert adoption.adopted
@@ -57,11 +57,11 @@ def test_parallel_results_from_same_major_generation_are_both_adopted(tmp_path):
     second_result, second_loaded = _loaded(tmp_path, "second")
 
     first = controller.adopt_calculation_result(
-        first_loaded, expected_generation=source_generation
+        first_loaded, expected_major=source_generation.major
     )
     after_first = controller.generation
     second = controller.adopt_calculation_result(
-        second_loaded, expected_generation=source_generation
+        second_loaded, expected_major=source_generation.major
     )
 
     assert first.adopted
@@ -82,7 +82,7 @@ def test_result_minor_change_stales_full_revision_but_not_sibling_run(tmp_path):
     source_generation = controller.generation
     _result, loaded = _loaded(tmp_path, "first")
     assert controller.adopt_calculation_result(
-        loaded, expected_generation=source_generation
+        loaded, expected_major=source_generation.major
     ).adopted
 
     change = controller.apply_structure_edit(
@@ -102,7 +102,7 @@ def test_major_change_rejects_calculation_result(tmp_path):
 
     controller.replace_structure(Atoms("Cu"))
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=source_generation
+        loaded, expected_major=source_generation.major
     )
 
     assert not adoption.adopted

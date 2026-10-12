@@ -6,6 +6,7 @@ import pytest
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -67,7 +68,7 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         calculation_flow.run_calculation(
             controller,
             RecentFiles(),
-            SimpleNamespace(count=0),
+            ActiveRunRegistry(),
             None,
         )
 
@@ -94,11 +95,7 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = SimpleNamespace(
-        count=0,
-        register=lambda _run_id: None,
-        unregister=lambda _run_id: None,
-    )
+    active_runs = ActiveRunRegistry()
 
     def capture_start(window, request):
         window._test_request = request
@@ -118,18 +115,9 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
 
     monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
 
-    class Process:
-        def run(self):
+    class Runner:
+        def wait(self):
             return backend_result
-
-        def stop_the_process(self):
-            raise AssertionError("process must not be cancelled")
-
-    class Calculator:
-        def calculate(self, **_kwargs):
-            return Process()
-
-    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
 
     window = calculation_flow.run_calculation(
         controller,
@@ -140,6 +128,7 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     assert window is not None
 
     worker = run_dialog._SprkkrRunWorker(window._test_request)
+    monkeypatch.setattr(worker, "_launch", lambda _calculator: Runner())
     worker.finished.connect(window._on_finished)
     worker.run()
 

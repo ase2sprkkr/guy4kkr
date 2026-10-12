@@ -13,7 +13,7 @@ class _Parameters:
         return self
 
 
-def test_run_is_reserved_before_window_construction(monkeypatch, tmp_path):
+def test_run_flow_passes_backend_registry_to_window(monkeypatch, tmp_path):
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
@@ -23,13 +23,11 @@ def test_run_is_reserved_before_window_construction(monkeypatch, tmp_path):
     )
     recent = RecentFiles(tmp_path / "recent.json")
     active_runs = ActiveRunRegistry()
-    callbacks = {}
+    captured = {}
 
     class Window:
         def __init__(self, **kwargs):
-            assert active_runs.count == 1
-            assert kwargs.get("on_activity_started") is None
-            callbacks["ended"] = kwargs["on_activity_ended"]
+            captured.update(kwargs)
 
         def show(self):
             pass
@@ -44,13 +42,12 @@ def test_run_is_reserved_before_window_construction(monkeypatch, tmp_path):
     )
 
     assert window is not None
-    assert active_runs.count == 1
+    assert captured["run_registry"] is active_runs
+    assert captured["launch_lock"] is active_runs.launch_lock
+    assert active_runs.active == ()
 
-    callbacks["ended"](object())
-    assert active_runs.count == 0
 
-
-def test_failed_window_construction_releases_launch_reservation(
+def test_failed_window_construction_does_not_create_backend_run(
     monkeypatch, tmp_path
 ):
     controller = WorkspaceController(
@@ -64,7 +61,6 @@ def test_failed_window_construction_releases_launch_reservation(
 
     class Window:
         def __init__(self, **_kwargs):
-            assert active_runs.count == 1
             raise RuntimeError("window failed")
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
@@ -81,4 +77,4 @@ def test_failed_window_construction_releases_launch_reservation(
     else:
         raise AssertionError("window construction error must propagate")
 
-    assert active_runs.count == 0
+    assert active_runs.active == ()

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from threading import get_ident
 from time import monotonic
+from types import SimpleNamespace
 
 from ase import Atoms
+from ase2sprkkr.execution import RunConflictError, RunTarget
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.workspace_controller import CalculationRequest, Generation
@@ -47,22 +49,31 @@ def test_modal_task_completion_updates_dialog_in_gui_thread(monkeypatch):
         parent.close()
 
 
-def test_run_activity_callback_is_forwarded_in_gui_thread(monkeypatch, tmp_path):
+def test_run_conflict_prompt_is_forwarded_in_gui_thread(monkeypatch, tmp_path):
     app = _application()
     parent = QWidget()
     gui_thread = get_ident()
-    callback_threads = []
+    prompt_threads = []
+    target = RunTarget("local", (str(tmp_path / "Fe_SCF.out"),))
+    conflict = RunConflictError(
+        target,
+        (SimpleNamespace(target=target),),
+    )
 
-    class Process:
-        def run(self):
-            return object()
+    def launch(worker, _calculator):
+        decision = run_dialog._ConflictDecision()
+        worker.conflict.emit(conflict, decision)
+        assert not decision.wait(worker._cancellation)
+        return None
 
-    class Calculator:
-        def calculate(self, **_kwargs):
-            return Process()
+    monkeypatch.setattr(run_dialog._SprkkrRunWorker, "_launch", launch)
 
-    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
-    monkeypatch.setattr(run_dialog, "load_result", lambda *_args, **_kwargs: object())
+    def confirm(_parent, error):
+        assert error is conflict
+        prompt_threads.append(get_ident())
+        return False
+
+    monkeypatch.setattr(run_dialog, "_confirm_run_conflict", confirm)
 
     request = CalculationRequest(
         atoms=Atoms("Fe"),
@@ -73,14 +84,18 @@ def test_run_activity_callback_is_forwarded_in_gui_thread(monkeypatch, tmp_path)
     window = run_dialog.SprkkrRunWindow(
         request=request,
         parent=parent,
-        on_activity_ended=lambda _run_id: callback_threads.append(get_ident()),
     )
 
     deadline = monotonic() + 5
     try:
-        while not callback_threads and monotonic() < deadline:
+        while (
+            window._thread is not None
+            and window._thread.isRunning()
+            and monotonic() < deadline
+        ):
             app.processEvents()
-        assert callback_threads == [gui_thread]
+        app.processEvents()
+        assert prompt_threads == [gui_thread]
     finally:
         if window._thread is not None:
             window._thread.quit()

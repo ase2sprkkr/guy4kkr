@@ -85,7 +85,7 @@ def test_adopting_scf_result_with_new_potential_clears_restart_override():
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("SCF", new_atoms),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     assert adoption.adopted
@@ -101,7 +101,7 @@ def test_scf_result_without_new_potential_keeps_restart_override():
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("SCF", None),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     assert adoption.adopted
@@ -116,7 +116,7 @@ def test_non_scf_result_does_not_clear_restart_override():
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("DOS", _scf_atoms()),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     assert adoption.adopted

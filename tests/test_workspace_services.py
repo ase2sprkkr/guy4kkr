@@ -115,7 +115,7 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
             potential_error=None,
             directory=None,
         ),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     assert workspace.atoms is atoms
@@ -580,7 +580,7 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.output_path == output
@@ -619,7 +619,7 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.potential_error is error
@@ -645,7 +645,7 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.potential_path is None
@@ -675,7 +675,7 @@ def test_calculation_result_with_missing_referenced_potential_keeps_atoms(
 
     adoption = controller.adopt_calculation_result(
         loaded,
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
     assert not adoption.potential_error is None
     assert workspace.atoms is current_atoms
