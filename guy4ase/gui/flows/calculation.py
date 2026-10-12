@@ -46,15 +46,27 @@ def _select_profile(parent: QWidget) -> tuple[bool, str | None]:
     return True, dialog.profile_name()
 
 
+def _legacy_parent(parent_or_runs, parent):
+    """Accept the old ``active_runs, parent`` call shape during its removal."""
+    return parent_or_runs if parent is None else parent
+
+
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent: QWidget,
+    parent_or_runs,
+    parent: QWidget | None = None,
     *,
     select_profile: bool = True,
     profile_name: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Choose execution, open a run window and adopt its result."""
+    """Choose execution, open a run window and adopt its result.
+
+    ``parent_or_runs, parent`` temporarily accepts the former
+    ``active_runs, parent`` call shape. The legacy object is intentionally
+    ignored: execution ownership and collision policy no longer live in the GUI.
+    """
+    parent = _legacy_parent(parent_or_runs, parent)
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -110,12 +122,18 @@ def run_calculation(
 def configure_and_run_task(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent: QWidget,
-    task: str,
+    parent_or_runs,
+    parent_or_task,
+    task: str | None = None,
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
+    if task is None:
+        parent = parent_or_runs
+        task = parent_or_task
+    else:
+        parent = parent_or_task
     try:
         if (
             not controller.directory
