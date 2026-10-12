@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
 from guy4ase.gui.dialogs.structures.database import select_structure_prototype
@@ -173,6 +174,7 @@ def download_structure(
 
 def build_2d_structure(
     controller: WorkspaceController,
+    recent_files: RecentFiles,
     parent: QWidget,
     *,
     surface_mode: bool = False,
@@ -188,6 +190,7 @@ def build_2d_structure(
         return select_build_2d_structure(
             candidate,
             parent=parent,
+            recent_files=recent_files,
             surface_mode=surface_mode,
         )
 
