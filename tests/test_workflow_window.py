@@ -92,7 +92,6 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     assert gui._main_window is None
     window._open_expert_mode()
     expert = gui.create_main_window()
-    assert expert.workspace is workspace
     assert expert.controller is window.controller is gui.controller
     assert expert.recent_history is window.recent_history is gui.recent_files
     window.controller.replace_structure(
@@ -100,6 +99,7 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     )
     application.processEvents()
     assert workspace.atoms is not None
+    assert expert.controller.atoms is workspace.atoms
     expert.close()
     window.close()
 
@@ -153,8 +153,8 @@ def test_in_progress_scf_statuses_offer_continue(tmp_path):
         "ITR-R-BULK",
         "ITR-I-ZONE",
     ):
-        window.workspace.scf_status = lambda value=status: value
-        window.workspace.is_scf_converged = lambda: False
+        window.controller.scf_status = lambda value=status: value
+        window.controller.is_scf_converged = lambda: False
         window._refresh()
         application.processEvents()
         calculate = _actions_in_group(window, window._GROUP_CALCULATE)

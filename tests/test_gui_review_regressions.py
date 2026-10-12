@@ -17,6 +17,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog
 
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.dialogs import main_window
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
@@ -274,8 +275,8 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept, tmp_
         return result if accept else None
     monkeypatch.setattr(main_window, 'edit_input_parameters', edit)
     window._on_input_preview_double_click(None)
-    assert window.workspace.input_parameters is (result if accept else p)
-    assert window.workspace.input_parameters.task_name.lower() == 'dos'
+    assert window.controller.input_parameters is (result if accept else p)
+    assert window.controller.input_parameters.task_name.lower() == 'dos'
     window.close()
 
 
@@ -292,21 +293,26 @@ def test_corrupt_recent_history_is_ignored(tmp_path):
 
 
 def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
-    gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
+    workspace = WorkspaceState(
+        atoms=Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True),
+        input_parameters=InputParameters.create('scf'),
+        directory='/tmp/calculation',
+        potential_path='/tmp/potential',
+        result=object(),
+    )
+    gui = GuiApplication(
+        workspace=workspace,
+        recent_files_path=tmp_path / 'recent.json',
+    )
     window = gui.create_main_window()
-    window.workspace.atoms = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
-    window.workspace.input_parameters = InputParameters.create('scf')
-    window.workspace.directory = '/tmp/calculation'
-    window.workspace.potential_path = '/tmp/potential'
-    window.workspace.result = object()
 
     window.controller.reset()
 
-    assert window.workspace.atoms is None
-    assert window.workspace.input_parameters is None
-    assert window.workspace.directory is None
-    assert window.workspace.potential_path is None
-    assert window.workspace.result is None
+    assert window.controller.atoms is None
+    assert window.controller.input_parameters is None
+    assert window.controller.directory is None
+    assert window.controller.potential_path is None
+    assert window.controller.result is None
     window.close()
 
 
@@ -358,7 +364,7 @@ def test_scf_status_is_cleared_when_structure_is_reset(app, tmp_path):
     assert window.converged_label.text() == 'SCF Status: CONVERGED'
 
     window.controller.reset()
-    assert window.workspace.atoms is None
+    assert window.controller.atoms is None
     assert window.converged_label.text() == ''
     window.close()
 

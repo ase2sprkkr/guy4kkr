@@ -245,11 +245,11 @@ def test_structure_flow_loads_potential_and_document_metadata(
 
     assert loaded
     assert reads == [path.resolve()]
-    assert controller.workspace.atoms is atoms
-    assert controller.workspace.directory == str(tmp_path.resolve())
-    assert controller.workspace.potential_path == str(path.resolve())
-    assert controller.workspace.result is None
-    assert controller.workspace.input_parameters is parameters
+    assert controller.atoms is atoms
+    assert controller.directory == str(tmp_path.resolve())
+    assert controller.potential_path == str(path.resolve())
+    assert controller.result is None
+    assert controller.input_parameters is parameters
     assert history.paths("structure") == (str(path),)
 
 
@@ -275,9 +275,9 @@ def test_loading_nonpotential_structure_drops_old_potential_source(
     )
 
     assert loaded
-    assert controller.workspace.atoms is atoms
-    assert controller.workspace.potential_path is None
-    assert controller.workspace.result is None
+    assert controller.atoms is atoms
+    assert controller.potential_path is None
+    assert controller.result is None
 
 
 def test_input_flow_loads_parameters_and_directory(tmp_path, monkeypatch):
@@ -304,11 +304,11 @@ def test_input_flow_loads_parameters_and_directory(tmp_path, monkeypatch):
     )
 
     assert loaded
-    assert controller.workspace.input_parameters is parameters
-    assert controller.workspace.directory == str(tmp_path.resolve())
-    assert controller.workspace.result is None
-    assert controller.workspace.atoms is atoms
-    assert controller.workspace.potential_path == "Fe.pot"
+    assert controller.input_parameters is parameters
+    assert controller.directory == str(tmp_path.resolve())
+    assert controller.result is None
+    assert controller.atoms is atoms
+    assert controller.potential_path == "Fe.pot"
     assert history.paths("input") == (str(path),)
 
 
@@ -346,9 +346,9 @@ def test_input_flow_rejects_parameters_parsed_for_a_stale_document(
     assert not file_flows.load_input_parameters(
         controller, history, path, object()
     )
-    assert controller.workspace.atoms is replacement_atoms
-    assert controller.workspace.input_parameters is original_parameters
-    assert controller.workspace.directory == "original"
+    assert controller.atoms is replacement_atoms
+    assert controller.input_parameters is original_parameters
+    assert controller.directory == "original"
     assert history.paths("input") == ()
 
 
@@ -413,11 +413,11 @@ def test_use_for_new_calculation_changes_state_without_mutating_atoms():
     )
 
     assert restarted is DocumentChange.APPLIED
-    assert controller.workspace.atoms is atoms
+    assert controller.atoms is atoms
     assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
-    assert controller.workspace.potential_path == "Fe.pot"
-    assert controller.workspace.restarted
-    assert controller.workspace.result is None
+    assert controller.potential_path == "Fe.pot"
+    assert controller.restarted
+    assert controller.result is None
     assert controller.generation == generation.next_major()
 
 
@@ -586,10 +586,10 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
     assert adoption.output_path == output
     assert adoption.potential_path == potential
     assert adoption.potential_error is None
-    assert controller.workspace.result is result
-    assert controller.workspace.directory == str(tmp_path.resolve())
-    assert controller.workspace.atoms is atoms
-    assert controller.workspace.potential_path == str(potential.resolve())
+    assert controller.result is result
+    assert controller.directory == str(tmp_path.resolve())
+    assert controller.atoms is atoms
+    assert controller.potential_path == str(potential.resolve())
 
 
 def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
@@ -623,10 +623,10 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     )
 
     assert adoption.potential_error is error
-    assert controller.workspace.result is result
-    assert controller.workspace.directory == str(tmp_path.resolve())
-    assert controller.workspace.atoms is current_atoms
-    assert controller.workspace.potential_path == "Cu.pot"
+    assert controller.result is result
+    assert controller.directory == str(tmp_path.resolve())
+    assert controller.atoms is current_atoms
+    assert controller.potential_path == "Cu.pot"
 
 
 def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
@@ -1043,9 +1043,9 @@ def test_failed_file_flow_does_not_update_history(tmp_path, monkeypatch):
     )
     assert history.paths("structure") == ()
     assert controller.generation == generation
-    assert controller.workspace.atoms is atoms
-    assert controller.workspace.potential_path == "Cu.pot"
-    assert controller.workspace.result is result
+    assert controller.atoms is atoms
+    assert controller.potential_path == "Cu.pot"
+    assert controller.result is result
 
 
 def test_file_chooser_and_recent_use_the_same_load_function(
@@ -1129,7 +1129,7 @@ def test_loading_unknown_structure_from_database_warns(
     )
 
     assert function(controller, object()) is atoms
-    assert controller.workspace.atoms is atoms
+    assert controller.atoms is atoms
     assert warnings == ["Unknown Structure Type"]
 
 
