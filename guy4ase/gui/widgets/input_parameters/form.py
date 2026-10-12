@@ -412,7 +412,7 @@ class GuidedFormRenderer(QObject):
 
     def apply_presentation(self, *, emit: bool = True) -> None:
         """Apply rules to views without mutating parameters or undo history."""
-        context = PresentationContext(self.session.result(), self.atoms)
+        context = PresentationContext(self.session.working_parameters, self.atoms)
         rule_errors: dict[tuple[InputParameterPath, int | None], str] = {}
         for page in self.page_views:
             for group in page.groups:
