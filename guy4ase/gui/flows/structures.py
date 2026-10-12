@@ -8,7 +8,6 @@ from ase2sprkkr.bindings.empty_spheres import add_empty_spheres
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
-from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
@@ -215,12 +214,10 @@ def update_empty_spheres(
 ) -> bool:
     """Find empty spheres explicitly and publish the resulting structure."""
     generation = controller.generation
-    recalculate = bool(controller.empty_spheres_added)
-    previous_result = controller.result
+    previous_state = controller.empty_spheres
+    recalculate = previous_state is not None
     initial_parameters = (
-        previous_result.parameters
-        if isinstance(previous_result, EmptySpheresResult)
-        else None
+        previous_state.parameters if previous_state is not None else None
     )
     parameters = select_empty_spheres_parameters(
         initial=initial_parameters, parent=parent

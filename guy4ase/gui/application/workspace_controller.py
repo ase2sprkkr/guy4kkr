@@ -11,7 +11,12 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import Generation, ResultRecord, WorkspaceState
+from guy4ase.gui.application.workspace import (
+    EmptySpheresState,
+    Generation,
+    ResultRecord,
+    WorkspaceState,
+)
 
 _KEEP_DIRECTORY = object()
 _RESULT_HISTORY_LIMIT = 10
@@ -125,6 +130,10 @@ class WorkspaceController(QObject):
     @property
     def result_history(self) -> tuple[ResultRecord, ...]:
         return self._workspace.result_history
+
+    @property
+    def empty_spheres(self) -> EmptySpheresState | None:
+        return self._workspace.empty_spheres
 
     @property
     def empty_spheres_added(self) -> int | None:
@@ -244,7 +253,7 @@ class WorkspaceController(QObject):
         had_result = self._clear_result_history()
         self._workspace.atoms = atoms
         self._workspace.potential_path = potential_path
-        self._workspace.empty_spheres_added = None
+        self._workspace.empty_spheres = None
         self._workspace.restarted = restarted
         directory_changed = self._set_directory(directory)
         self._changed()
@@ -277,7 +286,7 @@ class WorkspaceController(QObject):
         self._workspace.atoms = atoms
         self._workspace.restarted = True
         self._workspace.potential_path = None
-        self._workspace.empty_spheres_added = None
+        self._workspace.empty_spheres = None
         self._changed()
         if had_result:
             self.resultChanged.emit(None)
@@ -332,7 +341,7 @@ class WorkspaceController(QObject):
             if loaded.atoms is not None
             else None
         )
-        self._workspace.empty_spheres_added = None
+        self._workspace.empty_spheres = None
         self._workspace.restarted = False
         directory_changed = self._set_directory(loaded.directory)
         self._changed()
@@ -399,7 +408,7 @@ class WorkspaceController(QObject):
         self._workspace.atoms = None
         self._workspace.potential_path = None
         self._workspace.input_parameters = None
-        self._workspace.empty_spheres_added = None
+        self._workspace.empty_spheres = None
         self._workspace.restarted = False
         self._set_directory(None)
         self._changed()
@@ -434,16 +443,15 @@ class WorkspaceController(QObject):
         if source is None:
             raise ValueError("No structure is loaded.")
 
-        previous_count = self._workspace.empty_spheres_added or 0
+        previous_state = self._workspace.empty_spheres
+        previous_count = previous_state.count if previous_state is not None else 0
         updated, count, structure_changed = edit(source.copy(), previous_count)
-        count = int(count)
-        if count < 0:
-            raise ValueError("Empty-sphere count cannot be negative.")
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
 
-        result = EmptySpheresResult(found=count, parameters=parameters or {})
-        self._workspace.empty_spheres_added = count
+        empty_spheres = EmptySpheresState(count=count, parameters=parameters or {})
+        result = EmptySpheresResult(found=empty_spheres.count)
+        self._workspace.empty_spheres = empty_spheres
         if structure_changed:
             self._clear_result_history()
             self._workspace.atoms = updated
