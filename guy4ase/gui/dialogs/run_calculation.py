@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from typing import Any
 
 from ase2sprkkr.ase.symbols import filename_from_symbols
@@ -62,6 +62,13 @@ class _RunCancellation:
             self._runner = runner
             return True
 
+    @staticmethod
+    def _cancel_runner(runner: Any) -> None:
+        try:
+            runner.cancel()
+        except Exception:  # noqa: BLE001 - backend cancellation boundary
+            logger.exception("Failed to cancel SPR-KKR calculation")
+
     def request(self) -> None:
         with self._lock:
             if self._requested:
@@ -70,7 +77,12 @@ class _RunCancellation:
             runner = self._runner
 
         if runner is not None:
-            runner.cancel()
+            Thread(
+                target=self._cancel_runner,
+                args=(runner,),
+                name="sprkkr-cancel",
+                daemon=True,
+            ).start()
 
 
 class _ConflictDecision:
