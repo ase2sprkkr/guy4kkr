@@ -44,7 +44,12 @@ class ResultRecord:
 
 @dataclass
 class WorkspaceState:
-    """Mutable document storage owned by ``WorkspaceController``."""
+    """Mutable document storage owned by ``WorkspaceController``.
+
+    ``generation`` is part of the stored state, not controller-local metadata.
+    A restored workspace therefore carries the revision against which its
+    current result provenance and outstanding calculation requests are judged.
+    """
 
     atoms: Any | None = None
     input_parameters: Any | None = None
@@ -57,6 +62,7 @@ class WorkspaceState:
     # positive = number of trailing empty-sphere sites added by Guy4ASE.
     empty_spheres_added: int | None = None
     restarted: bool = False
+    generation: Generation = Generation()
 
     def structure_kind(self) -> StructureKind | None:
         """Classify the current structure directly from ``atoms``."""
@@ -97,12 +103,13 @@ class WorkspaceState:
 
     def has_vacuum_sites(self) -> bool:
         """Return whether the current structure contains pure vacuum sites."""
-        atoms = self.atoms
-        if atoms is None:
+        if self.atoms is None:
             return False
-        if isinstance(atoms, SPRKKRAtoms):
-            return any(site.is_vacuum() for site in atoms.sites)
-        return any(int(number) == 0 for number in getattr(atoms, "numbers", ()))
+        if isinstance(self.atoms, SPRKKRAtoms):
+            return any(site.is_vacuum() for site in self.atoms.sites)
+        return any(
+            int(number) == 0 for number in getattr(self.atoms, "numbers", ())
+        )
 
     def empty_spheres_action(self) -> str | None:
         """Return ``add``/``recalculate`` for the explicit ES workflow.

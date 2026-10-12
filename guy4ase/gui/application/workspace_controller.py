@@ -82,8 +82,8 @@ class WorkspaceController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._generation = Generation()
         self._workspace = workspace or WorkspaceState()
+        self._generation = self._workspace.generation
         history = tuple(
             record
             if isinstance(record, ResultRecord)
@@ -92,6 +92,12 @@ class WorkspaceController(QObject):
         )
         if self._workspace.result is not None and not history:
             history = (ResultRecord(self._workspace.result, self._generation),)
+        if history and history[0].current:
+            if history[0].generation != self._generation:
+                raise ValueError(
+                    "Current result provenance does not match workspace generation: "
+                    f"{history[0].generation!r} != {self._generation!r}."
+                )
         self._workspace.result_history = history
 
     @property
@@ -175,9 +181,11 @@ class WorkspaceController(QObject):
             for record in self._workspace.result_history
         )
         self._generation = self._generation.next_major()
+        self._workspace.generation = self._generation
 
     def _result_changed(self) -> None:
         self._generation = self._generation.next_minor()
+        self._workspace.generation = self._generation
 
     def _clear_result_history(self) -> bool:
         had_results = (
