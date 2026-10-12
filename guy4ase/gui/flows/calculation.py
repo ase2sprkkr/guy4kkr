@@ -5,13 +5,16 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
+from guy4ase.gui.dialogs.profiles import (
+    ProfileSelectionDialog,
+    profile_description,
+)
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
@@ -35,17 +38,32 @@ def choose_working_directory(
     return True
 
 
+def _select_profile(parent: QWidget) -> tuple[bool, str | None]:
+    """Run the post-parameter execution step and preserve automatic profiles."""
+    dialog = ProfileSelectionDialog(parent)
+    if dialog.exec() != dialog.DialogCode.Accepted:
+        return False, None
+    return True, dialog.profile_name()
+
+
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    active_runs: ActiveRunRegistry,
     parent: QWidget,
+    *,
+    select_profile: bool = True,
+    profile_name: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Open a run window and adopt its result through the controller."""
+    """Choose execution, open a run window and adopt its result."""
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
         return None
+
+    if select_profile:
+        accepted, profile_name = _select_profile(parent)
+        if not accepted:
+            return None
 
     def adoption_completed(adoption) -> None:
         if adoption.output_path is not None:
@@ -73,10 +91,15 @@ def run_calculation(
         )
         adoption_completed(adoption)
 
+    try:
+        description = profile_description(profile_name)
+    except (KeyError, TypeError, ValueError):
+        description = None
+
     window = SprkkrRunWindow(
         request=request,
-        run_registry=active_runs,
-        launch_lock=active_runs.launch_lock,
+        profile_name=profile_name,
+        profile_description=description,
         parent=parent,
         on_finished=finished,
     )
@@ -87,13 +110,12 @@ def run_calculation(
 def configure_and_run_task(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    active_runs: ActiveRunRegistry,
     parent: QWidget,
     task: str,
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
-    """Configure one Guided task, commit it, and start the calculation."""
+    """Configure one Guided task, commit it, choose execution, and run it."""
     try:
         if (
             not controller.directory
@@ -134,7 +156,6 @@ def configure_and_run_task(
         return run_calculation(
             controller,
             recent_files,
-            active_runs,
             parent,
         )
     except (ImportError, ModuleNotFoundError) as exc:
