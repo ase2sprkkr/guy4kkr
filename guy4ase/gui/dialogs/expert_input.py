@@ -218,6 +218,8 @@ def select_input_parameters(
     atoms: Any,
     parent: QWidget | None = None,
     task: str = 'scf',
+    *,
+    dataset_default_mode: str,
 ) -> InputParameters | None:
     """Create fresh parameters for a task and open the expert editor."""
     from importlib import import_module
@@ -227,5 +229,5 @@ def select_input_parameters(
     )
     params_def = task_module.input_parameters()
     params = params_def.create_object()
-    apply_default_dataset(params, atoms)
+    apply_default_dataset(params, dataset_default_mode, atoms)
     return edit_input_parameters(params, parent=parent, atoms=atoms)
