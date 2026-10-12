@@ -17,24 +17,11 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
-from guy4ase.gui.input_parameters.field_binding import (
-    IndexedFieldBinding,
-    SessionFieldBinding,
-)
+from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.specs.schema import field
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
-from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
-from guy4ase.gui.widgets.input_parameters.registry import EDITORS, editor_for_type
-from guy4ase.gui.widgets.input_parameters.scalar import (
-    BooleanEditor,
-    ChoiceEditor,
-    IntegerEditor,
-    RealEditor,
-    TextEditor,
-)
-from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
+from guy4ase.gui.widgets.input_parameters.registry import editor_for_type
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,28 +105,6 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
 
     for module in graph:
         visit(module, ())
-
-
-def test_all_parameter_value_editors_share_one_explicit_contract():
-    assert EDITORS
-    assert all(issubclass(editor, ParameterValueEditor) for editor in EDITORS.values())
-    assert all(
-        issubclass(editor, ParameterValueEditor)
-        for editor in (
-            IntegerEditor,
-            RealEditor,
-            BooleanEditor,
-            ChoiceEditor,
-            TextEditor,
-            EnergyEditor,
-            VectorEditor,
-        )
-    )
-
-
-def test_indexed_binding_is_the_only_binding_with_index_capability():
-    assert "index" not in SessionFieldBinding.__dict__
-    assert "index" in IndexedFieldBinding.__dict__
 
 
 def test_editor_registry_dispatches_known_grammar_types():

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
+from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.expert_fields import ExpertFieldSpec
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
@@ -33,7 +33,7 @@ class ExpertFieldEditorDialog(QDialog):
         super().__init__(parent)
         self.session = create_input_parameters_session(parameters, self)
         self._path = path
-        option = resolve_option(self.session.working_parameters, path)
+        option = self.session.option(path)
 
         self.setWindowTitle(f"Edit {'.'.join(path)}")
         self.setModal(True)

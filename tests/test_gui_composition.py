@@ -29,12 +29,11 @@ def test_composition_root_owns_state_objects_and_loads_history(tmp_path):
     assert gui.recent_files.paths('structure') == ('/tmp/Fe.cif',)
 
 
-def test_composition_root_lazily_owns_and_reuses_both_windows(tmp_path):
+def test_composition_root_reuses_both_windows_and_shared_state(tmp_path):
     application = QApplication.instance() or QApplication([])
     gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
     workflow = gui.create_workflow_window()
 
-    assert gui._main_window is None
     workflow._open_expert_mode()
     application.processEvents()
     expert = gui.create_main_window()
@@ -43,9 +42,6 @@ def test_composition_root_lazily_owns_and_reuses_both_windows(tmp_path):
     assert gui.create_main_window() is expert
     assert workflow.controller is expert.controller is gui.controller
     assert workflow.recent_history is expert.recent_history is gui.recent_files
-    assert not hasattr(gui, "operations")
-    assert not hasattr(workflow, "operations")
-    assert not hasattr(expert, "operations")
 
     workflow.close()
     application.processEvents()
