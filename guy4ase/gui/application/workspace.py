@@ -1,7 +1,10 @@
 """Mutable workspace storage owned by ``WorkspaceController``."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
@@ -42,6 +45,25 @@ class ResultRecord:
         return not self.current
 
 
+@dataclass(frozen=True)
+class EmptySpheresState:
+    """Provenance of the latest explicit empty-sphere search."""
+
+    count: int
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        count = int(self.count)
+        if count < 0:
+            raise ValueError("Empty-sphere count cannot be negative.")
+        object.__setattr__(self, "count", count)
+        object.__setattr__(
+            self,
+            "parameters",
+            MappingProxyType(deepcopy(dict(self.parameters))),
+        )
+
+
 @dataclass
 class WorkspaceState:
     """Mutable document storage owned by ``WorkspaceController``.
@@ -58,11 +80,18 @@ class WorkspaceState:
     result: Any | None = None
     # Results available for browsing in the UI, newest first, with provenance.
     result_history: tuple[ResultRecord, ...] = ()
-    # None = not searched / provenance unknown; 0 = searched and none found;
-    # positive = number of trailing empty-sphere sites added by Guy4ASE.
-    empty_spheres_added: int | None = None
+    # None = not searched / provenance unknown. Otherwise this records both the
+    # generated trailing-site count and the parameters used for the search.
+    empty_spheres: EmptySpheresState | None = None
     restarted: bool = False
     generation: Generation = Generation()
+
+    @property
+    def empty_spheres_added(self) -> int | None:
+        """Return the generated-site count derived from empty-sphere state."""
+        if self.empty_spheres is None:
+            return None
+        return self.empty_spheres.count
 
     def structure_kind(self) -> StructureKind | None:
         """Classify the current structure directly from ``atoms``."""
@@ -120,7 +149,7 @@ class WorkspaceState:
         """
         if self.atoms is None:
             return None
-        if self.empty_spheres_added is not None:
+        if self.empty_spheres is not None:
             return "recalculate"
         if self.has_vacuum_sites():
             return None
