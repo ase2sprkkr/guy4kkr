@@ -298,7 +298,6 @@ def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
         input_parameters=InputParameters.create('scf'),
         directory='/tmp/calculation',
         potential_path='/tmp/potential',
-        result=object(),
     )
     gui = GuiApplication(
         workspace=workspace,

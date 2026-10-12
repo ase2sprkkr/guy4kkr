@@ -1,4 +1,4 @@
-"""Stateless Qt workflow for running and adopting a calculation."""
+"""Stateless Qt workflow for running and recording a calculation."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,13 +11,19 @@ from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
-from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
+from guy4ase.gui.dialogs.guided_input import (
+    GuidedInputParametersDialog,
+    select_guided_input_parameters,
+)
 from guy4ase.gui.dialogs.profiles import (
     ProfileSelectionDialog,
     profile_description,
 )
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
+
+
+_POST_SCF_TASKS = {"xas", "arpes", "dos", "bsf", "jxc"}
 
 
 def choose_working_directory(
@@ -73,6 +79,18 @@ def _launch_parent_and_profile_policy(parent_or_runs, parent):
     )
 
 
+def _task_available_on_workspace(
+    controller: WorkspaceController,
+    task: str,
+) -> bool:
+    """Return whether the active workspace state can run ``task`` now."""
+    if controller.atoms is None:
+        return False
+    if task.lower() in _POST_SCF_TASKS:
+        return controller.is_scf_converged()
+    return True
+
+
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
@@ -83,7 +101,7 @@ def run_calculation(
     profile_name: str | None = None,
     position_like_window: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Choose execution, open a run window and adopt its result.
+    """Choose execution, run a task and record its immutable provenance.
 
     ``parent_or_runs, parent`` temporarily accepts the former
     ``active_runs, parent`` call shape. The legacy object has no execution
@@ -113,26 +131,18 @@ def run_calculation(
     def adoption_completed(adoption) -> None:
         if adoption.output_path is not None:
             recent_files.remember("output", adoption.output_path)
-        if not adoption.adopted:
-            QMessageBox.information(
-                parent,
-                "Calculation Result Not Adopted",
-                "The document changed after this calculation was requested. "
-                "The result remains available in this run window, but it did "
-                "not replace the current workspace.",
-            )
         if adoption.potential_error is not None:
             QMessageBox.warning(
                 parent,
                 "Potential Load Warning",
-                "The calculation finished, but its potential could not be "
-                f"loaded:\n{adoption.potential_error}",
+                "The calculation finished and was recorded, but its potential "
+                f"could not be loaded:\n{adoption.potential_error}",
             )
 
     def finished(loaded) -> None:
         adoption = controller.adopt_calculation_result(
             loaded,
-            expected_major=request.generation.major,
+            request=request,
         )
         adoption_completed(adoption)
 
@@ -218,3 +228,77 @@ def configure_and_run_task(
             f"The {task.upper()} task is not available:\n{exc}",
         )
         return None
+
+
+def recompute_result(
+    controller: WorkspaceController,
+    recent_files: RecentFiles,
+    parent_or_runs,
+    parent: QWidget,
+    result_id: int,
+) -> SprkkrRunWindow | None:
+    """Re-run historical settings on the state active in the workspace.
+
+    Historical input parameters are only an editable starting point. Structure
+    and potential always come from the current workspace, so selecting an old
+    result never silently switches calculation lineage.
+    """
+    record = controller.result_store.result(result_id)
+    try:
+        task = str(record.result.task_name).strip().lower()
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not task or record.input_parameters is None:
+        return None
+
+    if not _task_available_on_workspace(controller, task):
+        QMessageBox.information(
+            parent,
+            "Task Not Available",
+            (
+                f"{task.upper()} cannot be run with the potential currently active "
+                "in the workspace."
+            ),
+        )
+        return None
+
+    if not controller.directory and not choose_working_directory(
+        controller,
+        parent,
+        title="Choose the directory for this calculation",
+    ):
+        return None
+
+    generation = controller.generation
+    atoms = controller.atoms
+    if atoms is None:
+        return None
+
+    try:
+        parameters = record.input_parameters.copy(copy_values=True)
+    except AttributeError:
+        return None
+    dialog = GuidedInputParametersDialog(
+        task,
+        parameters,
+        parent=parent,
+        atoms=atoms,
+    )
+    if dialog.exec() != dialog.DialogCode.Accepted:
+        return None
+
+    if not document_change_applied(
+        parent,
+        controller.replace_input_parameters(
+            dialog.parameters(),
+            expected_generation=generation,
+        ),
+    ):
+        return None
+    return run_calculation(
+        controller,
+        recent_files,
+        parent_or_runs,
+        parent,
+        position_like_window="guided-input",
+    )

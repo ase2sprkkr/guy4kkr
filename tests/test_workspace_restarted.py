@@ -12,6 +12,12 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
+class _Parameters:
+    def copy(self, *, copy_values: bool):
+        assert copy_values
+        return _Parameters()
+
+
 def _scf_atoms(status="CONVERGED"):
     atoms = SPRKKRAtoms.promote_ase_atoms(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
@@ -31,6 +37,17 @@ def _loaded_result(task, atoms):
         atoms=atoms,
         potential_error=None,
         directory=None,
+    )
+
+
+def _controller(*, restarted=True):
+    return WorkspaceController(
+        WorkspaceState(
+            atoms=_scf_atoms(),
+            input_parameters=_Parameters(),
+            directory="calculation",
+            restarted=restarted,
+        )
     )
 
 
@@ -64,6 +81,7 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
 def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     atoms = _scf_atoms()
     controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(
         expected_generation=controller.generation
@@ -75,63 +93,62 @@ def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     assert controller.restarted
     assert controller.scf_status() == "START"
     assert not controller.is_scf_converged()
+    assert controller.state_id != previous_state_id
 
 
-def test_adopting_scf_result_with_new_potential_clears_restart_override():
-    controller = WorkspaceController(
-        WorkspaceState(atoms=_scf_atoms(), restarted=True)
-    )
+def test_active_scf_result_with_new_potential_clears_restart_override():
+    controller = _controller()
+    request = controller.create_calculation_request()
     new_atoms = _scf_atoms()
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("SCF", new_atoms),
-        expected_major=controller.generation.major,
+        request=request,
     )
 
     assert adoption.adopted
+    assert adoption.workspace_updated
     assert controller.atoms is new_atoms
     assert not controller.restarted
     assert controller.is_scf_converged()
 
 
 def test_scf_result_without_new_potential_keeps_restart_override():
-    controller = WorkspaceController(
-        WorkspaceState(atoms=_scf_atoms(), restarted=True)
-    )
+    controller = _controller()
+    request = controller.create_calculation_request()
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("SCF", None),
-        expected_major=controller.generation.major,
+        request=request,
     )
 
     assert adoption.adopted
+    assert not adoption.workspace_updated
     assert controller.restarted
     assert not controller.is_scf_converged()
 
 
 def test_non_scf_result_does_not_clear_restart_override():
-    controller = WorkspaceController(
-        WorkspaceState(atoms=_scf_atoms(), restarted=True)
-    )
+    controller = _controller()
+    request = controller.create_calculation_request()
 
     adoption = controller.adopt_calculation_result(
         _loaded_result("DOS", _scf_atoms()),
-        expected_major=controller.generation.major,
+        request=request,
     )
 
     assert adoption.adopted
+    assert not adoption.workspace_updated
     assert controller.restarted
 
 
-def test_external_result_starts_new_document_without_restart_override():
-    controller = WorkspaceController(
-        WorkspaceState(atoms=_scf_atoms(), restarted=True)
-    )
+def test_external_result_does_not_clear_restart_override():
+    controller = _controller()
 
     adoption = controller.adopt_external_result(
         _loaded_result("DOS", _scf_atoms()),
-        expected_generation=controller.generation,
     )
 
     assert adoption.adopted
-    assert not controller.restarted
+    assert not adoption.workspace_updated
+    assert controller.restarted

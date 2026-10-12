@@ -13,6 +13,7 @@ from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
+from guy4ase.gui.flows import calculation as calculation_flow
 
 
 class GuiApplication(QObject):
@@ -51,6 +52,7 @@ class GuiApplication(QObject):
                 open_expert=self.show_main_window,
                 settings=self.settings,
             )
+            self._wire_result_actions(self._workflow_window)
         return self._workflow_window
 
     def create_main_window(self) -> MainWindow:
@@ -62,7 +64,32 @@ class GuiApplication(QObject):
                 self.active_runs,
                 self.settings,
             )
+            self._wire_result_actions(self._main_window)
         return self._main_window
+
+    def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
+        """Connect result browsing to explicit draft-changing actions."""
+        widget = window._result_actions_widget
+        if widget is None:
+            return
+
+        def refresh_result_context(*_args) -> None:
+            widget.set_current_structure_id(self.controller.structure_id)
+            widget.set_results(self.controller.result_store)
+
+        widget.useStructureRequested.connect(self.controller.use_result_structure)
+        widget.recomputeRequested.connect(
+            lambda result_id, target=window: calculation_flow.recompute_result(
+                self.controller,
+                self.recent_files,
+                self.active_runs,
+                target,
+                result_id,
+            )
+        )
+        self.controller.structureChanged.connect(refresh_result_context)
+        self.controller.resultChanged.connect(refresh_result_context)
+        refresh_result_context()
 
     def show_workflow_window(self) -> None:
         """Show and activate the workflow view."""

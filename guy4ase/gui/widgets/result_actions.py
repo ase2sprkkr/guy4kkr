@@ -1,35 +1,35 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
 import logging
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QResizeEvent
 from PyQt6.QtWidgets import (
-    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QStyle,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from guy4ase.gui.application.workspace import ResultRecord
+from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.physics.composition import structure_formula
 
 
 logger = logging.getLogger(__name__)
 
-_PLOT_ICON = (
-    icon_path("labplot-xy-interpolation-curve.svg")
-)
-
+_PLOT_ICON = icon_path("labplot-xy-interpolation-curve.svg")
 _STANDARD_ICONS = {
     "save": QStyle.StandardPixmap.SP_DialogSaveButton,
     "open": QStyle.StandardPixmap.SP_FileDialogContentsView,
@@ -37,15 +37,14 @@ _STANDARD_ICONS = {
     "edit": QStyle.StandardPixmap.SP_FileDialogDetailedView,
     "data": QStyle.StandardPixmap.SP_FileDialogDetailedView,
 }
-
 _ACTION_LABELS = {
     "data": "View data",
     "open_directory": "Open containing directory",
 }
+_RESULT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 
 
 def result_action_icon(style: QStyle, action: str) -> QIcon:
-    """Return the shared icon for an output-value action."""
     if action == "plot":
         return QIcon(str(_PLOT_ICON))
     return style.standardIcon(
@@ -54,7 +53,6 @@ def result_action_icon(style: QStyle, action: str) -> QIcon:
 
 
 def result_action_tooltip(value, action: str) -> str:
-    """Describe a result action using the value's short help text."""
     return _action_tooltip(action, getattr(value, "info", ""))
 
 
@@ -64,8 +62,6 @@ def _action_tooltip(action: str, info: str) -> str:
 
 
 class ElidedValueLabel(QLabel):
-    """A single-line value label that elides text while retaining its full tooltip."""
-
     def __init__(self, text: str, parent: QWidget | None = None):
         super().__init__(parent)
         self._full_text = text
@@ -81,15 +77,20 @@ class ElidedValueLabel(QLabel):
 
     def _update_text(self) -> None:
         width = max(0, self.contentsRect().width())
-        self.setText(self.fontMetrics().elidedText(
-            self._full_text,
-            Qt.TextElideMode.ElideRight,
-            width,
-        ))
+        self.setText(
+            self.fontMetrics().elidedText(
+                self._full_text,
+                Qt.TextElideMode.ElideRight,
+                width,
+            )
+        )
 
 
 class ResultActionsWidget(QWidget):
-    """Shared presentation of result values and their available actions."""
+    """Browse calculation history grouped by formula and real lineage forks."""
+
+    useStructureRequested = pyqtSignal(int)
+    recomputeRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -104,16 +105,31 @@ class ResultActionsWidget(QWidget):
         self._show_values_without_actions = show_values_without_actions
         self._empty_text = empty_text
         self._row_count = 0
-        self._results: tuple[ResultRecord, ...] = ()
+        self._records: dict[int, ResultRecord] = {}
+        self._current_structure_id: int | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._selector = QComboBox(self)
+        self._selector = QTreeWidget(self)
+        self._selector.setHeaderHidden(True)
         self._selector.setToolTip("Select a result")
-        self._selector.currentIndexChanged.connect(self._select_result)
+        self._selector.currentItemChanged.connect(self._select_result)
         self._selector.hide()
         layout.addWidget(self._selector)
+
+        self._record_actions = QWidget(self)
+        record_actions_layout = QHBoxLayout(self._record_actions)
+        record_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._use_structure_button = QPushButton("Use this structure", self._record_actions)
+        self._use_structure_button.clicked.connect(self._use_selected_structure)
+        record_actions_layout.addWidget(self._use_structure_button)
+        self._recompute_button = QPushButton("Recompute", self._record_actions)
+        self._recompute_button.clicked.connect(self._recompute_selected)
+        record_actions_layout.addWidget(self._recompute_button)
+        record_actions_layout.addStretch(1)
+        self._record_actions.hide()
+        layout.addWidget(self._record_actions)
 
         self._empty_label = QLabel(empty_text, self)
         self._empty_label.setWordWrap(True)
@@ -136,62 +152,201 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
-    def set_results(self, results: Iterable[ResultRecord]) -> None:
-        """Show a newest-first result history with provenance."""
-        new_results = tuple(results)
-        same_history = (
-            len(new_results) == len(self._results)
-            and all(
-                current is previous
-                for current, previous in zip(new_results, self._results)
-            )
-        )
-        selected = self._selector.currentIndex()
+    def set_current_structure_id(self, structure_id: int | None) -> None:
+        self._current_structure_id = structure_id
+        self._refresh_record_actions(self._record_for_item(self._selector.currentItem()))
 
-        self._results = new_results
+    def set_results(
+        self, results: ResultStore | Iterable[ResultRecord]
+    ) -> None:
+        """Render results without assuming they are current workspace state."""
+        selected_id = self._selected_result_id()
+        store = results if isinstance(results, ResultStore) else None
+        records = store.results if store is not None else tuple(results)
+        self._records = {record.id: record for record in records}
+
+        parent_by_state = {
+            record.output_state_id: record.input_state_id
+            for record in records
+            if record.output_state_id is not None
+        }
+        children: dict[int, list[int]] = {}
+        for state_id, parent_id in parent_by_state.items():
+            if parent_id is not None:
+                children.setdefault(parent_id, []).append(state_id)
+        child_ids = {key: tuple(sorted(value)) for key, value in children.items()}
+
+        def branch_path(record: ResultRecord) -> tuple[int, ...]:
+            if store is not None:
+                return store.branch_path(record)
+            state_id = record.output_state_id or record.input_state_id
+            path: list[int] = []
+            while state_id is not None and state_id in parent_by_state:
+                parent_id = parent_by_state[state_id]
+                if parent_id is None:
+                    break
+                siblings = child_ids.get(parent_id, ())
+                if len(siblings) > 1:
+                    path.append(siblings.index(state_id) + 1)
+                state_id = parent_id
+            path.reverse()
+            return tuple(path)
+
         self._selector.blockSignals(True)
         try:
             self._selector.clear()
-            for index, record in enumerate(self._results):
-                self._selector.addItem(self._result_label(record, index))
-            if not self._results:
-                selected = -1
-            elif not same_history or not 0 <= selected < len(self._results):
-                selected = 0
-            self._selector.setCurrentIndex(selected)
+            branch_nodes: dict[tuple[int | None, tuple[int, ...]], QTreeWidgetItem] = {}
+            grouped: dict[int | None, list[ResultRecord]] = {}
+            for record in records:
+                grouped.setdefault(record.structure_id, []).append(record)
+
+            formula_counts: dict[str, int] = {}
+            for structure_id, group in grouped.items():
+                if structure_id is None:
+                    formula = "Unknown structure"
+                elif store is not None:
+                    formula = store.structure(structure_id).formula
+                else:
+                    atoms = next((record.atoms for record in group if record.atoms is not None), None)
+                    formula = structure_formula(atoms) if atoms is not None else "Structure"
+                    formula = formula or "Structure"
+                formula_counts[formula] = formula_counts.get(formula, 0) + 1
+                number = formula_counts[formula]
+                title = formula if number == 1 else f"{formula} ({number})"
+
+                structure_item = QTreeWidgetItem([title])
+                structure_item.setFlags(
+                    structure_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                )
+                self._selector.addTopLevelItem(structure_item)
+
+                paths = {branch_path(record) for record in group}
+                show_branches = any(path for path in paths)
+                for record in reversed(group):
+                    parent = structure_item
+                    path = branch_path(record)
+                    if show_branches and path:
+                        prefix: tuple[int, ...] = ()
+                        for number in path:
+                            prefix += (number,)
+                            key = (structure_id, prefix)
+                            branch = branch_nodes.get(key)
+                            if branch is None:
+                                label = "Branch " + ".".join(map(str, prefix))
+                                branch = QTreeWidgetItem([label])
+                                branch.setFlags(
+                                    branch.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                                )
+                                parent.addChild(branch)
+                                branch_nodes[key] = branch
+                            parent = branch
+                    item = QTreeWidgetItem([self._result_label(record)])
+                    item.setData(0, _RESULT_ID_ROLE, record.id)
+                    parent.addChild(item)
+
+            self._selector.expandAll()
+            target = self._find_result_item(selected_id)
+            if target is None and records:
+                target = self._find_result_item(records[0].id)
+            if target is not None:
+                self._selector.setCurrentItem(target)
         finally:
             self._selector.blockSignals(False)
 
-        self._selector.setVisible(bool(self._results))
-        self.set_result(
-            self._results[selected].result if selected >= 0 else None
-        )
+        self._selector.setVisible(bool(records))
+        selected_record = self._record_for_item(self._selector.currentItem())
+        self.set_result(selected_record.result if selected_record is not None else None)
+        self._refresh_record_actions(selected_record)
 
-    def _select_result(self, index: int) -> None:
-        if 0 <= index < len(self._results):
-            self.set_result(self._results[index].result)
+    def _selected_result_id(self) -> int | None:
+        item = self._selector.currentItem()
+        if item is None:
+            return None
+        value = item.data(0, _RESULT_ID_ROLE)
+        return int(value) if value is not None else None
+
+    def _find_result_item(self, result_id: int | None) -> QTreeWidgetItem | None:
+        if result_id is None:
+            return None
+        root = self._selector.invisibleRootItem()
+        stack = [root.child(i) for i in range(root.childCount())]
+        while stack:
+            item = stack.pop()
+            if item.data(0, _RESULT_ID_ROLE) == result_id:
+                return item
+            stack.extend(item.child(i) for i in range(item.childCount()))
+        return None
+
+    def _record_for_item(self, item: QTreeWidgetItem | None) -> ResultRecord | None:
+        if item is None:
+            return None
+        value = item.data(0, _RESULT_ID_ROLE)
+        if value is None:
+            return None
+        return self._records.get(int(value))
+
+    def _select_result(
+        self,
+        current: QTreeWidgetItem | None,
+        _previous: QTreeWidgetItem | None,
+    ) -> None:
+        record = self._record_for_item(current)
+        if record is not None:
+            self.set_result(record.result)
+        self._refresh_record_actions(record)
+
+    def _refresh_record_actions(self, record: ResultRecord | None) -> None:
+        if record is None:
+            self._record_actions.hide()
+            return
+        has_state = record.output_state_id is not None or record.input_state_id is not None
+        different_structure = (
+            record.structure_id is not None
+            and record.structure_id != self._current_structure_id
+        )
+        show_use_structure = has_state and different_structure
+        self._use_structure_button.setVisible(show_use_structure)
+
+        try:
+            task = str(record.result.task_name).strip()
+        except (AttributeError, TypeError, ValueError):
+            task = ""
+        can_recompute = (
+            bool(task)
+            and record.input_parameters is not None
+            and self._current_structure_id is not None
+        )
+        self._recompute_button.setVisible(can_recompute)
+        self._recompute_button.setText(
+            "Recompute on current structure"
+            if different_structure
+            else "Recompute"
+        )
+        self._record_actions.setVisible(show_use_structure or can_recompute)
+
+    def _use_selected_structure(self) -> None:
+        result_id = self._selected_result_id()
+        if result_id is not None:
+            self.useStructureRequested.emit(result_id)
+
+    def _recompute_selected(self) -> None:
+        result_id = self._selected_result_id()
+        if result_id is not None:
+            self.recomputeRequested.emit(result_id)
 
     @staticmethod
-    def _result_label(record: ResultRecord, index: int) -> str:
+    def _result_label(record: ResultRecord) -> str:
         result = record.result
         try:
             task = str(result.task_name).strip().upper()
         except (AttributeError, TypeError, ValueError):
-            task = ""
-
+            task = str(getattr(result, "display_name", type(result).__name__))
         try:
             output = getattr(result, "output_file", None)
             output_name = Path(str(output)).name if output else ""
-        except Exception:  # noqa: BLE001 - presentation metadata is optional
+        except Exception:  # noqa: BLE001 - optional presentation metadata
             output_name = ""
-
-        details = " — ".join(part for part in (task, output_name) if part)
-        if not details:
-            details = type(result).__name__
-        prefix = "Latest" if index == 0 else str(index + 1)
-        if record.stale:
-            prefix += " (stale)"
-        return f"{prefix}: {details}"
+        return " — ".join(part for part in (task, output_name) if part)
 
     def set_result(self, result: Any | None) -> None:
         self._clear()
@@ -248,25 +403,11 @@ class ResultActionsWidget(QWidget):
             )
             return
 
-        if (
-            not actions
-            and not self._show_values_without_actions
-            and not show_in_summary
-        ):
+        if not actions and not self._show_values_without_actions and not show_in_summary:
             return
-        self._add_row(
-            value,
-            actions,
-            name=name,
-            info=info,
-            summary=summary,
-        )
+        self._add_row(value, actions, name=name, info=info, summary=summary)
 
-    def _add_error_row(
-        self,
-        name: str,
-        error: Exception | None = None,
-    ) -> None:
+    def _add_error_row(self, name: str, error: Exception | None = None) -> None:
         detail = f": {error}" if error else ""
         self._add_row(
             None,
@@ -288,11 +429,8 @@ class ResultActionsWidget(QWidget):
         warning: str | None = None,
     ) -> None:
         row = self._row_count
-
         name_label = QLabel(name, self._container)
-        name_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+        name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         name_label.setWordWrap(True)
         tooltip = "\n\n".join(part for part in (info, warning) if part)
         if tooltip:
