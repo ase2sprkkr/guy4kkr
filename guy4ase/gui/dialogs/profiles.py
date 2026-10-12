@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.window_geometry import manage_window_geometry
+
 
 _RESERVED_PROFILES = frozenset(("ase", "legacy"))
 _SYNC_POLICIES = ("changed", "always", "missing", "never")
@@ -423,8 +425,12 @@ class ProfilesDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("SPR-KKR Execution Profiles")
-        self.resize(980, 680)
-        self.setMinimumSize(820, 560)
+        self.setMinimumSize(1040, 680)
+        manage_window_geometry(
+            self,
+            "execution-profiles",
+            default_size=(1200, 800),
+        )
         self._drafts: dict[str, _ProfileDraft] = {}
         for name, profile in config.profiles.items():
             self._drafts[str(name)] = _ProfileDraft(

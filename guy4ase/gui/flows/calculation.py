@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.window_geometry import window_placement
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
@@ -38,9 +39,26 @@ def choose_working_directory(
     return True
 
 
-def _select_profile(parent: QWidget) -> tuple[bool, str | None]:
+def _position_like_window(window: QWidget, window_id: str | None) -> None:
+    """Reuse another managed window's top-left corner, not its size."""
+    if window_id is None:
+        return
+    placement = window_placement(
+        window,
+        window_id,
+        default_size=(window.width(), window.height()),
+    )
+    window.move(placement.geometry.topLeft())
+
+
+def _select_profile(
+    parent: QWidget,
+    *,
+    position_like_window: str | None = None,
+) -> tuple[bool, str | None]:
     """Run the post-parameter execution step and preserve automatic profiles."""
     dialog = ProfileSelectionDialog(parent)
+    _position_like_window(dialog, position_like_window)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return False, None
     return True, dialog.profile_name()
@@ -63,6 +81,7 @@ def run_calculation(
     *,
     select_profile: bool = True,
     profile_name: str | None = None,
+    position_like_window: str | None = None,
 ) -> SprkkrRunWindow | None:
     """Choose execution, open a run window and adopt its result.
 
@@ -70,6 +89,10 @@ def run_calculation(
     ``active_runs, parent`` call shape. The legacy object has no execution
     semantics; during migration it only tells application wiring to show the
     new profile step, while older direct test callers remain non-interactive.
+
+    ``position_like_window`` optionally reuses another managed window's
+    top-left corner for the profile picker and the run window. Their own sizes
+    stay independent.
     """
     parent, interactive_profiles = _launch_parent_and_profile_policy(
         parent_or_runs, parent
@@ -80,7 +103,10 @@ def run_calculation(
         return None
 
     if select_profile and interactive_profiles:
-        accepted, profile_name = _select_profile(parent)
+        accepted, profile_name = _select_profile(
+            parent,
+            position_like_window=position_like_window,
+        )
         if not accepted:
             return None
 
@@ -122,6 +148,7 @@ def run_calculation(
         parent=parent,
         on_finished=finished,
     )
+    _position_like_window(window, position_like_window)
     window.show()
     return window
 
@@ -182,6 +209,7 @@ def configure_and_run_task(
             controller,
             recent_files,
             parent,
+            position_like_window="guided-input",
         )
     except (ImportError, ModuleNotFoundError) as exc:
         QMessageBox.critical(
