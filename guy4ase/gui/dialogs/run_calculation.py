@@ -86,11 +86,16 @@ class _SprkkrRunWorker(QObject):
         cancellation: _RunCancellation | None = None,
         *,
         profile_name: str | None = None,
+        run_registry=None,
+        launch_lock=None,
     ):
         super().__init__()
         self._request = request
         self._profile_name = profile_name
         self._cancellation = cancellation or _RunCancellation()
+        # ``run_registry`` and ``launch_lock`` are accepted only while callers
+        # and tests migrate from the former GUI-owned execution registry.
+        del run_registry, launch_lock
 
     def _emit_cancelled(self) -> None:
         self.status.emit("Cancelled")
@@ -183,6 +188,7 @@ class SprkkrRunWindow(QDialog):
         self._worker: _SprkkrRunWorker | None = None
         self._finished_callback = on_finished
         self._close_requested = False
+        self._profile_name = profile_name
 
         layout = QVBoxLayout(self)
 
@@ -213,7 +219,7 @@ class SprkkrRunWindow(QDialog):
         btn_row.addWidget(self._close_btn)
         layout.addLayout(btn_row)
 
-        self._start(request, profile_name)
+        self._start(request)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._thread is not None and self._thread.isRunning():
@@ -224,13 +230,13 @@ class SprkkrRunWindow(QDialog):
             return
         super().closeEvent(event)
 
-    def _start(self, request: CalculationRequest, profile_name: str | None) -> None:
+    def _start(self, request: CalculationRequest) -> None:
         thread = QThread(self)
         self._cancellation = _RunCancellation()
         worker = _SprkkrRunWorker(
             request,
             self._cancellation,
-            profile_name=profile_name,
+            profile_name=self._profile_name,
         )
         worker.moveToThread(thread)
 
