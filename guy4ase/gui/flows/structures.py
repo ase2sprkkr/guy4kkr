@@ -184,6 +184,13 @@ def build_2d_structure(
             parent, "No Structure", "Load or create a structure first."
         )
         return None
+    if not controller.can_build_2d():
+        QMessageBox.information(
+            parent,
+            "Build 2D Structure",
+            "Build 2D Structure requires a 3D periodic bulk structure.",
+        )
+        return None
 
     def edit(candidate: Any, *, parent: QWidget | None = None) -> Any | None:
         return select_build_2d_structure(
@@ -213,6 +220,14 @@ def update_empty_spheres(
     controller: WorkspaceController, parent: QWidget
 ) -> bool:
     """Find empty spheres explicitly and publish the resulting structure."""
+    if controller.empty_spheres_action() is None:
+        QMessageBox.information(
+            parent,
+            "Empty Spheres",
+            "Empty spheres cannot be updated for the current structure.",
+        )
+        return False
+
     generation = controller.generation
     previous_state = controller.empty_spheres
     recalculate = previous_state is not None
@@ -224,6 +239,22 @@ def update_empty_spheres(
     )
     if parameters is None:
         return False
+
+    if controller.structure_change_requires_scf_restart():
+        answer = QMessageBox.question(
+            parent,
+            "Reset SCF State?",
+            (
+                "Changing empty spheres changes the site configuration. "
+                "If this search adds or removes empty spheres, the current SCF "
+                "state and calculation results will be invalidated and a new SCF "
+                "sequence will be required.\n\nContinue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
 
     def edit(atoms: Any, previous_count: int) -> tuple[Any, int, bool]:
         structure_changed = False
