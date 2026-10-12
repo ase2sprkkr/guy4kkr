@@ -113,7 +113,7 @@ class DatasetEditor(QWidget):
             "different DATASET for parallel runs in one directory."
         )
         layout.addWidget(self.edit, 1)
-        self.edit.editingFinished.connect(self._commit)
+        self.edit.editingFinished.connect(self.commit)
         self.session.parametersReplaced.connect(self._refresh)
         self.session.valueChanged.connect(self._value_changed)
         self._refresh()
@@ -128,15 +128,17 @@ class DatasetEditor(QWidget):
         if self.edit.text() != value:
             self.edit.setText(value)
 
-    def _commit(self) -> None:
+    def commit(self) -> bool:
+        """Synchronously apply the current DATASET draft if it changed."""
         value = self.edit.text().strip() or None
         option = self.session.option(DATASET_PATH)
         current = str(option()) if option.is_set() and option() is not None else None
         if value == current:
-            return
+            return True
         self.session.set_value(
             DATASET_PATH,
             value,
             source_page="dataset",
             text="Change DATASET",
         )
+        return True
