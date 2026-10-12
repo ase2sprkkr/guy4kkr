@@ -157,10 +157,10 @@ class MainWindow(QMainWindow):
             self.scale_structure_action,
             self.repeat_structure_action,
             self.rotate_structure_action,
-            self.build_2d_structure_action,
             self.visualize_structure_action,
         ):
             action.setEnabled(has_structure)
+        self.build_2d_structure_action.setEnabled(self.controller.can_build_2d())
 
         has_input = self.controller.input_parameters is not None
         self.save_input_action.setEnabled(has_input)
@@ -297,7 +297,6 @@ class MainWindow(QMainWindow):
         create_action.setShortcut("Ctrl+N")
         create_action.triggered.connect(self.create_structure)
         structure_menu.addAction(create_action)
-
         create_database_action = QAction(
             "Create from &Prototype Database...", self
         )
@@ -897,7 +896,6 @@ class MainWindow(QMainWindow):
         """Update lattice parameters display."""
         if self.controller.atoms is None:
             return
-
         cell = self.controller.atoms.get_cell()
         lengths = cell.lengths()
         angles = cell.angles()
