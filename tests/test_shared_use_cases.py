@@ -73,6 +73,47 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         )
 
 
+def test_run_calculation_does_not_hide_result_adoption_errors(
+    tmp_path, monkeypatch
+):
+    _application = QApplication.instance() or QApplication([])
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters("scf"),
+            directory=str(tmp_path),
+        )
+    )
+    monkeypatch.setattr(
+        calculation_flow.SprkkrRunWindow,
+        "_start",
+        lambda _window, _request: None,
+    )
+
+    def broken_adoption(_loaded, *, expected_major):
+        assert expected_major == controller.generation.major
+        raise RuntimeError("broken adoption invariant")
+
+    monkeypatch.setattr(
+        controller,
+        "adopt_calculation_result",
+        broken_adoption,
+    )
+
+    window = calculation_flow.run_calculation(
+        controller,
+        RecentFiles(),
+        ActiveRunRegistry(),
+        None,
+    )
+    assert window is not None
+
+    with pytest.raises(RuntimeError, match="broken adoption invariant"):
+        window._finished_callback(object())
+
+    window.close()
+
+
 def test_run_result_handoff_loads_once_and_preserves_backend_result(
     tmp_path, monkeypatch
 ):

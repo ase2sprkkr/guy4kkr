@@ -67,19 +67,10 @@ def run_calculation(
             )
 
     def finished(loaded) -> None:
-        try:
-            adoption = controller.adopt_calculation_result(
-                loaded,
-                expected_major=request.generation.major,
-            )
-        except Exception as exc:  # noqa: BLE001 - backend metadata varies
-            QMessageBox.critical(
-                parent,
-                "Result Adoption Error",
-                "The calculation finished, but its result could not be "
-                f"adopted:\n{exc}",
-            )
-            return
+        adoption = controller.adopt_calculation_result(
+            loaded,
+            expected_major=request.generation.major,
+        )
         adoption_completed(adoption)
 
     window = SprkkrRunWindow(
