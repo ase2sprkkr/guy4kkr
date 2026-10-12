@@ -46,9 +46,13 @@ def _select_profile(parent: QWidget) -> tuple[bool, str | None]:
     return True, dialog.profile_name()
 
 
-def _legacy_parent(parent_or_runs, parent):
-    """Accept the old ``active_runs, parent`` call shape during its removal."""
-    return parent_or_runs if parent is None else parent
+def _launch_parent_and_profile_policy(parent_or_runs, parent):
+    """Resolve old/new call shapes while the obsolete service is removed."""
+    if parent is None:
+        return parent_or_runs, True
+    return parent, bool(
+        getattr(parent_or_runs, "profile_selection_enabled", False)
+    )
 
 
 def run_calculation(
@@ -63,16 +67,19 @@ def run_calculation(
     """Choose execution, open a run window and adopt its result.
 
     ``parent_or_runs, parent`` temporarily accepts the former
-    ``active_runs, parent`` call shape. The legacy object is intentionally
-    ignored: execution ownership and collision policy no longer live in the GUI.
+    ``active_runs, parent`` call shape. The legacy object has no execution
+    semantics; during migration it only tells application wiring to show the
+    new profile step, while older direct test callers remain non-interactive.
     """
-    parent = _legacy_parent(parent_or_runs, parent)
+    parent, interactive_profiles = _launch_parent_and_profile_policy(
+        parent_or_runs, parent
+    )
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
         return None
 
-    if select_profile:
+    if select_profile and interactive_profiles:
         accepted, profile_name = _select_profile(parent)
         if not accepted:
             return None
