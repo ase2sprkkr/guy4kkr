@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt, QUrl
-from PyQt6.QtGui import QColor, QDesktopServices, QIcon, QPalette
+from PyQt6.QtGui import QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
@@ -40,73 +40,17 @@ from guy4ase.gui.style import (
     SPACE_XL,
     SPACE_XS,
     SPACE_XXL,
-    action_card_stylesheet,
     button_stylesheet,
     group_panel_stylesheet,
     heading_font,
     secondary_text_stylesheet,
 )
+from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-
-
-def _set_action_button_content(
-    button: QPushButton | QToolButton,
-    title: str,
-    description: str,
-    icon: QIcon,
-    icon_size: QSize,
-    *,
-    menu_button: bool = False,
-) -> None:
-    """Lay out an action icon and text with explicit, theme-safe spacing."""
-    button.setText("")
-    button.setProperty("workflowActionTitle", title)
-    button.setAccessibleName(title)
-    button.setAccessibleDescription(description)
-
-    layout = QHBoxLayout(button)
-    layout.setContentsMargins(
-        SPACE_LG, SPACE_SM, 34 if menu_button else SPACE_LG, SPACE_SM
-    )
-    layout.setSpacing(SPACE_LG)
-
-    icon_label = QLabel(button)
-    icon_label.setFixedSize(icon_size)
-    icon_label.setPixmap(icon.pixmap(icon_size))
-    icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    icon_label.setAttribute(
-        Qt.WidgetAttribute.WA_TransparentForMouseEvents
-    )
-    layout.addWidget(icon_label)
-
-    text_widget = QWidget(button)
-    text_layout = QVBoxLayout(text_widget)
-    text_layout.setContentsMargins(0, 0, 0, 0)
-    text_layout.setSpacing(2)
-    title_label = QLabel(title, text_widget)
-    title_label.setForegroundRole(QPalette.ColorRole.ButtonText)
-    title_label.setFont(heading_font(title_label.font(), "section"))
-    title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-    text_layout.addWidget(title_label)
-    if description:
-        description_label = QLabel(description, text_widget)
-        description_label.setForegroundRole(QPalette.ColorRole.ButtonText)
-        description_label.setWordWrap(True)
-        description_label.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents
-        )
-        text_layout.addWidget(description_label)
-    text_widget.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-    )
-    text_widget.setAttribute(
-        Qt.WidgetAttribute.WA_TransparentForMouseEvents
-    )
-    layout.addWidget(text_widget, 1)
 
 
 class WorkflowWindow(QMainWindow):
@@ -392,23 +336,6 @@ class WorkflowWindow(QMainWindow):
         self._result_actions_widget.set_results(results)
         self._result_actions.setVisible(bool(results))
 
-    def _action_style(self, category: str, widget: str) -> str:
-        palette = self.palette()
-        accents = {
-            'structure': QColor('#3979b8'),
-            'load': QColor('#527f9f'),
-            'calculation': QColor('#398552'),
-            'destructive': QColor('#b34444'),
-            'neutral': palette.color(QPalette.ColorRole.Mid),
-        }
-        accent = accents[category]
-        return action_card_stylesheet(
-            palette,
-            accent,
-            widget,
-            subtle=category == 'neutral',
-        )
-
     def _add_action(
         self,
         title: str,
@@ -416,27 +343,24 @@ class WorkflowWindow(QMainWindow):
         callback: Callable[[], None],
         *,
         group: str = "Create structure",
-        category: str = 'structure',
+        category: ActionCategory = "structure",
         icon: QStyle.StandardPixmap | QIcon | str = QStyle.StandardPixmap.SP_FileIcon,
     ) -> None:
         button = QPushButton(self._actions)
-        button.setMinimumHeight(68)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
         if isinstance(icon, QIcon):
             action_icon = icon
         elif isinstance(icon, str):
-            action_icon = QIcon(
-                str(
-                    icon_path(icon)
-                )
-            )
+            action_icon = QIcon(str(icon_path(icon)))
         else:
             action_icon = self.style().standardIcon(icon)
-        _set_action_button_content(
-            button, title, description, action_icon, QSize(26, 26)
+        configure_action_card(
+            button,
+            title,
+            description,
+            action_icon,
+            category=category,
+            subtle=category == "neutral",
         )
-        button.setStyleSheet(self._action_style(category, 'QPushButton'))
         button.clicked.connect(callback)
         self._action_group(group).addWidget(button)
 
@@ -447,21 +371,17 @@ class WorkflowWindow(QMainWindow):
 
         button = QToolButton(self._actions)
         button.setToolTip(launch.path)
-        button.setMinimumHeight(52)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        _set_action_button_content(
+        configure_action_card(
             button,
             launch.title,
             "",
-            self.style().standardIcon(
-                QStyle.StandardPixmap.SP_ArrowForward
-            ),
-            QSize(24, 24),
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            category="load",
+            icon_size=QSize(24, 24),
+            minimum_height=52,
             menu_button=True,
         )
-        button.setStyleSheet(self._action_style('load', 'QToolButton'))
         button.clicked.connect(
             lambda _checked=False, item=launch: self._load_recent(
                 item.kind, item.path
