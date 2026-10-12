@@ -331,9 +331,13 @@ class WorkflowWindow(QMainWindow):
             )
 
     def _refresh_result_actions(self) -> None:
-        results = self.controller.result_history
-        self._result_actions_widget.set_results(results)
-        self._result_actions.setVisible(bool(results))
+        store = self.controller.result_store
+        self._result_actions_widget.set_workspace_state(
+            self.controller.structure_id,
+            self.controller.state_id,
+        )
+        self._result_actions_widget.set_results(store)
+        self._result_actions.setVisible(bool(store))
 
     def _add_action(
         self,
@@ -427,7 +431,7 @@ class WorkflowWindow(QMainWindow):
             )
             self._add_action(
                 "Load SPR-KKR Output",
-                "Open a completed calculation and its structure",
+                "Add a completed calculation to the result history",
                 self._load_output,
                 group=self._GROUP_LOAD,
                 category='load',
@@ -637,7 +641,8 @@ class WorkflowWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Start Over?",
-            "Really start over? The current structure, calculation settings, and results will be cleared.",
+            "Really start over? The current structure and calculation settings "
+            "will be cleared. Existing calculation results will be kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

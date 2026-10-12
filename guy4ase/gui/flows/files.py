@@ -12,11 +12,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.result_loading import load_result_file
-from guy4ase.gui.application.workspace_controller import (
-    DocumentChange,
-    ResultAdoption,
-    WorkspaceController,
-)
+from guy4ase.gui.application.workspace_controller import ResultAdoption, WorkspaceController
 from guy4ase.gui.flows.structure_candidates import (
     load_structure_candidate,
     structure_open_filter,
@@ -26,9 +22,7 @@ from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
-def _show_potential_warning(
-    adoption: ResultAdoption, parent: QWidget
-) -> None:
+def _show_potential_warning(adoption: ResultAdoption, parent: QWidget) -> None:
     if adoption.potential_error is None:
         return
     QMessageBox.warning(
@@ -39,9 +33,7 @@ def _show_potential_warning(
     )
 
 
-def _show_input_parameters_warning(
-    adoption: ResultAdoption, parent: QWidget
-) -> None:
+def _show_input_parameters_warning(adoption: ResultAdoption, parent: QWidget) -> None:
     if adoption.input_parameters_error is None:
         return
     QMessageBox.warning(
@@ -63,10 +55,7 @@ def choose_and_load_structure(
         "",
         structure_open_filter(),
     )
-    return bool(
-        file_path
-        and load_structure(controller, recent_files, file_path, parent)
-    )
+    return bool(file_path and load_structure(controller, recent_files, file_path, parent))
 
 
 def load_structure(
@@ -82,9 +71,7 @@ def load_structure(
         return False
     atoms = candidate.atoms
 
-    potential_path = (
-        str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
-    )
+    potential_path = str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
     change = controller.replace_structure(
         atoms,
         potential_path=potential_path,
@@ -111,9 +98,7 @@ def choose_and_load_input_parameters(
     )
     return bool(
         file_path
-        and load_input_parameters(
-            controller, recent_files, file_path, parent
-        )
+        and load_input_parameters(controller, recent_files, file_path, parent)
     )
 
 
@@ -162,9 +147,7 @@ def choose_and_load_output(
         "",
         "SPRKKR Output Files (*.out *.log *.txt);;All Files (*)",
     )
-    return bool(
-        file_path and load_output(controller, recent_files, file_path, parent)
-    )
+    return bool(file_path and load_output(controller, recent_files, file_path, parent))
 
 
 def load_output(
@@ -173,7 +156,6 @@ def load_output(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
-    generation = controller.generation
     try:
         loaded = run_modal_task(
             parent,
@@ -185,17 +167,11 @@ def load_output(
         QMessageBox.critical(
             parent,
             "Load Error",
-            f"Failed to load SPRKKR output:\n{exc}",
+            f"Failed to load SPR-KKR output:\n{exc}",
         )
         return False
 
-    adoption = controller.adopt_external_result(
-        loaded,
-        expected_generation=generation,
-    )
-    if not adoption.adopted:
-        document_change_applied(parent, DocumentChange.STALE)
-        return False
+    adoption = controller.adopt_external_result(loaded)
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
     _show_input_parameters_warning(adoption, parent)
@@ -277,9 +253,7 @@ def open_recent(
     parent: QWidget,
 ) -> bool:
     if not Path(file_path).exists():
-        QMessageBox.warning(
-            parent, "Missing File", f"File not found:\n{file_path}"
-        )
+        QMessageBox.warning(parent, "Missing File", f"File not found:\n{file_path}")
         recent_files.forget(kind, file_path)
         return False
     loaders = {
