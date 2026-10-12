@@ -28,11 +28,6 @@ from guy4ase.gui.misc.structure_wait import (
 from guy4ase.physics.lattice import detect_structure_kind
 
 
-def copy_structure_snapshot(atoms: Any) -> Any:
-    """Return a detached structure snapshot, preserving ``None``."""
-    return None if atoms is None else atoms.copy()
-
-
 def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
     """Explain that loaded atoms are not a supported bulk/layered document."""
     if detect_structure_kind(atoms) != "unknown":
@@ -54,18 +49,9 @@ def edit_current_structure(
     *,
     error_title: str,
 ) -> bool:
-    """Edit a revision-tagged structure snapshot and commit it on acceptance."""
-    snapshot = wait_for_structure(
-        parent,
-        partial(
-            controller.read_structure,
-            copy_structure_snapshot,
-            reason="reading the structure for an editor",
-        ),
-    )
-    if isinstance(snapshot, Busy):
-        return False
-    generation, source = snapshot
+    """Edit the current read-only structure and commit the returned replacement."""
+    generation = controller.generation
+    source = controller.atoms
     if source is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."
@@ -103,21 +89,14 @@ def edit_site_elements(
     parent: QWidget,
 ) -> bool:
     """Edit site occupations and commit the accepted draft transactionally."""
-    draft_result = wait_for_structure(
-        parent,
-        partial(
-            controller.read_structure,
-            lambda atoms: ElementAssignmentDraft(
-                copy_structure_snapshot(atoms)
-            ),
-            reason="reading the structure for element assignment",
-        ),
-    )
-    if isinstance(draft_result, Busy):
+    generation = controller.generation
+    atoms = controller.atoms
+    if atoms is None:
+        QMessageBox.information(
+            parent, "No Structure", "Load or create a structure first."
+        )
         return False
-    generation, draft = draft_result
-    if draft is None:
-        return False
+    draft = ElementAssignmentDraft(atoms)
 
     result = select_site_elements(draft, parent=parent, apply=False)
     if result is None or result == DialogAction.BACK:
@@ -127,7 +106,7 @@ def edit_site_elements(
         parent,
         partial(
             controller.apply_structure_edit,
-            lambda atoms: result.apply(atoms),
+            lambda candidate: result.apply(candidate),
             expected_generation=generation,
         ),
     )
@@ -210,17 +189,8 @@ def build_2d_structure(
     *,
     surface_mode: bool = False,
 ) -> Any | None:
-    snapshot = wait_for_structure(
-        parent,
-        partial(
-            controller.read_structure,
-            copy_structure_snapshot,
-            reason="reading the structure for the 2D editor",
-        ),
-    )
-    if isinstance(snapshot, Busy):
-        return None
-    generation, atoms = snapshot
+    generation = controller.generation
+    atoms = controller.atoms
     if atoms is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."

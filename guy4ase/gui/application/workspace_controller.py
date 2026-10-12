@@ -43,7 +43,7 @@ class DocumentChange(Enum):
 
 
 class StructureAccessGate:
-    """Serialize physical access to the workspace's shared mutable Atoms."""
+    """Serialize operations that require stable access to published Atoms."""
 
     def __init__(self) -> None:
         self._lock = Lock()
@@ -87,8 +87,9 @@ class StructureAccessGate:
 class CalculationRequest:
     """Values captured when the user asks to start a calculation.
 
-    ``atoms`` is deliberately borrowed, not copied. ``input_parameters`` is an
-    independent value copy so preparation cannot mutate the editor document.
+    ``atoms`` is deliberately borrowed, not copied, and must be treated as
+    read-only by the calculation. ``input_parameters`` is an independent value
+    copy so preparation cannot mutate the editor document.
     """
 
     atoms: Any
@@ -111,8 +112,8 @@ class ResultAdoption:
 class WorkspaceController(QObject):
     """Own semantic document transitions and its monotonic revision.
 
-    The structure gate has one narrow purpose: it protects physical access to
-    the shared mutable ``Atoms`` instance. The revision independently rejects
+    Published ``atoms`` and ``input_parameters`` are read-only by contract.
+    Mutations go through named controller transitions; the revision rejects
     stale editor drafts and calculation results.
     """
 
@@ -134,6 +135,16 @@ class WorkspaceController(QObject):
         self._generation = 0
 
     @property
+    def atoms(self) -> Any:
+        """Return the current published structure; callers must not mutate it."""
+        return self.workspace.atoms
+
+    @property
+    def input_parameters(self) -> Any:
+        """Return current input parameters; callers must not mutate them."""
+        return self.workspace.input_parameters
+
+    @property
     def structure_gate(self) -> StructureAccessGate:
         return self._structure_gate
 
@@ -143,14 +154,13 @@ class WorkspaceController(QObject):
 
     @pyqtSlot(object)
     def notify_structure_prepared(self, atoms: Any) -> None:
-        """Refresh the current borrowed structure after worker preparation.
+        """Refresh observers if calculation preparation touched current Atoms.
 
-        Preparation may mutate Atoms even when it fails. This notification
-        does not advance the revision or invalidate the calculation request.
-        Checking identity does not read Atoms data; observers protect their
-        own structure reads through the gate.
+        Calculations are expected to treat Atoms as read-only. This remains a
+        defensive notification for backends that lazily materialize structure
+        metadata during preparation.
         """
-        if self.workspace.atoms is atoms:
+        if self.atoms is atoms:
             self.structureChanged.emit(atoms)
 
     def access_structure(
@@ -159,34 +169,33 @@ class WorkspaceController(QObject):
         *,
         reason: str,
     ) -> _T | Busy:
-        """Run an operation with exclusive access to shared Atoms.
-
-        The callback may inspect or serialize the borrowed structure, but
-        document mutations belong in the named controller transitions.
-        """
+        """Run a short operation with stable read-only access to current Atoms."""
         return self._structure_gate.try_call(
             reason,
-            lambda: operation(self.workspace.atoms),
+            lambda: operation(self.atoms),
         )
 
     def read_structure(
         self,
         reader: Callable[[Any], _T],
         *,
-        reason: str = "reading the structure for an editor",
+        reason: str = "reading the structure",
     ) -> tuple[int, _T] | Busy:
-        """Create a revision-tagged snapshot derived from shared Atoms."""
+        """Compatibility helper for revision-tagged derived reads.
 
+        New callers should normally use ``atoms`` and capture ``generation``
+        explicitly only when a later commit needs stale-draft detection.
+        """
         return self.access_structure(
             lambda atoms: (self._generation, reader(atoms)),
             reason=reason,
         )
 
     def create_calculation_request(self) -> CalculationRequest | Busy:
-        """Borrow Atoms and capture independent calculation inputs."""
+        """Borrow read-only Atoms and capture independent calculation inputs."""
 
         def capture(atoms: Any) -> CalculationRequest:
-            parameters = self.workspace.input_parameters
+            parameters = self.input_parameters
             directory = self.workspace.directory
             if atoms is None or parameters is None or not directory:
                 raise ValueError(
@@ -280,37 +289,29 @@ class WorkspaceController(QObject):
         edit: Callable[[Any], Any],
         *,
         expected_generation: int,
-        preserve_potential_path: bool = False,
-        preserve_empty_spheres: bool = False,
-        preserve_result_history: bool = False,
-        copy_atoms: bool = True,
-        reason: str = "applying structure changes",
     ) -> DocumentChange | Busy:
+        """Apply a transactional edit to a detached copy of current Atoms."""
+
         def change() -> tuple[DocumentChange, bool, Any]:
             if not self._generation_is_current(expected_generation):
                 return DocumentChange.STALE, False, None
-            if self.workspace.atoms is None:
+            source = self.atoms
+            if source is None:
                 raise ValueError("No structure is loaded.")
-            source = self.workspace.atoms
-            candidate = source.copy() if copy_atoms else source
-            atoms = edit(candidate)
+            atoms = edit(source.copy())
             if atoms is None:
                 raise ValueError("A confirmed structure edit returned no structure.")
-            if preserve_result_history:
-                had_result = self.workspace.result is not None
-                self.workspace.result = None
-            else:
-                had_result = self._clear_result_history()
+            had_result = self._clear_result_history()
             self.workspace.atoms = atoms
             self.workspace.restarted = True
-            if not preserve_potential_path:
-                self.workspace.potential_path = None
-            if not preserve_empty_spheres:
-                self.workspace.empty_spheres_added = None
+            self.workspace.potential_path = None
+            self.workspace.empty_spheres_added = None
             self._changed()
             return DocumentChange.APPLIED, had_result, atoms
 
-        attempt = self._structure_gate.try_call(reason, change)
+        attempt = self._structure_gate.try_call(
+            "applying structure changes", change
+        )
         if isinstance(attempt, Busy):
             return attempt
         status, had_result, atoms = attempt
@@ -469,21 +470,17 @@ class WorkspaceController(QObject):
 
     def use_for_new_calculation(
         self, *, expected_generation: int | None = None
-    ) -> DocumentChange | Busy:
-        """Reset the SCF stage while keeping the current starting density."""
-        return self.apply_structure_edit(
-            self._restart_atoms,
-            expected_generation=(
-                self._generation
-                if expected_generation is None
-                else expected_generation
-            ),
-            preserve_potential_path=True,
-            preserve_empty_spheres=True,
-            preserve_result_history=True,
-            copy_atoms=False,
-            reason="preparing the structure for a new calculation",
-        )
+    ) -> DocumentChange:
+        """Reset calculation state while keeping Atoms and starting density."""
+        if not self._generation_is_current(expected_generation):
+            return DocumentChange.STALE
+        had_result = self.workspace.result is not None
+        self.workspace.result = None
+        self.workspace.restarted = True
+        self._changed()
+        if had_result:
+            self.resultChanged.emit(None)
+        return DocumentChange.APPLIED
 
     def update_empty_spheres(
         self,
@@ -497,7 +494,7 @@ class WorkspaceController(QObject):
         def change() -> tuple[DocumentChange, Any, EmptySpheresResult | None]:
             if not self._generation_is_current(expected_generation):
                 return DocumentChange.STALE, None, None
-            atoms = self.workspace.atoms
+            atoms = self.atoms
             if atoms is None:
                 raise ValueError("No structure is loaded.")
             previous_count = self.workspace.empty_spheres_added or 0
@@ -530,7 +527,3 @@ class WorkspaceController(QObject):
             self.structureChanged.emit(atoms)
             self.resultChanged.emit(result)
         return status
-
-    @staticmethod
-    def _restart_atoms(atoms: Any) -> Any:
-        return atoms

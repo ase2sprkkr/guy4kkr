@@ -2,6 +2,8 @@
 import json
 import os
 
+from ase import Atoms
+
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
 
@@ -50,4 +52,52 @@ def test_composition_root_reuses_both_windows_and_shared_state(tmp_path):
     gui.show_main_window()
     application.processEvents()
     assert expert.isVisible()
+    expert.close()
+
+
+def test_expert_workspace_actions_share_availability_policy(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    gui = GuiApplication(recent_files_path=tmp_path / "recent.json")
+    expert = gui.create_main_window()
+
+    structure_actions = (
+        expert.save_structure_action,
+        expert.edit_structure_action,
+        expert.scale_structure_action,
+        expert.repeat_structure_action,
+        expert.rotate_structure_action,
+        expert.build_2d_structure_action,
+        expert.visualize_structure_action,
+    )
+    assert all(not action.isEnabled() for action in structure_actions)
+    assert not expert.run_calculation_action.isEnabled()
+
+    assert expert.save_btn.defaultAction() is expert.save_structure_action
+    assert (
+        expert.assign_elements_btn.defaultAction()
+        is expert.edit_structure_action
+    )
+    assert expert.run_calc_btn.defaultAction() is expert.run_calculation_action
+
+    gui.controller.replace_structure(
+        Atoms(
+            "Fe",
+            positions=[[0.0, 0.0, 0.0]],
+            cell=[2.0, 2.0, 2.0],
+            pbc=True,
+        )
+    )
+    application.processEvents()
+    assert all(action.isEnabled() for action in structure_actions)
+    assert not expert.run_calculation_action.isEnabled()
+
+    gui.controller.replace_input_parameters(object())
+    gui.controller.change_directory(str(tmp_path))
+    application.processEvents()
+    assert expert.run_calculation_action.isEnabled()
+
+    gui.controller.replace_structure(None)
+    application.processEvents()
+    assert all(not action.isEnabled() for action in structure_actions)
+    assert not expert.run_calculation_action.isEnabled()
     expert.close()

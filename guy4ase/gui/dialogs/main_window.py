@@ -131,10 +131,9 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_structure_changed_locked(self) -> None:
-        atoms = self.workspace.atoms
         self._update_potential_path_label()
         self._update_structure_view()
-        self._enable_actions(atoms is not None)
+        self._refresh_action_availability()
         self._update_input_params_preview()
 
     def _workspace_input_parameters_changed(self, _parameters: Any) -> None:
@@ -143,7 +142,7 @@ class MainWindow(QMainWindow):
     def _refresh_input_parameters(self) -> None:
         parameters = self.workspace.input_parameters
         self._update_input_params_preview()
-        self.enable_run_calculation()
+        self._refresh_action_availability()
         self.create_input_btn.setText(
             "Edit SPRKKR Input File..."
             if parameters is not None
@@ -155,7 +154,32 @@ class MainWindow(QMainWindow):
 
     def _refresh_directory(self) -> None:
         self._update_directory_label()
-        self.enable_run_calculation()
+        self._refresh_action_availability()
+
+    def _refresh_action_availability(self) -> None:
+        """Keep shared expert actions synchronized with workspace state."""
+        has_structure = self.workspace.atoms is not None
+        for action in (
+            self.save_structure_action,
+            self.edit_structure_action,
+            self.scale_structure_action,
+            self.repeat_structure_action,
+            self.rotate_structure_action,
+            self.build_2d_structure_action,
+            self.visualize_structure_action,
+        ):
+            action.setEnabled(has_structure)
+
+        self.run_calculation_action.setEnabled(self.workspace.can_calculate())
+
+        empty_spheres = self.workspace.empty_spheres_action()
+        self.empty_spheres_action.setVisible(empty_spheres is not None)
+        if empty_spheres is not None:
+            self.empty_spheres_action.setText(
+                "Recalculate Empty Spheres"
+                if empty_spheres == "recalculate"
+                else "Add Empty Spheres"
+            )
 
     def _update_input_params_preview(self) -> None:
         if self.input_params_preview is None:
@@ -343,6 +367,10 @@ class MainWindow(QMainWindow):
         load_action.triggered.connect(self.load_structure)
         structure_menu.addAction(load_action)
 
+        self.save_structure_action = QAction("&Save Structure...", self)
+        self.save_structure_action.triggered.connect(self._on_save_structure)
+        structure_menu.addAction(self.save_structure_action)
+
         self._recent_menus['structure'] = structure_menu.addMenu("Open &Recent")
 
         input_menu = menubar.addMenu("&Input")
@@ -361,44 +389,22 @@ class MainWindow(QMainWindow):
         self._recent_menus['output'] = output_menu.addMenu("Open &Recent")
 
         run_menu = menubar.addMenu("&Run")
-        empty_spheres_action = QAction("Add Empty Spheres", self)
-        empty_spheres_action.triggered.connect(
+        self.empty_spheres_action = QAction("Add Empty Spheres", self)
+        self.empty_spheres_action.triggered.connect(
             lambda: structure_flows.update_empty_spheres(self.controller, self)
         )
-        run_menu.addAction(empty_spheres_action)
+        run_menu.addAction(self.empty_spheres_action)
         run_menu.addSeparator()
-        run_calculation_action = QAction("Run SPRKKR Calculation...", self)
-        run_calculation_action.triggered.connect(
+        self.run_calculation_action = QAction("Run SPRKKR Calculation...", self)
+        self.run_calculation_action.triggered.connect(
             self._on_run_sprkkr_calculation
         )
-        run_menu.addAction(run_calculation_action)
-
-        def update_run_menu() -> None:
-            action = self.workspace.empty_spheres_action()
-            empty_spheres_action.setVisible(action is not None)
-            if action is not None:
-                empty_spheres_action.setText(
-                    "Recalculate Empty Spheres"
-                    if action == "recalculate"
-                    else "Add Empty Spheres"
-                )
-            run_calculation_action.setEnabled(
-                self.workspace.can_calculate()
-            )
-
-        run_menu.aboutToShow.connect(update_run_menu)
-        update_run_menu()
+        run_menu.addAction(self.run_calculation_action)
 
         view_menu = menubar.addMenu("&View")
-        visualize_action = QAction("&Visualize Structure", self)
-        visualize_action.triggered.connect(self._visualize_structure)
-        view_menu.addAction(visualize_action)
-
-        def update_view_menu() -> None:
-            visualize_action.setEnabled(self.workspace.atoms is not None)
-
-        view_menu.aboutToShow.connect(update_view_menu)
-        update_view_menu()
+        self.visualize_structure_action = QAction("&Visualize Structure", self)
+        self.visualize_structure_action.triggered.connect(self._visualize_structure)
+        view_menu.addAction(self.visualize_structure_action)
 
         tools_menu = menubar.addMenu("&Tools")
         settings_action = QAction("&Settings...", self)
@@ -406,28 +412,28 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._open_settings)
         tools_menu.addAction(settings_action)
 
-        assign_elements_action = QAction("&Edit the structure...", self)
-        assign_elements_action.setShortcut("Ctrl+E")
-        assign_elements_action.triggered.connect(self._on_assign_elements)
-        structure_menu.addAction(assign_elements_action)
+        self.edit_structure_action = QAction("&Edit the structure...", self)
+        self.edit_structure_action.setShortcut("Ctrl+E")
+        self.edit_structure_action.triggered.connect(self._on_assign_elements)
+        structure_menu.addAction(self.edit_structure_action)
 
         structure_menu.addSeparator()
 
-        scale_action = QAction("&Scale...", self)
-        scale_action.triggered.connect(self._on_scale_structure)
-        structure_menu.addAction(scale_action)
+        self.scale_structure_action = QAction("&Scale...", self)
+        self.scale_structure_action.triggered.connect(self._on_scale_structure)
+        structure_menu.addAction(self.scale_structure_action)
 
-        repeat_action = QAction("&Repeat...", self)
-        repeat_action.triggered.connect(self._on_repeat_structure)
-        structure_menu.addAction(repeat_action)
+        self.repeat_structure_action = QAction("&Repeat...", self)
+        self.repeat_structure_action.triggered.connect(self._on_repeat_structure)
+        structure_menu.addAction(self.repeat_structure_action)
 
-        rotate_action = QAction("R&otate...", self)
-        rotate_action.triggered.connect(self._on_rotate_structure)
-        structure_menu.addAction(rotate_action)
+        self.rotate_structure_action = QAction("R&otate...", self)
+        self.rotate_structure_action.triggered.connect(self._on_rotate_structure)
+        structure_menu.addAction(self.rotate_structure_action)
 
-        build_2d_action = QAction("Build &2D Structure...", self)
-        build_2d_action.triggered.connect(self.build_2d_structure)
-        structure_menu.addAction(build_2d_action)
+        self.build_2d_structure_action = QAction("Build &2D Structure...", self)
+        self.build_2d_structure_action.triggered.connect(self.build_2d_structure)
+        structure_menu.addAction(self.build_2d_structure_action)
 
         structure_menu.addSeparator()
 
@@ -441,6 +447,8 @@ class MainWindow(QMainWindow):
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+        self._refresh_action_availability()
 
     def _visualize_structure(self) -> None:
         visualization_flow.visualize_structure(self.controller, self.settings, self)
@@ -567,15 +575,17 @@ class MainWindow(QMainWindow):
         quick_actions_l.setContentsMargins(0, 0, 0, 0)
         quick_actions_l.setSpacing(8)
 
-        self.save_btn = QPushButton("Save Structure...")
+        self.save_btn = QToolButton(quick_actions)
+        self.save_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.save_btn.setDefaultAction(self.save_structure_action)
         self.save_btn.setMinimumWidth(150)
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._on_save_structure)
         quick_actions_l.addWidget(self.save_btn)
 
-        self.assign_elements_btn = QPushButton("Edit the structure")
-        self.assign_elements_btn.setEnabled(False)
-        self.assign_elements_btn.clicked.connect(self._on_assign_elements)
+        self.assign_elements_btn = QToolButton(quick_actions)
+        self.assign_elements_btn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.assign_elements_btn.setDefaultAction(self.edit_structure_action)
         quick_actions_l.addWidget(self.assign_elements_btn)
 
         quick_actions_l.addStretch(1)
@@ -728,9 +738,9 @@ class MainWindow(QMainWindow):
 
         self._update_directory_label()
 
-        self.run_calc_btn = QPushButton("Run SPRKKR Calculation...")
-        self.run_calc_btn.setEnabled(False)
-        self.run_calc_btn.clicked.connect(self._on_run_sprkkr_calculation)
+        self.run_calc_btn = QToolButton()
+        self.run_calc_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.run_calc_btn.setDefaultAction(self.run_calculation_action)
         layout.addWidget(self.run_calc_btn)
 
         self.load_output_btn = QPushButton("Load SPRKKR Output File...")
@@ -831,15 +841,6 @@ class MainWindow(QMainWindow):
             "with integration for SPRKKR calculations.\n\n"
             "Built with ASE and PyQt6."
         )
-
-    def _enable_actions(self, enabled: bool) -> None:
-        """Enable or disable action buttons based on structure availability."""
-        self.save_btn.setEnabled(enabled)
-        self.assign_elements_btn.setEnabled(enabled)
-        self.enable_run_calculation()
-
-    def enable_run_calculation(self) -> None:
-        self.run_calc_btn.setEnabled(self.workspace.can_calculate())
 
     def _update_structure_view(self) -> None:
         """Update all structure visualization and information panels."""
