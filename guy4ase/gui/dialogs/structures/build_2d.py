@@ -234,8 +234,7 @@ class Build2DStructureDialog(QDialog):
         result = chain_dialogs(
             select_spacegroup,
             select_site_elements,
-            back=True,
-            kwargs={'parent': self},
+            parent=self,
         )
         if result is None:
             return

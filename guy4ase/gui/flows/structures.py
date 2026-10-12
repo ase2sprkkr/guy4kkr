@@ -20,7 +20,7 @@ from guy4ase.gui.dialogs.structures.spacegroup_selector import (
     select_spacegroup,
     select_spacegroup_from_prototype,
 )
-from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.gui.misc.dialog_flow import DialogAction, chain_dialogs
 from guy4ase.gui.misc.structure_wait import (
     document_change_applied,
     wait_for_structure,
@@ -119,10 +119,8 @@ def edit_site_elements(
     if draft is None:
         return False
 
-    result = select_site_elements(
-        draft, parent=parent, back=False, apply=False
-    )
-    if result is None or isinstance(result, str):
+    result = select_site_elements(draft, parent=parent, apply=False)
+    if result is None or result == DialogAction.BACK:
         return False
 
     change = wait_for_structure(
@@ -145,8 +143,7 @@ def create_structure(
     atoms = chain_dialogs(
         select_spacegroup,
         select_site_elements,
-        back=True,
-        kwargs={"parent": parent},
+        parent=parent,
     )
     if atoms is not None:
         change = wait_for_structure(
@@ -170,8 +167,7 @@ def create_structure_from_database(
         select_structure_prototype,
         select_spacegroup_from_prototype,
         select_site_elements,
-        back=True,
-        kwargs={"parent": parent},
+        parent=parent,
     )
     if atoms is not None:
         change = wait_for_structure(

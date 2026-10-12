@@ -1,65 +1,52 @@
-"""Compose independent dialogs using caller-supplied functions."""
-from typing import Any, Callable, Dict
+"""Compose simple linear wizard dialogs."""
+from __future__ import annotations
+
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QWidget
 
 
-def chain_dialogs(*funcs: Callable[..., Any],
-                  initial: list[Any] = [],
-                  kwargs:   Dict[str, Any] = {},
-                  all: bool = False, back: bool | str = False):
-    """Run a sequence of dialog-like callables that accept kwargs and return a dict/'back'/None.
+class DialogAction(str, Enum):
+    """Navigation actions returned by dialog wrapper functions."""
 
-    This is framework-agnostic and can be used for PyQt6 dialogs that expose a functional API
-    like: def run_dialog(...kwargs) -> dict | 'back' | None
+    BACK = "back"
 
-    Args:
-        *funcs: Callables to invoke in order.
-        initial: Initial kwargs for the first callable.
-        all: If True, return list of all intermediate results; else return the last one.
-        back: If truthy, pass a back flag to callables after the first. If True, use key 'back'.
-              If a string, use that as the key name.
-    Returns:
-        None on abort, or the last callable's return value (dict, Atoms, or other).
+
+def chain_dialogs(
+    *dialogs: Callable[..., Any],
+    parent: QWidget | None = None,
+) -> Any | None:
+    """Run a linear wizard and return its final value.
+
+    The first dialog is called with ``parent``. Each following dialog receives
+    the previous step's result as its first argument, plus ``parent`` and
+    ``back=True``. ``None`` cancels the whole wizard and
+    :attr:`DialogAction.BACK` returns to the previous step.
     """
-    if initial is None:
-        initial = {}
+    history: list[Any] = []
+    step = 0
 
-    results: list = []
-    i = 0
-
-    while i < len(funcs):
-        func = funcs[i]
-        # Determine args for current callable
-        if i == 0:
-            args = initial
+    while step < len(dialogs):
+        dialog = dialogs[step]
+        if step == 0:
+            result = dialog(parent=parent)
         else:
-            # For subsequent dialogs, pass the previous result as args
-            args = results[i - 1]
-            if not isinstance(args, tuple):
-                args = (args,)
-
-        kw = kwargs.copy()
-        if back and i > 0:
-            key = 'back' if back is True else (back if isinstance(back, str) else 'back')
-            kw[key] = True
-
-        result = func(*args, **kw)
+            result = dialog(history[step - 1], parent=parent, back=True)
 
         if result is None:
             return None
-        if isinstance(result, str) and result == 'back':
-            if i == 0:
+        if result == DialogAction.BACK:
+            if step == 0:
                 return None
-            i -= 1
+            step -= 1
             continue
 
-        if len(results) <= i:
-            results.append(result)
+        if step < len(history):
+            history[step] = result
         else:
-            results[i] = result
+            history.append(result)
+        step += 1
 
-        i += 1
-
-    if all:
-        return results
-    # Return the last result directly (could be dict, Atoms, or anything)
-    return results[-1] if results else None
+    return history[-1] if history else None
