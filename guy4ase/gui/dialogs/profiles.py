@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
     QInputDialog,
@@ -371,7 +370,11 @@ class ProfilesDialog(QDialog):
         else:
             self._selection_changed(self.list.currentItem(), None)
 
-    def _selection_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
+    def _selection_changed(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
         if previous is not None:
             name = str(previous.data(Qt.ItemDataRole.UserRole))
             draft = self._drafts.get(name)
@@ -389,12 +392,20 @@ class ProfilesDialog(QDialog):
 
     def _add_profile(self) -> None:
         self._store_current()
-        name, ok = QInputDialog.getText(self, "New Execution Profile", "Profile name:")
+        name, ok = QInputDialog.getText(
+            self,
+            "New Execution Profile",
+            "Profile name:",
+        )
         name = name.strip()
         if not ok or not name:
             return
         if name in _RESERVED_PROFILES or name in self._drafts:
-            QMessageBox.warning(self, "Profile Name", f"Profile {name!r} already exists or is reserved.")
+            QMessageBox.warning(
+                self,
+                "Profile Name",
+                f"Profile {name!r} already exists or is reserved.",
+            )
             return
         self._drafts[name] = _ProfileDraft(name, {"executor": "local"})
         self._reload_list(name)
@@ -419,6 +430,9 @@ class ProfilesDialog(QDialog):
         }
         try:
             config.profiles.set(editable)
+            default_profile = config.default_profile()
+            if default_profile is not None and default_profile not in self._drafts:
+                config.default_profile.set(None)
             config.save_user_preferences()
         except (OSError, TypeError, ValueError) as exc:
             QMessageBox.critical(self, "Cannot Save Profiles", str(exc))
