@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QSize
-from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -30,6 +29,7 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
+from guy4ase.gui.widgets.recent_launcher import populate_recent_menu
 
 
 class StructureSourceDialog(QDialog):
@@ -162,14 +162,12 @@ class StructureSourceDialog(QDialog):
         )
 
         menu = QMenu(button)
-        for path in recent:
-            action = QAction(path, menu)
-            action.triggered.connect(
-                lambda _checked=False, item_path=path: self._load_recent_path(
-                    item_path
-                )
-            )
-            menu.addAction(action)
+        populate_recent_menu(
+            menu,
+            self._recent_files,
+            "structure",
+            self._load_recent_path,
+        )
         button.setMenu(menu)
         layout.addWidget(button)
 
@@ -210,9 +208,11 @@ class StructureSourceDialog(QDialog):
             )
             self._recent_files.forget("structure", path)
             return
-        self._accept_candidate(
-            structure_candidates.load_structure_candidate(path, self)
-        )
+        candidate = structure_candidates.load_structure_candidate(path, self)
+        if candidate is None:
+            return
+        self._recent_files.remember("structure", path)
+        self._accept_candidate(candidate)
 
     def candidate(self) -> StructureCandidate | None:
         return self._candidate
