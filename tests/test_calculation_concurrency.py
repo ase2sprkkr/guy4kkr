@@ -11,10 +11,7 @@ from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application import result_loading as result_loading_module
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.result_loading import (
-    load_result,
-    load_result_file,
-)
+from guy4ase.gui.application.result_loading import load_result, load_result_file
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
@@ -39,7 +36,7 @@ class _Parameters:
 def test_confirmed_structure_edit_is_copy_on_write():
     atoms = Atoms("Fe")
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Fe.pot", result=object())
+        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
     )
     structures = []
     results = []
@@ -52,10 +49,7 @@ def test_confirmed_structure_edit_is_copy_on_write():
         candidate.symbols = "Cu"
         return candidate
 
-    returned = controller.apply_structure_edit(
-        edit,
-        expected_generation=generation,
-    )
+    returned = controller.apply_structure_edit(edit, expected_generation=generation)
 
     assert returned is DocumentChange.APPLIED
     assert controller.atoms is not atoms
@@ -65,7 +59,7 @@ def test_confirmed_structure_edit_is_copy_on_write():
     assert controller.potential_path is None
     assert controller.generation == generation.next_major()
     assert structures == [controller.atoms]
-    assert results == [None]
+    assert results == []
 
 
 def test_failed_structure_edit_leaves_published_atoms_untouched():
@@ -112,6 +106,8 @@ def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
     assert request.input_parameters.value == 7
     assert parameters.copy_calls == [True]
     assert request.generation == controller.generation
+    assert request.structure_id == controller.structure_id
+    assert request.state_id == controller.state_id
 
 
 def test_calculation_preparation_does_not_block_new_workspace_version(
@@ -202,25 +198,29 @@ def test_unstarted_worker_reserves_no_backend_run(tmp_path):
     assert registry.active == ()
 
 
-def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
+def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     original = Atoms("Fe", cell=(1, 1, 1), pbc=True)
     controller = WorkspaceController(
-        WorkspaceState(atoms=original, directory=str(tmp_path))
+        WorkspaceState(
+            atoms=original,
+            input_parameters=_Parameters(1),
+            directory=str(tmp_path),
+        )
     )
     source_generation = controller.generation
     draft = ElementAssignmentDraft(controller.atoms)
-    request_generation = controller.generation
+    request = controller.create_calculation_request()
     replacement = Atoms("Cu")
     controller.replace_structure(replacement)
 
-    result = SimpleNamespace(files={}, directory=str(tmp_path))
+    result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
     loaded = load_result(result, fallback_directory=tmp_path)
-    adoption = controller.adopt_calculation_result(
-        loaded, expected_major=request_generation.major
-    )
-    assert not adoption.adopted
+    adoption = controller.adopt_calculation_result(loaded, request=request)
+    assert adoption.adopted
+    assert not adoption.workspace_updated
     assert controller.atoms is replacement
-    assert controller.result is None
+    assert controller.result_history[0].result is result
+    assert controller.result_history[0].structure_id == request.structure_id
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
@@ -240,20 +240,9 @@ def test_reset_advances_instead_of_resetting_generation():
     assert controller.generation == before_reset.next_major()
 
 
-def test_file_loads_reject_an_intervening_document_change(
-    monkeypatch, tmp_path
-):
+def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_path):
     loaded_atoms = Atoms("Fe")
-    result = SimpleNamespace(files={}, directory=str(tmp_path))
-    monkeypatch.setattr(
-        result_loading_module.TaskResult,
-        "from_file",
-        staticmethod(lambda _path: result),
-    )
-
-    structure_controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Cu"))
-    )
+    structure_controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
     original_structure = structure_controller.atoms
     structure_history = RecentFiles(tmp_path / "structure-recent.json")
 
@@ -274,52 +263,57 @@ def test_file_loads_reject_an_intervening_document_change(
         object(),
     )
 
-    result_controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Cu"))
-    )
-    original_result_structure = result_controller.atoms
-    result_generation = result_controller.generation
-
-    loaded_result = load_result_file(tmp_path / "Fe.out")
-    result_controller.replace_input_parameters(object())
-    result_adoption = result_controller.adopt_external_result(
-        loaded_result,
-        expected_generation=result_generation,
-    )
-
     assert not structure_loaded
-    assert not result_adoption.adopted
     assert structure_controller.atoms is original_structure
     assert structure_history.paths("structure") == ()
-    assert result_controller.atoms is original_result_structure
-    assert result_controller.result is None
 
 
-def test_directory_change_invalidates_and_rejects_stale_calculation_result(
-    tmp_path,
-):
+def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp_path):
+    result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
+    monkeypatch.setattr(
+        result_loading_module.TaskResult,
+        "from_file",
+        staticmethod(lambda _path: result),
+    )
+    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
+    original_structure = controller.atoms
+    generation = controller.generation
+    loaded_result = load_result_file(tmp_path / "Fe.out")
+
+    controller.replace_input_parameters(object())
+    adoption = controller.adopt_external_result(
+        loaded_result,
+        expected_generation=generation,
+    )
+
+    assert adoption.adopted
+    assert not adoption.workspace_updated
+    assert controller.atoms is original_structure
+    assert controller.result_history[0].result is result
+
+
+def test_directory_change_does_not_discard_completed_calculation_result(tmp_path):
     original_directory = tmp_path / "first"
     next_directory = tmp_path / "next"
     controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe"), directory=str(original_directory))
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters(1),
+            directory=str(original_directory),
+        )
     )
-    generation = controller.generation
-    result = SimpleNamespace(files={}, directory=str(original_directory))
+    request = controller.create_calculation_request()
+    result = SimpleNamespace(
+        files={}, directory=str(original_directory), task_name="DOS"
+    )
     loaded = load_result(result, fallback_directory=original_directory)
 
     controller.change_directory(str(next_directory))
+    adoption = controller.adopt_calculation_result(loaded, request=request)
 
-    assert controller.generation == generation.next_major()
-    assert controller.result is None
-    assert controller.directory == str(next_directory)
-
-    adoption = controller.adopt_calculation_result(
-        loaded,
-        expected_major=generation.major,
-    )
-    assert not adoption.adopted
-    assert controller.generation == generation.next_major()
-    assert controller.result is None
+    assert adoption.adopted
+    assert not adoption.workspace_updated
+    assert controller.result_history[0].result is result
     assert controller.directory == str(next_directory)
 
 

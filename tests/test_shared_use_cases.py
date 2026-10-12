@@ -90,8 +90,9 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
         lambda _window, _request: None,
     )
 
-    def broken_adoption(_loaded, *, expected_major):
-        assert expected_major == controller.generation.major
+    def broken_adoption(_loaded, *, request):
+        assert request.structure_id == controller.structure_id
+        assert request.state_id == controller.state_id
         raise RuntimeError("broken adoption invariant")
 
     monkeypatch.setattr(
@@ -178,7 +179,7 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     assert len(controller.result_history) == 1
     record = controller.result_history[0]
     assert record.result is backend_result
-    assert record.current
+    assert record.input_state_id == window._test_request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)
 
     window.close()

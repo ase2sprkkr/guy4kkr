@@ -37,6 +37,13 @@ from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 
 
+def _copyable_parameters(value=None):
+    return SimpleNamespace(
+        value=value,
+        copy=lambda **_kwargs: _copyable_parameters(value),
+    )
+
+
 def test_recent_files_roundtrip_is_bounded_and_repairs_missing_entries(tmp_path):
     existing = tmp_path / "Fe.cif"
     existing.touch()
@@ -83,7 +90,7 @@ def test_recent_files_emits_only_for_real_changes(tmp_path):
     assert len(changes) == 4
 
 
-def test_workspace_controller_owns_mutations_and_change_notifications():
+def test_workspace_controller_owns_draft_mutations_and_result_notifications():
     workspace = WorkspaceState()
     controller = WorkspaceController(workspace)
     changes: list[tuple[str, object]] = []
@@ -106,7 +113,7 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     controller.change_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
-    controller.adopt_calculation_result(
+    controller.adopt_external_result(
         LoadedResult(
             result=result,
             output_path=None,
@@ -114,15 +121,14 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
             atoms=None,
             potential_error=None,
             directory=None,
-        ),
-        expected_major=controller.generation.major,
+        )
     )
 
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
     assert workspace.potential_path == "Fe.pot"
-    assert workspace.result is result
+    assert controller.result_history[0].result is result
     assert changes == [
         ("directory", "calculation"),
         ("structure", atoms),
@@ -131,16 +137,19 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
     ]
 
     controller.reset()
-    assert workspace == WorkspaceState()
-    assert changes[-4:] == [
-        ("result", None),
+    assert workspace.atoms is None
+    assert workspace.input_parameters is None
+    assert workspace.directory is None
+    assert workspace.potential_path is None
+    assert controller.result_history[0].result is result
+    assert changes[-3:] == [
         ("structure", None),
         ("input", None),
         ("directory", None),
     ]
 
 
-def test_replacing_structure_invalidates_result_and_potential_source():
+def test_replacing_structure_preserves_result_history_and_drops_potential_source():
     old_atoms = Atoms("Fe")
     new_atoms = Atoms("Cu")
     parameters = object()
@@ -149,30 +158,26 @@ def test_replacing_structure_invalidates_result_and_potential_source():
         input_parameters=parameters,
         directory="calculation",
         potential_path="Fe.pot",
-        result=object(),
     )
     controller = WorkspaceController(workspace)
-    results = []
-    result_seen_by_structure_observers = []
-    controller.resultChanged.connect(results.append)
-    controller.structureChanged.connect(
-        lambda _atoms: result_seen_by_structure_observers.append(
-            workspace.result
-        )
+    result = object()
+    controller.adopt_external_result(
+        LoadedResult(result, None, None, None, None, None)
     )
+    results = []
+    controller.resultChanged.connect(results.append)
 
     controller.replace_structure(new_atoms)
 
     assert workspace.atoms is new_atoms
     assert workspace.potential_path is None
-    assert workspace.result is None
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
-    assert results == [None]
-    assert result_seen_by_structure_observers == [None]
+    assert controller.result_history[0].result is result
+    assert results == []
 
 
-def test_replacing_input_parameters_invalidates_only_result():
+def test_replacing_input_parameters_preserves_results():
     atoms = Atoms("Fe")
     parameters = object()
     workspace = WorkspaceState(
@@ -180,28 +185,32 @@ def test_replacing_input_parameters_invalidates_only_result():
         input_parameters=object(),
         directory="calculation",
         potential_path="Fe.pot",
-        result=object(),
     )
     controller = WorkspaceController(workspace)
+    result = object()
+    controller.adopt_external_result(
+        LoadedResult(result, None, None, None, None, None)
+    )
     directories = []
     controller.directoryChanged.connect(directories.append)
 
-    controller.replace_input_parameters(
-        parameters, directory="calculation"
-    )
+    controller.replace_input_parameters(parameters, directory="calculation")
 
     assert workspace.atoms is atoms
     assert workspace.potential_path == "Fe.pot"
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
-    assert workspace.result is None
+    assert controller.result_history[0].result is result
     assert directories == []
 
 
-def test_changing_directory_invalidates_result_and_same_directory_is_noop():
-    result = object()
-    workspace = WorkspaceState(directory="first", result=result)
+def test_changing_directory_preserves_results_and_same_directory_is_noop():
+    workspace = WorkspaceState(directory="first")
     controller = WorkspaceController(workspace)
+    result = object()
+    controller.adopt_external_result(
+        LoadedResult(result, None, None, None, None, None)
+    )
     results = []
     directories = []
     controller.resultChanged.connect(results.append)
@@ -211,15 +220,15 @@ def test_changing_directory_invalidates_result_and_same_directory_is_noop():
     controller.change_directory("next")
 
     assert workspace.directory == "next"
-    assert workspace.result is None
+    assert controller.result_history[0].result is result
     assert controller.generation == generation.next_major()
-    assert results == [None]
+    assert results == []
     assert directories == ["next"]
 
     controller.change_directory("next")
 
     assert controller.generation == generation.next_major()
-    assert results == [None]
+    assert results == []
     assert directories == ["next"]
 
 
@@ -236,9 +245,7 @@ def test_structure_flow_loads_potential_and_document_metadata(
         lambda value: reads.append(value) or atoms,
     )
     parameters = object()
-    controller = WorkspaceController(
-        WorkspaceState(input_parameters=parameters, result=object())
-    )
+    controller = WorkspaceController(WorkspaceState(input_parameters=parameters))
     history = RecentFiles(tmp_path / "recent.json")
 
     loaded = file_flows.load_structure(controller, history, path, object())
@@ -260,11 +267,7 @@ def test_loading_nonpotential_structure_drops_old_potential_source(
     path = tmp_path / "Cu.xyz"
     monkeypatch.setattr(file_flows, "ase_read", lambda _path: atoms)
     controller = WorkspaceController(
-        WorkspaceState(
-            atoms=Atoms("Fe"),
-            potential_path="Fe.pot",
-            result=object(),
-        )
+        WorkspaceState(atoms=Atoms("Fe"), potential_path="Fe.pot")
     )
 
     loaded = file_flows.load_structure(
@@ -294,7 +297,6 @@ def test_input_flow_loads_parameters_and_directory(tmp_path, monkeypatch):
             atoms=atoms,
             input_parameters=object(),
             potential_path="Fe.pot",
-            result=object(),
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
@@ -404,8 +406,9 @@ def test_use_for_new_calculation_changes_state_without_mutating_atoms():
         )
     )
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, result=object(), potential_path="Fe.pot")
+        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
     )
+    previous_state_id = controller.state_id
 
     generation = controller.generation
     restarted = controller.use_for_new_calculation(
@@ -417,6 +420,7 @@ def test_use_for_new_calculation_changes_state_without_mutating_atoms():
     assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
     assert controller.potential_path == "Fe.pot"
     assert controller.restarted
+    assert controller.state_id != previous_state_id
     assert controller.result is None
     assert controller.generation == generation.next_major()
 
@@ -425,6 +429,7 @@ def _result(tmp_path):
     result = SimpleNamespace(
         files={"output": "Fe.out", "converged": "Fe.pot"},
         directory=str(tmp_path),
+        task_name="scf",
     )
     result.path_to = lambda key: result.files[key]
     return result
@@ -563,32 +568,37 @@ def test_result_loading_reports_a_potential_path_that_is_not_a_file(tmp_path):
     assert isinstance(loaded.potential_error, IsADirectoryError)
 
 
-def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch):
+def test_active_scf_result_loads_potential_and_publishes_atoms(tmp_path, monkeypatch):
     output = tmp_path / "Fe.out"
     potential = tmp_path / "Fe.pot"
     potential.touch()
-    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    source_atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+    output_atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     monkeypatch.setattr(
         result_loading_module.Potential,
         "from_file",
-        lambda path: SimpleNamespace(atoms=atoms),
+        lambda path: SimpleNamespace(atoms=output_atoms),
     )
     controller = WorkspaceController(
-        WorkspaceState(directory=str(tmp_path.resolve()))
+        WorkspaceState(
+            atoms=source_atoms,
+            input_parameters=_copyable_parameters(),
+            directory=str(tmp_path.resolve()),
+        )
     )
+    request = controller.create_calculation_request()
     result = _result(tmp_path)
     loaded = load_result(result, fallback_directory=tmp_path)
 
-    adoption = controller.adopt_calculation_result(
-        loaded, expected_major=controller.generation.major
-    )
+    adoption = controller.adopt_calculation_result(loaded, request=request)
 
     assert adoption.output_path == output
     assert adoption.potential_path == potential
     assert adoption.potential_error is None
+    assert adoption.workspace_updated
     assert controller.result is result
     assert controller.directory == str(tmp_path.resolve())
-    assert controller.atoms is atoms
+    assert controller.atoms is output_atoms
     assert controller.potential_path == str(potential.resolve())
 
 
@@ -602,27 +612,24 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     def fail(_path):
         raise error
 
-    monkeypatch.setattr(
-        result_loading_module.Potential,
-        "from_file",
-        fail,
-    )
+    monkeypatch.setattr(result_loading_module.Potential, "from_file", fail)
     current_atoms = Atoms("Cu")
     controller = WorkspaceController(
         WorkspaceState(
             atoms=current_atoms,
+            input_parameters=_copyable_parameters(),
             potential_path="Cu.pot",
             directory=str(tmp_path),
         )
     )
+    request = controller.create_calculation_request()
     result = _result(tmp_path)
     loaded = load_result(result, fallback_directory=tmp_path)
 
-    adoption = controller.adopt_calculation_result(
-        loaded, expected_major=controller.generation.major
-    )
+    adoption = controller.adopt_calculation_result(loaded, request=request)
 
     assert adoption.potential_error is error
+    assert not adoption.workspace_updated
     assert controller.result is result
     assert controller.directory == str(tmp_path.resolve())
     assert controller.atoms is current_atoms
@@ -634,55 +641,55 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     result = SimpleNamespace(
         files={"output": "Fe.out"},
         directory=str(tmp_path),
+        task_name="scf",
     )
     result.path_to = lambda key: result.files[key]
     workspace = WorkspaceState(
         atoms=current_atoms,
+        input_parameters=_copyable_parameters(),
         potential_path="Cu.pot",
         directory=str(tmp_path),
     )
     controller = WorkspaceController(workspace)
+    request = controller.create_calculation_request()
     loaded = load_result(result, fallback_directory=tmp_path)
 
-    adoption = controller.adopt_calculation_result(
-        loaded, expected_major=controller.generation.major
-    )
+    adoption = controller.adopt_calculation_result(loaded, request=request)
 
     assert adoption.potential_path is None
     assert adoption.potential_error is None
-    assert workspace.result is result
+    assert controller.result is result
     assert workspace.atoms is current_atoms
     assert workspace.potential_path == "Cu.pot"
 
 
-def test_calculation_result_with_missing_referenced_potential_keeps_atoms(
-    tmp_path,
-):
+def test_calculation_result_with_missing_referenced_potential_keeps_atoms(tmp_path):
     current_atoms = Atoms("Cu")
     missing = tmp_path / "missing.pot"
     result = SimpleNamespace(
         files={"output": "Fe.out", "converged": missing.name},
         directory=str(tmp_path),
+        task_name="scf",
     )
     result.path_to = lambda key: result.files[key]
     workspace = WorkspaceState(
         atoms=current_atoms,
+        input_parameters=_copyable_parameters(),
         potential_path="Cu.pot",
         directory=str(tmp_path),
     )
     controller = WorkspaceController(workspace)
+    request = controller.create_calculation_request()
     loaded = load_result(result, fallback_directory=tmp_path)
 
-    adoption = controller.adopt_calculation_result(
-        loaded,
-        expected_major=controller.generation.major,
-    )
-    assert not adoption.potential_error is None
+    adoption = controller.adopt_calculation_result(loaded, request=request)
+    assert adoption.potential_error is not None
+    assert not adoption.workspace_updated
     assert workspace.atoms is current_atoms
     assert workspace.potential_path == "Cu.pot"
 
 
-def test_external_result_without_potential_clears_old_structure(
+def test_external_result_without_potential_does_not_replace_workspace(
     tmp_path, monkeypatch
 ):
     output = tmp_path / "external.out"
@@ -692,29 +699,28 @@ def test_external_result_without_potential_clears_old_structure(
         "from_file",
         staticmethod(lambda _path: result),
     )
+    original_atoms = Atoms("Fe")
+    original_parameters = object()
     workspace = WorkspaceState(
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
+        atoms=original_atoms,
+        input_parameters=original_parameters,
         potential_path="Fe.pot",
-        result=object(),
     )
     controller = WorkspaceController(workspace)
     loaded = load_result_file(output)
 
-    adoption = controller.adopt_external_result(
-        loaded, expected_generation=controller.generation
-    )
+    adoption = controller.adopt_external_result(loaded)
 
     assert adoption.output_path == output.resolve()
     assert adoption.potential_path is None
     assert adoption.potential_error is None
-    assert workspace.result is result
-    assert workspace.atoms is None
-    assert workspace.input_parameters is None
-    assert workspace.potential_path is None
+    assert controller.result_history[0].result is result
+    assert workspace.atoms is original_atoms
+    assert workspace.input_parameters is original_parameters
+    assert workspace.potential_path == "Fe.pot"
 
 
-def test_external_result_with_unreadable_potential_clears_old_structure(
+def test_external_result_with_unreadable_potential_does_not_replace_workspace(
     tmp_path, monkeypatch
 ):
     output = tmp_path / "external.out"
@@ -732,25 +738,24 @@ def test_external_result_with_unreadable_potential_clears_old_structure(
         "from_file",
         staticmethod(lambda _path: (_ for _ in ()).throw(error)),
     )
+    original_atoms = Atoms("Cu")
     workspace = WorkspaceState(
-        atoms=Atoms("Cu"),
+        atoms=original_atoms,
         potential_path="Cu.pot",
     )
     controller = WorkspaceController(workspace)
     loaded = load_result_file(output)
 
-    adoption = controller.adopt_external_result(
-        loaded, expected_generation=controller.generation
-    )
+    adoption = controller.adopt_external_result(loaded)
 
     assert adoption.potential_path == potential.resolve()
     assert adoption.potential_error is error
-    assert workspace.result is result
-    assert workspace.atoms is None
-    assert workspace.potential_path is None
+    assert controller.result_history[0].result is result
+    assert workspace.atoms is original_atoms
+    assert workspace.potential_path == "Cu.pot"
 
 
-def test_external_result_with_potential_replaces_old_structure(
+def test_external_result_with_potential_is_recorded_without_replacing_workspace(
     tmp_path, monkeypatch
 ):
     output = tmp_path / "Fe.out"
@@ -770,23 +775,24 @@ def test_external_result_with_potential_replaces_old_structure(
         "from_file",
         staticmethod(lambda _path: SimpleNamespace(atoms=result_atoms)),
     )
+    original_atoms = Atoms("Cu")
+    original_parameters = object()
     workspace = WorkspaceState(
-        atoms=Atoms("Cu"),
-        input_parameters=object(),
+        atoms=original_atoms,
+        input_parameters=original_parameters,
         potential_path="Cu.pot",
     )
     controller = WorkspaceController(workspace)
     loaded = load_result_file(output)
 
-    adoption = controller.adopt_external_result(
-        loaded, expected_generation=controller.generation
-    )
+    adoption = controller.adopt_external_result(loaded)
 
     assert adoption.potential_error is None
-    assert workspace.result is result
-    assert workspace.atoms is result_atoms
-    assert workspace.input_parameters is result_parameters
-    assert workspace.potential_path == str(potential.resolve())
+    assert controller.result_history[0].result is result
+    assert controller.result_history[0].output_state_id is not None
+    assert workspace.atoms is original_atoms
+    assert workspace.input_parameters is original_parameters
+    assert workspace.potential_path == "Cu.pot"
 
 
 def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
@@ -794,13 +800,11 @@ def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
 ):
     atoms = Atoms("Cu")
     parameters = object()
-    old_result = object()
     workspace = WorkspaceState(
         atoms=atoms,
         input_parameters=parameters,
         directory="original",
         potential_path="Cu.pot",
-        result=old_result,
     )
     error = ValueError("broken output")
 
@@ -832,7 +836,7 @@ def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
     assert workspace.input_parameters is parameters
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
-    assert workspace.result is old_result
+    assert controller.result_history == ()
     assert signals == []
 
 
@@ -854,9 +858,7 @@ def test_result_artifact_resolution_failure_leaves_workspace_unchanged(
         atoms=atoms,
         directory="original",
         potential_path="Cu.pot",
-        result=object(),
     )
-    original_result = workspace.result
     controller = WorkspaceController(workspace)
     monkeypatch.setattr(
         result_loading_module.TaskResult,
@@ -871,7 +873,7 @@ def test_result_artifact_resolution_failure_leaves_workspace_unchanged(
     assert workspace.atoms is atoms
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
-    assert workspace.result is original_result
+    assert controller.result_history == ()
 
 
 def test_result_loading_has_no_workspace_side_effects(tmp_path, monkeypatch):
@@ -879,13 +881,11 @@ def test_result_loading_has_no_workspace_side_effects(tmp_path, monkeypatch):
     result = SimpleNamespace(files={}, directory=str(tmp_path))
     atoms = Atoms("Cu")
     parameters = object()
-    current_result = object()
     workspace = WorkspaceState(
         atoms=atoms,
         input_parameters=parameters,
         directory="original",
         potential_path="Cu.pot",
-        result=current_result,
     )
     monkeypatch.setattr(
         result_loading_module.TaskResult,
@@ -900,7 +900,6 @@ def test_result_loading_has_no_workspace_side_effects(tmp_path, monkeypatch):
     assert workspace.input_parameters is parameters
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
-    assert workspace.result is current_result
 
 
 def test_missing_output_path_is_advisory_provenance(tmp_path):
@@ -928,10 +927,10 @@ def test_missing_referenced_potential_is_an_explicit_nonfatal_failure(
         directory=str(tmp_path),
     )
     result.path_to = lambda key: result.files[key]
+    original_atoms = Atoms("Cu")
     workspace = WorkspaceState(
-        atoms=Atoms("Cu"),
+        atoms=original_atoms,
         potential_path="Cu.pot",
-        result=object(),
     )
     controller = WorkspaceController(workspace)
     monkeypatch.setattr(
@@ -941,25 +940,21 @@ def test_missing_referenced_potential_is_an_explicit_nonfatal_failure(
     )
     loaded = load_result_file(output)
 
-    adoption = controller.adopt_external_result(
-        loaded, expected_generation=controller.generation
-    )
+    adoption = controller.adopt_external_result(loaded)
 
     assert adoption.adopted
     assert adoption.potential_path == missing.resolve()
     assert isinstance(adoption.potential_error, FileNotFoundError)
-    assert workspace.result is result
-    assert workspace.atoms is None
-    assert workspace.potential_path is None
+    assert controller.result_history[0].result is result
+    assert workspace.atoms is original_atoms
+    assert workspace.potential_path == "Cu.pot"
 
 
-def test_successful_result_load_is_one_observer_consistent_transition(
-    tmp_path,
-):
+def test_successful_external_result_load_only_publishes_result_signal(tmp_path):
     output = tmp_path / "Fe.out"
     potential = tmp_path / "Fe.pot"
     result_atoms = Atoms("Fe")
-    result = object()
+    result = SimpleNamespace(task_name="scf")
     result_parameters = object()
     loaded = LoadedResult(
         result=result,
@@ -971,39 +966,30 @@ def test_successful_result_load_is_one_observer_consistent_transition(
         input_parameters=result_parameters,
     )
 
+    original_atoms = Atoms("Cu")
     workspace = WorkspaceState(
-        atoms=Atoms("Cu"), potential_path="Cu.pot", result=object()
+        atoms=original_atoms,
+        potential_path="Cu.pot",
     )
     controller = WorkspaceController(workspace)
-    observed = []
-    controller.structureChanged.connect(
-        lambda atoms: observed.append(
-            (
-                atoms,
-                workspace.result,
-                workspace.directory,
-                workspace.potential_path,
-                workspace.input_parameters,
-                controller.generation,
-            )
-        )
-    )
+    structures = []
+    results = []
+    controller.structureChanged.connect(structures.append)
+    controller.resultChanged.connect(results.append)
+    generation = controller.generation
 
-    adoption = controller.adopt_external_result(
-        loaded, expected_generation=controller.generation
-    )
+    adoption = controller.adopt_external_result(loaded)
 
     assert adoption.adopted
-    assert observed == [
-        (
-            result_atoms,
-            result,
-            str(tmp_path),
-            str(potential),
-            result_parameters,
-            Generation(1, 0),
-        )
-    ]
+    assert not adoption.workspace_updated
+    assert structures == []
+    assert results == [result]
+    assert controller.generation == generation
+    assert workspace.atoms is original_atoms
+    assert workspace.potential_path == "Cu.pot"
+    record = controller.result_history[0]
+    assert record.result is result
+    assert record.output_state_id is not None
 
 
 def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
@@ -1011,11 +997,7 @@ def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(
-        file_flows,
-        "ase_read",
-        lambda _source: atoms,
-    )
+    monkeypatch.setattr(file_flows, "ase_read", lambda _source: atoms)
 
     assert file_flows.load_structure(controller, history, path, object())
 
@@ -1025,9 +1007,8 @@ def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
 def test_failed_file_flow_does_not_update_history(tmp_path, monkeypatch):
     path = tmp_path / "broken.cif"
     atoms = Atoms("Cu")
-    result = object()
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Cu.pot", result=result)
+        WorkspaceState(atoms=atoms, potential_path="Cu.pot")
     )
     history = RecentFiles(tmp_path / "recent.json")
     generation = controller.generation
@@ -1038,14 +1019,12 @@ def test_failed_file_flow_does_not_update_history(tmp_path, monkeypatch):
     monkeypatch.setattr(file_flows, "ase_read", fail)
     monkeypatch.setattr(file_flows.QMessageBox, "critical", lambda *args: None)
 
-    assert not file_flows.load_structure(
-        controller, history, path, object()
-    )
+    assert not file_flows.load_structure(controller, history, path, object())
     assert history.paths("structure") == ()
     assert controller.generation == generation
     assert controller.atoms is atoms
     assert controller.potential_path == "Cu.pot"
-    assert controller.result is result
+    assert controller.result is None
 
 
 def test_file_chooser_and_recent_use_the_same_load_function(
@@ -1068,9 +1047,7 @@ def test_file_chooser_and_recent_use_the_same_load_function(
         lambda *args: (str(path), ""),
     )
 
-    assert file_flows.choose_and_load_structure(
-        controller, history, object()
-    )
+    assert file_flows.choose_and_load_structure(controller, history, object())
     assert file_flows.open_recent(
         controller, history, "structure", path, object()
     )
@@ -1083,11 +1060,7 @@ def test_loading_unknown_structure_from_file_warns_but_keeps_it(
     atoms = Atoms("Fe", cell=(2.8, 2.8, 8.0), pbc=(True, True, False))
     controller = WorkspaceController()
     history = RecentFiles(tmp_path / "recent.json")
-    monkeypatch.setattr(
-        file_flows,
-        "ase_read",
-        lambda _source: atoms,
-    )
+    monkeypatch.setattr(file_flows, "ase_read", lambda _source: atoms)
     warnings = []
     monkeypatch.setattr(
         structure_flows.QMessageBox,
@@ -1144,9 +1117,7 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=SimpleNamespace(
-                copy=lambda **_kwargs: object()
-            ),
+            input_parameters=SimpleNamespace(copy=lambda **_kwargs: object()),
             directory=str(tmp_path),
         )
     )
@@ -1170,7 +1141,7 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
     assert deleted is None or sip.isdeleted(deleted)
 
 
-def test_calculation_flow_adopts_result_and_remembers_output(
+def test_calculation_flow_records_result_and_remembers_output(
     tmp_path, monkeypatch
 ):
     _application = QApplication.instance() or QApplication([])
@@ -1184,31 +1155,33 @@ def test_calculation_flow_adopts_result_and_remembers_output(
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=SimpleNamespace(
-                copy=lambda **_kwargs: object()
-            ),
+            input_parameters=SimpleNamespace(copy=lambda **_kwargs: object()),
             directory=str(tmp_path),
         )
     )
+    calls = []
     monkeypatch.setattr(
         controller,
         "adopt_calculation_result",
-        lambda value, **_kwargs: ResultAdoption(output_path=output),
+        lambda value, **kwargs: calls.append((value, kwargs))
+        or ResultAdoption(output_path=output),
     )
     history = RecentFiles(tmp_path / "recent.json")
     active_runs = ActiveRunRegistry()
     parent = QWidget()
+
     window = calculation_flow.run_calculation(
         controller, history, active_runs, parent
     )
-
     window._on_finished(result)
 
+    assert calls and calls[0][0] is result
+    assert "request" in calls[0][1]
     assert history.paths("output") == (str(output),)
     window.close()
 
 
-def test_calculation_flow_reports_result_adoption_failure(
+def test_calculation_flow_does_not_hide_controller_adoption_errors(
     tmp_path, monkeypatch
 ):
     _application = QApplication.instance() or QApplication([])
@@ -1220,41 +1193,25 @@ def test_calculation_flow_reports_result_adoption_failure(
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=SimpleNamespace(
-                copy=lambda **_kwargs: object()
-            ),
+            input_parameters=SimpleNamespace(copy=lambda **_kwargs: object()),
             directory=str(tmp_path),
         )
     )
-    error = RuntimeError("broken artifact metadata")
+    error = RuntimeError("controller invariant")
 
     def fail(*_args, **_kwargs):
         raise error
 
     monkeypatch.setattr(controller, "adopt_calculation_result", fail)
-    messages = []
-    monkeypatch.setattr(
-        calculation_flow.QMessageBox,
-        "critical",
-        lambda _parent, title, message: messages.append((title, message)),
-    )
     history = RecentFiles(tmp_path / "recent.json")
     parent = QWidget()
     window = calculation_flow.run_calculation(
         controller, history, ActiveRunRegistry(), parent
     )
 
-    window._on_finished(object())
+    with pytest.raises(RuntimeError, match="controller invariant"):
+        window._on_finished(object())
 
-    assert messages == [
-        (
-            "Result Adoption Error",
-            (
-                "The calculation finished, but its result could not be "
-                "adopted:\nbroken artifact metadata"
-            ),
-        )
-    ]
     assert history.paths("output") == ()
     window.close()
 
@@ -1327,9 +1284,7 @@ def test_run_worker_finishes_and_releases_thread(tmp_path):
 
 
 @pytest.mark.parametrize("action", ["data", "edit"])
-def test_result_payload_actions_use_the_shared_executor(
-    monkeypatch, action
-):
+def test_result_payload_actions_use_the_shared_executor(monkeypatch, action):
     payload = object()
     parent = object()
     opened = []
@@ -1347,9 +1302,7 @@ def test_result_payload_actions_use_the_shared_executor(
     monkeypatch.setattr(
         object_view,
         "show_readonly_object_dialog",
-        lambda value, *, title, parent: opened.append(
-            (value, title, parent)
-        ),
+        lambda value, *, title, parent: opened.append((value, title, parent)),
     )
 
     object_view.execute_value_action(Value(), action, parent)
