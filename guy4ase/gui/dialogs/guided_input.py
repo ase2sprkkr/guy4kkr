@@ -362,6 +362,8 @@ class GuidedInputParametersDialog(QDialog):
         choose_and_load_input_parameters(self.session, self)
 
     def _edit_input_file(self) -> None:
+        if not self._commit_pending():
+            return
         edit_input_parameters_file(self.session, self)
 
     def parameters(self) -> InputParameters:
