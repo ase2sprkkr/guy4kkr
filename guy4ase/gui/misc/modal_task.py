@@ -11,6 +11,32 @@ _T = TypeVar("_T")
 _MISSING = object()
 
 
+class _ModalTaskDialog(QProgressDialog):
+    """Progress dialog which can only close after its worker has finished."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._may_close = False
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if not self._may_close:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def reject(self) -> None:  # type: ignore[override]
+        if self._may_close:
+            super().reject()
+
+    def finish_successfully(self) -> None:
+        self._may_close = True
+        self.accept()
+
+    def finish_with_error(self) -> None:
+        self._may_close = True
+        super().reject()
+
+
 class _ModalTaskWorker(QObject):
     succeeded = pyqtSignal(object)
     failed = pyqtSignal(object)
@@ -39,11 +65,13 @@ def run_modal_task(
     """Run ``operation`` in a worker while showing a responsive modal wait.
 
     Non-GUI callers may pass ``None``; in that case the operation runs directly.
+    The modal cannot be dismissed while the worker is active because generic
+    operations do not provide a cancellation contract.
     """
     if parent is None or not isinstance(parent, QWidget):
         return operation()
 
-    dialog = QProgressDialog(parent)
+    dialog = _ModalTaskDialog(parent)
     dialog.setWindowTitle(title)
     dialog.setLabelText(label)
     dialog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -63,12 +91,12 @@ def run_modal_task(
     def succeeded(value: Any) -> None:
         nonlocal result
         result = value
-        dialog.accept()
+        dialog.finish_successfully()
 
     def failed(exc: Exception) -> None:
         nonlocal error
         error = exc
-        dialog.reject()
+        dialog.finish_with_error()
 
     worker.succeeded.connect(succeeded)
     worker.failed.connect(failed)
@@ -80,7 +108,6 @@ def run_modal_task(
 
     thread.start()
     dialog.exec()
-    thread.quit()
     thread.wait()
 
     if error is not None:
