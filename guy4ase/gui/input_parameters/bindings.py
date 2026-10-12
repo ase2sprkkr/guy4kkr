@@ -40,10 +40,7 @@ def values_equal(left: Any, right: Any) -> bool:
         return len(left) == len(right) and all(
             values_equal(a, b) for a, b in zip(left, right)
         )
-    try:
-        result = left == right
-        if isinstance(result, np.ndarray):
-            return bool(np.all(result))
-        return bool(result)
-    except Exception:
-        return False
+    result = left == right
+    if isinstance(result, np.ndarray):
+        return bool(np.all(result))
+    return bool(result)
