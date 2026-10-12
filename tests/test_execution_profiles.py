@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -67,6 +68,7 @@ def test_profile_form_parses_mpi_and_backend_specific_values():
 
     assert values["executor"] == "ssh"
     assert values["mpi"] == 8
+    assert values["mpi_warning"] is True
     assert values["host"] == "user@cluster"
     assert values["ssh_options"] == ["-p", "2222"]
     assert values["psij_backend"] == "slurm"
@@ -133,7 +135,7 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
     dialog.accept()
 
     assert config.profiles.saved == {
-        "local": {"executor": "local", "mpi": 12},
+        "local": {"executor": "local", "mpi": 12, "mpi_warning": True},
     }
     assert config.default_profile() is None
     assert config.saved
@@ -211,6 +213,51 @@ def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
 
     assert captured == {"profile": "cluster"}
     assert finished == [loaded_result]
+
+
+def test_worker_forwards_specific_mpi_warning():
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=".",
+        generation=object(),
+    )
+    worker = run_module._SprkkrRunWorker(request)
+    runner = object()
+
+    class Calculator:
+        def create_run(self, **_kwargs):
+            warnings.warn("No MPI runner", run_module.MpiNotFoundWarning)
+            return runner
+
+    seen = []
+    worker.warning.connect(seen.append)
+
+    assert worker._create_runner(Calculator()) is runner
+    assert seen == ["No MPI runner"]
+
+
+def test_run_window_shows_mpi_warning_message_box(monkeypatch, tmp_path):
+    _application = _app()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+    shown = []
+    monkeypatch.setattr(
+        run_module.QMessageBox,
+        "warning",
+        lambda parent, title, message: shown.append((parent, title, message)),
+    )
+
+    window = run_module.SprkkrRunWindow(request)
+    window._on_warning("MPI autodetection failed")
+
+    assert shown == [(window, "MPI Not Detected", "MPI autodetection failed")]
+    window.close()
 
 
 def test_run_window_refreshes_state_without_gui_thread_io(monkeypatch, tmp_path):

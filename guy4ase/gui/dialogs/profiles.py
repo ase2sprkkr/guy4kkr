@@ -9,6 +9,7 @@ from ase2sprkkr.configuration import config
 from ase2sprkkr.sprkkr.profile import resolve_sprkkr_profile
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -121,11 +122,11 @@ def profile_description(name: str | None) -> str:
         where = f"{profile.executor} execution"
 
     mpi = profile.mpi
-    if mpi is False or mpi is None:
+    if mpi is False:
         mpi_text = "MPI disabled"
     elif mpi is True:
         mpi_text = "MPI enabled"
-    elif mpi == "auto":
+    elif mpi is None or mpi == "auto":
         mpi_text = "MPI automatic"
     elif isinstance(mpi, int):
         mpi_text = f"MPI: {mpi} processes"
@@ -187,11 +188,11 @@ class _MpiEditor(QWidget):
             self.detail.setCurrentWidget(self._blank)
 
     def set_value(self, value: Any) -> None:
-        if value == "auto":
+        if value is None or value == "auto":
             mode = "auto"
         elif value is True:
             mode = "enabled"
-        elif value is False or value is None:
+        elif value is False:
             mode = "disabled"
         elif isinstance(value, int):
             mode = "processes"
@@ -203,7 +204,7 @@ class _MpiEditor(QWidget):
             mode = "command"
             self.command.setText(value)
         else:
-            mode = "disabled"
+            mode = "auto"
         self.mode.setCurrentIndex(max(self.mode.findData(mode), 0))
         self._update_detail()
 
@@ -223,9 +224,9 @@ class _MpiEditor(QWidget):
         """Compatibility helper for older callers/tests using the former QLineEdit."""
         text = text.strip()
         lowered = text.lower()
-        if lowered == "auto":
+        if lowered in {"", "auto"}:
             self.set_value("auto")
-        elif lowered in {"", "false", "off", "no"}:
+        elif lowered in {"false", "off", "no"}:
             self.set_value(False)
         elif lowered in {"true", "on", "yes"}:
             self.set_value(True)
@@ -285,7 +286,15 @@ class _ProfileForm(QWidget):
         self.run_target_description.setStyleSheet("color: palette(mid);")
         run_form.addRow(self.run_target_description)
         self.mpi = _MpiEditor(run_box)
+        self.mpi.mode.currentIndexChanged.connect(self._update_mpi_warning_visibility)
         run_form.addRow("MPI:", self.mpi)
+        self.mpi_warning = QCheckBox("Warn if MPI is not detected", run_box)
+        self.mpi_warning.setToolTip(
+            "Show a warning when MPI autodetection cannot find an MPI runner "
+            "and the calculation falls back to non-MPI execution."
+        )
+        self.mpi_warning.setChecked(True)
+        run_form.addRow(self.mpi_warning)
         form_root.addWidget(run_box)
 
         executable_box = QGroupBox("SPR-KKR executables", self.form_widget)
@@ -339,6 +348,9 @@ class _ProfileForm(QWidget):
         root.addStretch(1)
         self._update_visibility()
 
+    def _update_mpi_warning_visibility(self) -> None:
+        self.mpi_warning.setVisible(self.mpi.mode.currentData() == "auto")
+
     def _update_visibility(self) -> None:
         kind = str(self.kind.currentData())
         ssh = kind in {"ssh", "ssh-psij"}
@@ -346,6 +358,7 @@ class _ProfileForm(QWidget):
         self.run_target_description.setText(_RUN_TARGET_DESCRIPTIONS.get(kind, ""))
         self.ssh_box.setVisible(ssh)
         self.psij_box.setVisible(psij)
+        self._update_mpi_warning_visibility()
         for widget in (
             self.host,
             self.local_root,
@@ -364,6 +377,7 @@ class _ProfileForm(QWidget):
         kind = _draft_kind(values)
         self.kind.setCurrentIndex(max(self.kind.findData(kind), 0))
         self.mpi.set_value(values.get("mpi"))
+        self.mpi_warning.setChecked(bool(values.get("mpi_warning", True)))
         self.executable_dir.setText(str(values.get("executable_dir") or ""))
         self.executable_suffix.setText(str(values.get("executable_suffix") or ""))
         self.host.setText(str(values.get("host") or ""))
@@ -382,7 +396,11 @@ class _ProfileForm(QWidget):
     def values(self) -> dict[str, Any]:
         kind = str(self.kind.currentData())
         executor = "ssh" if kind == "ssh-psij" else kind
-        values: dict[str, Any] = {"executor": executor, "mpi": self.mpi.value()}
+        values: dict[str, Any] = {
+            "executor": executor,
+            "mpi": self.mpi.value(),
+            "mpi_warning": self.mpi_warning.isChecked(),
+        }
         for name, edit in (
             ("executable_dir", self.executable_dir),
             ("executable_suffix", self.executable_suffix),
@@ -566,7 +584,7 @@ class ProfilesDialog(QDialog):
             return
         self._drafts[name] = _ProfileDraft(
             name,
-            {"executor": "local", "mpi": "auto"},
+            {"executor": "local", "mpi": "auto", "mpi_warning": True},
         )
         self._reload_list(name)
 

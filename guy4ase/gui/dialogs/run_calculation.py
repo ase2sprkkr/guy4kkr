@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Callable
 from threading import Lock, Thread
 from typing import Any
 
+from ase2sprkkr.execution import MpiNotFoundWarning
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
@@ -13,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -82,6 +85,7 @@ class _RunCancellation:
 class _SprkkrRunWorker(QObject):
     output = pyqtSignal(str, str)  # (text, kind)
     status = pyqtSignal(str)
+    warning = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)  # LoadedResult
     cancelled = pyqtSignal()
@@ -117,13 +121,37 @@ class _SprkkrRunWorker(QObject):
             return "%a_%T.inp", "%a.pot", "%a_%T.out"
         return f"{base}_%T.inp", f"{base}.pot", f"{base}_%T.out"
 
+    def _with_mpi_warnings(self, operation):
+        """Run one backend operation and surface only the dedicated MPI warning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", MpiNotFoundWarning)
+            result = operation()
+
+        for item in caught:
+            if issubclass(item.category, MpiNotFoundWarning):
+                self.warning.emit(str(item.message))
+            else:
+                warnings.showwarning(
+                    item.message,
+                    item.category,
+                    item.filename,
+                    item.lineno,
+                    file=item.file,
+                    line=item.line,
+                )
+        return result
+
+    def _create_runner(self, calculator: SPRKKR, **kwargs):
+        return self._with_mpi_warnings(lambda: calculator.create_run(**kwargs))
+
     def _launch(self, calculator: SPRKKR):
         input_file, potential_file, output_file = self._file_names()
 
         def read_callback(text: str, kind: str) -> None:
             self.output.emit(text, kind)
 
-        runner = calculator.create_run(
+        runner = self._create_runner(
+            calculator,
             atoms=self._request.atoms,
             input_parameters=self._request.input_parameters,
             directory=self._request.directory,
@@ -137,7 +165,7 @@ class _SprkkrRunWorker(QObject):
         if not self._cancellation.register(runner):
             runner.cancel()
             return None
-        runner.submit()
+        self._with_mpi_warnings(runner.submit)
         return runner
 
     @pyqtSlot()
@@ -269,6 +297,7 @@ class SprkkrRunWindow(QDialog):
         thread.started.connect(worker.run)
         worker.output.connect(self._append_output)
         worker.status.connect(self._set_status)
+        worker.warning.connect(self._on_warning)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
         worker.cancelled.connect(self._on_cancelled)
@@ -333,6 +362,10 @@ class SprkkrRunWindow(QDialog):
             self.refreshed.emit(str(value).replace("_", " ").capitalize())
 
         Thread(target=refresh, name="sprkkr-refresh", daemon=True).start()
+
+    @pyqtSlot(str)
+    def _on_warning(self, message: str) -> None:
+        QMessageBox.warning(self, "MPI Not Detected", message)
 
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
