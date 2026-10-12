@@ -359,18 +359,29 @@ class WorkspaceController(QObject):
         *,
         expected_major: int,
     ) -> ResultAdoption:
+        """Publish a sibling result without letting it roll back document state.
+
+        The major generation decides whether a calculation result still belongs
+        to the current document and may therefore enter result history. Only an
+        SCF result may publish ``atoms``/``potential_path`` as new canonical
+        workspace state: non-SCF tasks commonly reference and reload the
+        potential they started from, so their ``loaded.atoms`` are provenance,
+        not a newer structure/potential revision.
+        """
         adoption = self._result_adoption(loaded)
         if expected_major != self._generation.major:
             return replace(adoption, adopted=False)
 
-        if loaded.atoms is not None:
+        publish_structure = (
+            loaded.atoms is not None and _result_is_scf(loaded.result)
+        )
+        if publish_structure:
             self._workspace.atoms = loaded.atoms
             self._workspace.potential_path = str(loaded.potential_path)
-            if _result_is_scf(loaded.result):
-                self._workspace.restarted = False
+            self._workspace.restarted = False
         self._publish_result(loaded.result)
 
-        if loaded.atoms is not None:
+        if publish_structure:
             self.structureChanged.emit(loaded.atoms)
         self.resultChanged.emit(loaded.result)
         return adoption
