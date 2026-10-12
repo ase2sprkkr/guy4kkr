@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -25,7 +25,8 @@ def _result_is_scf(result: Any) -> bool:
         return False
 
 
-class Generation(NamedTuple):
+@dataclass(frozen=True)
+class Generation:
     """Workspace revision split into calculation epoch and local revision."""
 
     major: int = 0
@@ -46,11 +47,16 @@ class Generation(NamedTuple):
         return Generation(self.major + value, 0)
 
     def __eq__(self, other: object) -> bool:
+        if isinstance(other, Generation):
+            return self.major == other.major and self.minor == other.minor
         if isinstance(other, int):
             return self.major == other and self.minor == 0
-        return tuple.__eq__(self, other)
+        return NotImplemented
 
-    __hash__ = tuple.__hash__
+    def __hash__(self) -> int:
+        if self.minor == 0:
+            return hash(self.major)
+        return hash((self.major, self.minor))
 
 
 class DocumentChange(Enum):

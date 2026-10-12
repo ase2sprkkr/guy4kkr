@@ -16,6 +16,17 @@ def _loaded(tmp_path, name):
     return result, load_result(result, fallback_directory=tmp_path)
 
 
+def test_generation_equality_and_hash_are_consistent():
+    generation = Generation(1, 0)
+
+    assert generation == Generation(1, 0)
+    assert generation == 1
+    assert hash(generation) == hash(1)
+    assert {generation: "value"}[1] == "value"
+    assert Generation(1, 1) != 1
+    assert generation != (1, 0)
+
+
 def test_generation_major_and_minor_changes_have_distinct_semantics(tmp_path):
     controller = WorkspaceController(
         WorkspaceState(atoms=Atoms("Fe"), directory=str(tmp_path))
