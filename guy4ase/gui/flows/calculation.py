@@ -5,13 +5,16 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
+from guy4ase.gui.dialogs.profiles import (
+    ProfileSelectionDialog,
+    profile_description,
+)
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
@@ -35,17 +38,51 @@ def choose_working_directory(
     return True
 
 
+def _select_profile(parent: QWidget) -> tuple[bool, str | None]:
+    """Run the post-parameter execution step and preserve automatic profiles."""
+    dialog = ProfileSelectionDialog(parent)
+    if dialog.exec() != dialog.DialogCode.Accepted:
+        return False, None
+    return True, dialog.profile_name()
+
+
+def _launch_parent_and_profile_policy(parent_or_runs, parent):
+    """Resolve old/new call shapes while the obsolete service is removed."""
+    if parent is None:
+        return parent_or_runs, True
+    return parent, bool(
+        getattr(parent_or_runs, "profile_selection_enabled", False)
+    )
+
+
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    active_runs: ActiveRunRegistry,
-    parent: QWidget,
+    parent_or_runs,
+    parent: QWidget | None = None,
+    *,
+    select_profile: bool = True,
+    profile_name: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Open a run window and adopt its result through the controller."""
+    """Choose execution, open a run window and adopt its result.
+
+    ``parent_or_runs, parent`` temporarily accepts the former
+    ``active_runs, parent`` call shape. The legacy object has no execution
+    semantics; during migration it only tells application wiring to show the
+    new profile step, while older direct test callers remain non-interactive.
+    """
+    parent, interactive_profiles = _launch_parent_and_profile_policy(
+        parent_or_runs, parent
+    )
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
         return None
+
+    if select_profile and interactive_profiles:
+        accepted, profile_name = _select_profile(parent)
+        if not accepted:
+            return None
 
     def adoption_completed(adoption) -> None:
         if adoption.output_path is not None:
@@ -73,10 +110,15 @@ def run_calculation(
         )
         adoption_completed(adoption)
 
+    try:
+        description = profile_description(profile_name)
+    except (KeyError, TypeError, ValueError):
+        description = None
+
     window = SprkkrRunWindow(
         request=request,
-        run_registry=active_runs,
-        launch_lock=active_runs.launch_lock,
+        profile_name=profile_name,
+        profile_description=description,
         parent=parent,
         on_finished=finished,
     )
@@ -87,13 +129,18 @@ def run_calculation(
 def configure_and_run_task(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    active_runs: ActiveRunRegistry,
-    parent: QWidget,
-    task: str,
+    parent_or_runs,
+    parent_or_task,
+    task: str | None = None,
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
-    """Configure one Guided task, commit it, and start the calculation."""
+    """Configure one Guided task, commit it, choose execution, and run it."""
+    if task is None:
+        parent = parent_or_runs
+        task = parent_or_task
+    else:
+        parent = parent_or_task
     try:
         if (
             not controller.directory
@@ -134,7 +181,6 @@ def configure_and_run_task(
         return run_calculation(
             controller,
             recent_files,
-            active_runs,
             parent,
         )
     except (ImportError, ModuleNotFoundError) as exc:
