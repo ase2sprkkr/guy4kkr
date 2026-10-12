@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
@@ -13,10 +14,17 @@ from guy4ase.gui.application.config import config_home
 RecentKind = Literal["structure", "input", "output"]
 RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
 
+_logger = logging.getLogger(__name__)
+
 
 def default_recent_files_path() -> Path:
     """Return the per-user history path used by the application."""
     return config_home() / "recent_files.json"
+
+
+def _canonical_path(file_path: str | Path) -> str:
+    """Return a stable absolute path suitable for persisted history."""
+    return str(Path(file_path).expanduser().resolve())
 
 
 class RecentFiles(QObject):
@@ -54,7 +62,9 @@ class RecentFiles(QObject):
     def _normalize(value: object) -> list[str]:
         if not isinstance(value, list):
             return []
-        return list(dict.fromkeys(str(item) for item in value))
+        return list(
+            dict.fromkeys(_canonical_path(str(item)) for item in value)
+        )
 
     def load(self) -> None:
         """Load history; corrupt or unreadable caches behave as empty."""
@@ -78,8 +88,8 @@ class RecentFiles(QObject):
         if last_kind in {"structure", "output"}:
             self.last_kind = last_kind
 
-    def save(self) -> bool:
-        """Persist history, returning false when the cache is not writable."""
+    def save(self) -> None:
+        """Persist history and log a cache-write failure without breaking file I/O."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             data = {
@@ -88,12 +98,11 @@ class RecentFiles(QObject):
             }
             self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
-            return False
-        return True
+            _logger.exception("Failed to save recent files to %s", self.path)
 
     def remember(self, kind: RecentKind, file_path: str | Path) -> None:
-        """Move a path to the front and persist the bounded history."""
-        normalized = str(Path(file_path))
+        """Move a canonical path to the front and persist the bounded history."""
+        normalized = _canonical_path(file_path)
         recent = self._files[kind]
         previous = tuple(recent)
         previous_last_kind = self.last_kind
@@ -108,8 +117,8 @@ class RecentFiles(QObject):
         self.changed.emit()
 
     def forget(self, kind: RecentKind, file_path: str | Path) -> None:
-        """Remove one path and persist only if the history changed."""
-        normalized = str(Path(file_path))
+        """Remove one canonical path and persist only if the history changed."""
+        normalized = _canonical_path(file_path)
         previous = self._files[kind]
         retained = [item for item in previous if item != normalized]
         if retained == previous:

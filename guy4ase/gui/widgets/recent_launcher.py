@@ -23,6 +23,19 @@ class RecentLaunch:
         return f"Continue: {Path(self.path).name}"
 
 
+def recent_path_label(path: str | Path, base: str | Path | None = None) -> str:
+    """Prefer a short descendant path; never display ``..``-based relatives."""
+    absolute = Path(path).expanduser().resolve()
+    absolute_text = str(absolute)
+    base_path = Path.cwd() if base is None else Path(base).expanduser().resolve()
+    try:
+        relative = absolute.relative_to(base_path)
+    except ValueError:
+        return absolute_text
+    relative_text = str(relative)
+    return relative_text if len(relative_text) < len(absolute_text) else absolute_text
+
+
 def recent_launch(history: RecentFiles) -> RecentLaunch | None:
     """Return the preferred structure/output to continue with, if any."""
     paths = {
@@ -44,6 +57,7 @@ def build_recent_launch_menu(
     open_recent: Callable[[RecentKind, str], None],
     *,
     menu: QMenu | None = None,
+    base: str | Path | None = None,
 ) -> QMenu:
     """Build or refresh the shared Structures/Outputs Continue menu."""
     if menu is None and isinstance(parent, QToolButton):
@@ -66,7 +80,8 @@ def build_recent_launch_menu(
             continue
 
         for path in paths:
-            action = QAction(path, submenu)
+            action = QAction(recent_path_label(path, base), submenu)
+            action.setToolTip(path)
             action.triggered.connect(
                 lambda _checked=False, item_kind=kind, item_path=path: open_recent(
                     item_kind, item_path
