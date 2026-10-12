@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
 from guy4ase.gui.dialogs.structures.source import select_structure_source
 from guy4ase.gui.dialogs.structures.spacegroup_selector import select_spacegroup
@@ -45,10 +46,12 @@ class Build2DStructureDialog(QDialog):
         atoms: Any,
         parent: Optional[QWidget] = None,
         *,
+        recent_files: RecentFiles,
         surface_mode: bool = False,
     ):
         super().__init__(parent)
         self._surface_mode = surface_mode
+        self._recent_files = recent_files
         self.setWindowTitle("Build 2D Surface" if surface_mode else "Build 2D Structure")
         self.resize(1200, 760)
 
@@ -220,6 +223,7 @@ class Build2DStructureDialog(QDialog):
     def _on_choose_right(self) -> None:
         candidate = select_structure_source(
             self,
+            recent_files=self._recent_files,
             title="Choose Replacement Structure",
         )
         if candidate is not None:
@@ -354,7 +358,19 @@ def select_build_2d_structure(
     *,
     surface_mode: bool = False,
 ) -> Optional[Any]:
-    dialog = Build2DStructureDialog(atoms, parent=parent, surface_mode=surface_mode)
+    if parent is None:
+        raise ValueError("Build2D structure selection requires an application parent.")
+    recent_files = getattr(parent, "recent_history", None)
+    if not isinstance(recent_files, RecentFiles):
+        raise ValueError(
+            "Build2D structure selection requires the application's RecentFiles service."
+        )
+    dialog = Build2DStructureDialog(
+        atoms,
+        parent=parent,
+        recent_files=recent_files,
+        surface_mode=surface_mode,
+    )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.result_atoms()
