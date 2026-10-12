@@ -27,7 +27,10 @@ from guy4ase.gui.input_parameters.keyword_choices import (
     keyword_items,
 )
 from guy4ase.gui.input_parameters.specs.schema import FieldPlacement
-from guy4ase.gui.widgets.input_parameters.commit import EditorCommit
+from guy4ase.gui.widgets.input_parameters.commit import (
+    EditorCommit,
+    EditorValidationError,
+)
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 from guy4ase.gui.widgets.nullable_spinbox import (
     NullableDoubleSpinBox,
@@ -273,6 +276,7 @@ class ChoiceEditor(QComboBox, _ScalarValueEditor):
         editor.bind(binding.read, binding.set_value)
         editor.currentIndexChanged.connect(editor.commit)
         return editor
+
     def _draft(self) -> Any:
         return self.currentData()
 
@@ -343,16 +347,21 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
                 self._apply_value(None)
                 self._sync_display()
                 return
-            raise ValueError(f"{self._value_name} must have a value")
-        if self.literal:
-            value = ast.literal_eval(text)
-        else:
-            try:
-                value = _python_input_value(text)
-            except (SyntaxError, ValueError):
-                value = text
-        value = self._grammar_type.convert(value)
-        self._grammar_type.validate(value)
+            raise EditorValidationError(f"{self._value_name} must have a value")
+
+        try:
+            if self.literal:
+                value = ast.literal_eval(text)
+            else:
+                try:
+                    value = _python_input_value(text)
+                except (SyntaxError, ValueError):
+                    value = text
+            value = self._grammar_type.convert(value)
+            self._grammar_type.validate(value)
+        except (SyntaxError, TypeError, ValueError) as error:
+            raise EditorValidationError(str(error)) from error
+
         self._apply_value(value)
         self._sync_display()
 
