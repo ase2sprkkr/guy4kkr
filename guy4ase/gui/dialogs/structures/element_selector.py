@@ -17,17 +17,6 @@ from PyQt6.QtWidgets import (
 )
 
 try:
-    from weakref import WeakKeyDictionary
-    _DIALOGS = WeakKeyDictionary()
-except Exception:
-    _DIALOGS = {}
-
-class _GlobalSentinel:  # weakref-capable marker
-    pass
-
-_DEFAULT_KEY = _GlobalSentinel()
-
-try:
     from mendeleev import element as mendeleev_element
 except Exception:
     mendeleev_element = None
@@ -331,15 +320,7 @@ class ElementSelectorDialog(QDialog):
 
 
 def select_element(parent: Optional[QWidget] = None) -> Optional[str]:
-    key = parent if parent is not None else _DEFAULT_KEY
-    try:
-        dlg = _DIALOGS.get(key)
-    except Exception:
-        dlg = None
-    if dlg is None or not isinstance(dlg, ElementSelectorDialog):
-        dlg = ElementSelectorDialog(parent)
-        _DIALOGS[key] = dlg
-
+    dlg = ElementSelectorDialog(parent)
     result = dlg.exec()
     if result == QDialog.DialogCode.Accepted:
         return dlg.result_symbol()

@@ -129,7 +129,7 @@ def edit_site_elements(
         parent,
         partial(
             controller.apply_structure_edit,
-            lambda _atoms: result.apply(),
+            lambda atoms: result.apply(atoms),
             expected_generation=generation,
         ),
     )
@@ -258,6 +258,7 @@ def build_2d_structure(
             f"Failed to build 2D structure:\n{exc}",
         )
         return None
+
 
 def update_empty_spheres(
     controller: WorkspaceController, parent: QWidget

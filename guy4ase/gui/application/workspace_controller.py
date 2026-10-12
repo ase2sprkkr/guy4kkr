@@ -186,14 +186,12 @@ class WorkspaceController(QObject):
         """Borrow Atoms and capture independent calculation inputs."""
 
         def capture(atoms: Any) -> CalculationRequest:
-            if not self.workspace.can_calculate():
+            parameters = self.workspace.input_parameters
+            directory = self.workspace.directory
+            if atoms is None or parameters is None or not directory:
                 raise ValueError(
                     "Structure, input parameters and directory are required."
                 )
-            parameters = self.workspace.input_parameters
-            directory = self.workspace.directory
-            assert parameters is not None
-            assert directory
             return CalculationRequest(
                 atoms=atoms,
                 input_parameters=parameters.copy(copy_values=True),
@@ -285,6 +283,7 @@ class WorkspaceController(QObject):
         preserve_potential_path: bool = False,
         preserve_empty_spheres: bool = False,
         preserve_result_history: bool = False,
+        copy_atoms: bool = True,
         reason: str = "applying structure changes",
     ) -> DocumentChange | Busy:
         def change() -> tuple[DocumentChange, bool, Any]:
@@ -292,7 +291,9 @@ class WorkspaceController(QObject):
                 return DocumentChange.STALE, False, None
             if self.workspace.atoms is None:
                 raise ValueError("No structure is loaded.")
-            atoms = edit(self.workspace.atoms)
+            source = self.workspace.atoms
+            candidate = source.copy() if copy_atoms else source
+            atoms = edit(candidate)
             if atoms is None:
                 raise ValueError("A confirmed structure edit returned no structure.")
             if preserve_result_history:
@@ -480,6 +481,7 @@ class WorkspaceController(QObject):
             preserve_potential_path=True,
             preserve_empty_spheres=True,
             preserve_result_history=True,
+            copy_atoms=False,
             reason="preparing the structure for a new calculation",
         )
 
@@ -531,5 +533,4 @@ class WorkspaceController(QObject):
 
     @staticmethod
     def _restart_atoms(atoms: Any) -> Any:
-        atoms.potential.SCF_INFO.SCFSTATUS = "START"
         return atoms

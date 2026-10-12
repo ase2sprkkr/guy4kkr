@@ -75,9 +75,10 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
         ),
         sprkkr_is_scf_converged=lambda: True,
     )
+    previous_result = object()
     workspace = WorkspaceState(
         atoms=atoms,
-        result=object(),
+        result=previous_result,
         potential_path="Fe.pot",
         empty_spheres_added=3,
     )
@@ -89,12 +90,14 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
     )
 
     assert change is DocumentChange.APPLIED
-    assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
+    assert workspace.atoms is atoms
+    assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
     assert workspace.restarted
     assert not workspace.is_scf_converged()
     assert workspace.empty_spheres_added == 3
     assert workspace.potential_path == "Fe.pot"
     assert workspace.result is None
+    assert workspace.result_history == (previous_result,)
     assert controller.generation == generation + 1
 
 

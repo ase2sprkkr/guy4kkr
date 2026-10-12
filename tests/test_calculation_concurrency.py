@@ -83,11 +83,11 @@ def test_confirmed_structure_edit_emits_after_gate_release():
     )
 
     assert returned is DocumentChange.APPLIED
-    assert controller.workspace.atoms is atoms
+    assert controller.workspace.atoms is not atoms
     assert controller.workspace.result is None
     assert controller.workspace.potential_path is None
     assert controller.generation == generation + 1
-    assert structures == [atoms]
+    assert structures == [controller.workspace.atoms]
     assert results == [None]
     assert signal_saw_unlocked == [True]
 
@@ -253,7 +253,7 @@ def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
     assert controller.workspace.result is None
 
     change = controller.apply_structure_edit(
-        lambda _atoms: draft.apply(),
+        lambda atoms: draft.apply(atoms),
         expected_generation=source_generation,
     )
     assert change is DocumentChange.STALE
