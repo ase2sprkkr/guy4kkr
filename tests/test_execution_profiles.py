@@ -7,7 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.dialogs import profiles as profiles_module
+from guy4ase.gui.dialogs import run_calculation as run_module
 
 
 def _app():
@@ -39,16 +41,16 @@ def test_profile_form_changes_fields_with_execution_type():
     form = profiles_module._ProfileForm()
 
     form.kind.setCurrentIndex(form.kind.findData("local"))
-    assert not form.host.isVisibleTo(form)
-    assert not form.psij_backend.isVisibleTo(form)
+    assert form.host.isHidden()
+    assert form.psij_backend.isHidden()
 
     form.kind.setCurrentIndex(form.kind.findData("ssh"))
-    assert form.host.isVisibleTo(form)
-    assert not form.psij_backend.isVisibleTo(form)
+    assert not form.host.isHidden()
+    assert form.psij_backend.isHidden()
 
     form.kind.setCurrentIndex(form.kind.findData("ssh-psij"))
-    assert form.host.isVisibleTo(form)
-    assert form.psij_backend.isVisibleTo(form)
+    assert not form.host.isHidden()
+    assert not form.psij_backend.isHidden()
     form.close()
 
 
@@ -110,7 +112,6 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
     monkeypatch.setattr(profiles_module, "config", config)
     dialog = profiles_module.ProfilesDialog()
 
-    # Select the mutable profile and change one field before accepting.
     for row in range(dialog.list.count()):
         item = dialog.list.item(row)
         if item.data(profiles_module.Qt.ItemDataRole.UserRole) == "local":
@@ -124,3 +125,42 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
     }
     assert config.saved
     dialog.close()
+
+
+def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
+    captured = {}
+    backend_result = object()
+    loaded_result = object()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+
+    class Calculator:
+        pass
+
+    def make_calculator(*, profile):
+        captured["profile"] = profile
+        return Calculator()
+
+    class Runner:
+        def wait(self):
+            return backend_result
+
+    worker = run_module._SprkkrRunWorker(request, profile_name="cluster")
+    monkeypatch.setattr(run_module, "SPRKKR", make_calculator)
+    monkeypatch.setattr(worker, "_launch", lambda calculator: Runner())
+    monkeypatch.setattr(
+        run_module,
+        "load_result",
+        lambda result, *, fallback_directory: loaded_result,
+    )
+    finished = []
+    worker.finished.connect(finished.append)
+
+    worker.run()
+
+    assert captured == {"profile": "cluster"}
+    assert finished == [loaded_result]
