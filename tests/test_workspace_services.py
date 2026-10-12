@@ -1265,30 +1265,36 @@ def test_run_worker_finishes_and_releases_thread(tmp_path):
         from ase import Atoms
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QApplication, QWidget
+        from guy4ase.gui.application.workspace_controller import (
+            CalculationRequest,
+            Generation,
+        )
         from guy4ase.gui.dialogs import run_calculation as run_dialog
 
         result = object()
 
-        class Process:
-            def run(self):
+        class Runner:
+            def wait(self):
                 return result
 
-            def stop_the_process(self):
+            def cancel(self):
                 pass
 
-        class Calculator:
-            def calculate(self, **_kwargs):
-                return Process()
-
-        run_dialog.SPRKKR = Calculator
+        run_dialog.SPRKKR = lambda: object()
+        run_dialog._SprkkrRunWorker._launch = lambda self, _calculator: Runner()
+        run_dialog.load_result = lambda value, **_kwargs: value
         application = QApplication([])
         application.setQuitOnLastWindowClosed(False)
         parent = QWidget()
         finished = []
+        request = CalculationRequest(
+            atoms=Atoms("Fe"),
+            input_parameters=object(),
+            directory={str(tmp_path)!r},
+            generation=Generation(),
+        )
         window = run_dialog.SprkkrRunWindow(
-            Atoms("Fe"),
-            object(),
-            {str(tmp_path)!r},
+            request,
             parent=parent,
             on_finished=finished.append,
         )

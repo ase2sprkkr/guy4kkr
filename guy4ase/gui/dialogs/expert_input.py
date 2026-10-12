@@ -6,10 +6,8 @@ from typing import Any
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from PyQt6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -44,8 +42,6 @@ class InputParametersDialog(QDialog):
         parent: QWidget | None = None,
         *,
         show_changed_only: bool = False,
-        calculate_mode: bool = False,
-        directory: str | None = None,
         atoms: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -53,8 +49,6 @@ class InputParametersDialog(QDialog):
             self.session = parameters.fork(self)
         else:
             self.session = create_input_parameters_session(parameters, self)
-        self._calculate_mode = calculate_mode
-        self._directory = directory or ''
 
         self.setWindowTitle('Edit Input Parameters')
         manage_window_geometry(
@@ -64,19 +58,6 @@ class InputParametersDialog(QDialog):
             default_maximized=True,
         )
         root = QVBoxLayout(self)
-
-        if calculate_mode:
-            directory_row = QHBoxLayout()
-            directory_row.addWidget(QLabel('Working directory:'))
-            self._directory_edit = QLineEdit(self._directory, self)
-            self._directory_edit.setPlaceholderText('Select a calculation directory')
-            directory_row.addWidget(self._directory_edit, 1)
-            choose_directory = QPushButton('Browse…', self)
-            choose_directory.clicked.connect(self._choose_directory)
-            directory_row.addWidget(choose_directory)
-            root.addLayout(directory_row)
-        else:
-            self._directory_edit = None
 
         self.dataset_editor = DatasetEditor(self.session, self)
         root.addWidget(self.dataset_editor)
@@ -110,7 +91,7 @@ class InputParametersDialog(QDialog):
         self.load_btn = add_button('Load input…', self._load_input)
         self.edit_input_btn = add_button('Edit input file…', self._edit_input_file)
         self.cancel_btn = add_button('Cancel', self.reject)
-        self.ok_btn = add_button('Calculate' if calculate_mode else 'OK', self._on_ok)
+        self.ok_btn = add_button('OK', self._on_ok)
 
     def _load_input(self) -> None:
         if choose_and_load_input_parameters(self.session, self):
@@ -118,24 +99,6 @@ class InputParametersDialog(QDialog):
 
     def _edit_input_file(self) -> None:
         edit_input_parameters_file(self.session, self)
-
-    def _choose_directory(self) -> bool:
-        start = (
-            self._directory_edit.text().strip()
-            if self._directory_edit is not None
-            else self._directory
-        )
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            'Select Calculation Directory',
-            start,
-        )
-        if not selected:
-            return False
-        self._directory = str(selected)
-        if self._directory_edit is not None:
-            self._directory_edit.setText(self._directory)
-        return True
 
     def _on_ok(self) -> None:
         self._validation_error.hide()
@@ -147,23 +110,10 @@ class InputParametersDialog(QDialog):
             self._validation_error.setText(str(error))
             self._validation_error.show()
             return
-        if self._calculate_mode:
-            self._directory = (
-                self._directory_edit.text().strip()
-                if self._directory_edit is not None
-                else ''
-            )
-            if not self._directory and not self._choose_directory():
-                return
         self.accept()
 
     def result(self) -> InputParameters:
         return self.session.result()
-
-    def directory(self) -> str:
-        if self._directory_edit is not None:
-            return self._directory_edit.text().strip()
-        return self._directory
 
 
 def edit_input_parameters(
@@ -171,8 +121,6 @@ def edit_input_parameters(
     parent: QWidget | None = None,
     *,
     show_changed_only: bool = False,
-    calculate_mode: bool = False,
-    directory: str | None = None,
     atoms: Any = None,
 ) -> InputParameters | None:
     """Open the expert editor and return its accepted isolated draft."""
@@ -181,8 +129,6 @@ def edit_input_parameters(
         session,
         parent=parent,
         show_changed_only=show_changed_only,
-        calculate_mode=calculate_mode,
-        directory=directory,
         atoms=atoms,
     )
     if accepted is None:
@@ -195,8 +141,6 @@ def edit_input_parameters_session(
     parent: QWidget | None = None,
     *,
     show_changed_only: bool = False,
-    calculate_mode: bool = False,
-    directory: str | None = None,
     atoms: Any = None,
 ) -> InputParametersSession | None:
     """Run Expert over an isolated fork and return the fork only on Accept."""
@@ -204,8 +148,6 @@ def edit_input_parameters_session(
         session,
         parent=parent,
         show_changed_only=show_changed_only,
-        calculate_mode=calculate_mode,
-        directory=directory,
         atoms=atoms,
     )
     code = dialog.exec()
