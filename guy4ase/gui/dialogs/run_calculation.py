@@ -42,6 +42,12 @@ class _RunCancellation:
         with self._lock:
             return self._requested
 
+    @property
+    def runner(self) -> Any | None:
+        """Return the current runner for non-blocking status refresh."""
+        with self._lock:
+            return self._runner
+
     def register(self, runner: Any) -> bool:
         """Register the runner and return whether it may be started."""
         with self._lock:
@@ -150,7 +156,12 @@ class _SprkkrRunWorker(QObject):
                 return
 
             running = True
-            self.status.emit("Running…")
+            reference = runner.reference
+            if reference is not None:
+                target = reference.computer or reference.executor
+                self.status.emit(f"Running on {target}…")
+            else:
+                self.status.emit("Running…")
             result = runner.wait()
             if self._cancellation.requested:
                 self._emit_cancelled()
@@ -174,6 +185,8 @@ class _SprkkrRunWorker(QObject):
 
 
 class SprkkrRunWindow(QDialog):
+    refreshed = pyqtSignal(str)
+
     def __init__(
         self,
         request: CalculationRequest,
@@ -193,6 +206,7 @@ class SprkkrRunWindow(QDialog):
         self._finished_callback = on_finished
         self._close_requested = False
         self._profile_name = profile_name
+        self.refreshed.connect(self._set_status)
 
         layout = QVBoxLayout(self)
 
@@ -215,6 +229,14 @@ class SprkkrRunWindow(QDialog):
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.clicked.connect(self._on_stop)
         btn_row.addWidget(self._stop_btn)
+
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setToolTip(
+            "Refresh the backend run state without blocking the GUI. "
+            "Output continues to use the runner's normal live listener."
+        )
+        self._refresh_btn.clicked.connect(self._on_refresh)
+        btn_row.addWidget(self._refresh_btn)
 
         btn_row.addStretch(1)
 
@@ -292,6 +314,25 @@ class SprkkrRunWindow(QDialog):
     def _on_stop(self) -> None:
         self._stop_btn.setEnabled(False)
         self._cancellation.request()
+
+    @pyqtSlot()
+    def _on_refresh(self) -> None:
+        runner = self._cancellation.runner
+        if runner is None:
+            self._set_status("Preparing calculation…")
+            return
+
+        def refresh() -> None:
+            try:
+                state = runner.state
+            except Exception as exc:  # noqa: BLE001 - backend status boundary
+                logger.exception("Failed to refresh SPR-KKR run state")
+                self.refreshed.emit(f"Refresh failed: {exc}")
+                return
+            value = getattr(state, "value", state)
+            self.refreshed.emit(str(value).replace("_", " ").capitalize())
+
+        Thread(target=refresh, name="sprkkr-refresh", daemon=True).start()
 
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
