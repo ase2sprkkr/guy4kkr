@@ -233,13 +233,14 @@ class ExpertInputTreeEditor(QWidget):
             path = self._runtime.option_path_for_item(item)
             if path:
                 try:
-                    self._update_changed_style(
-                        resolve_option(self.parameters, path),
-                        item,
-                        refresh_filter=False,
-                    )
+                    option = resolve_option(self.parameters, path)
                 except (AttributeError, KeyError):
-                    pass
+                    continue
+                self._update_changed_style(
+                    option,
+                    item,
+                    refresh_filter=False,
+                )
         self.apply_filter(self.filter_edit.text())
 
     def _refresh_subtree(self, item: QTreeWidgetItem, refreshed: set[int]) -> None:
@@ -341,14 +342,11 @@ class ExpertInputTreeEditor(QWidget):
         *,
         refresh_filter: bool = True,
     ) -> None:
-        try:
-            changed = bool(option.is_changed())
-            related = item.data(0, self._RELATED_PATHS_ROLE) or ()
-            changed = changed or any(
-                resolve_option(self.parameters, path).is_changed() for path in related
-            )
-        except Exception:  # noqa: BLE001 - partial values remain displayable.
-            changed = False
+        changed = bool(option.is_changed())
+        related = item.data(0, self._RELATED_PATHS_ROLE) or ()
+        changed = changed or any(
+            resolve_option(self.parameters, path).is_changed() for path in related
+        )
         item.setData(0, self._CHANGED_ROLE, changed)
         font = item.font(0)
         font.setBold(changed)
