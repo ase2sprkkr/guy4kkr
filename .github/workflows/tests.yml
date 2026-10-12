@@ -24,6 +24,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Check Python 3.9 source compatibility
+        run: python tests/test_python39_compat.py
+
       - name: Checkout Guy4ase-compatible ase2sprkkr
         uses: actions/checkout@v4
         with:
