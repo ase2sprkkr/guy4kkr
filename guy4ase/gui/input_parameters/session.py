@@ -233,10 +233,7 @@ class InputParametersSession(QObject):
         left = resolve_option(self._initial, path)(all_values=True)
         current = resolve_option(self._working, path)
         right = current(all_values=True)
-        try:
-            return not current._definition.type.is_the_same_value(right, left)
-        except Exception:
-            return not values_equal(left, right)
+        return not current._definition.type.is_the_same_value(right, left)
 
     def changed_paths(self, paths: Iterable[InputParameterPath]) -> set[InputParameterPath]:
         return {path for path in paths if self.is_changed(path)}
