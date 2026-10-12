@@ -25,6 +25,8 @@ def test_failed_structure_edit_does_not_mutate_workspace():
     assert atoms.get_chemical_symbols() == ["Fe"]
     assert atoms.cell[0, 0] == 1.0
     assert controller.workspace.result is result
-    assert controller.workspace.result_history == (result,)
+    assert len(controller.workspace.result_history) == 1
+    assert controller.workspace.result_history[0].result is result
+    assert controller.workspace.result_history[0].current
     assert controller.workspace.potential_path == "Fe.pot"
     assert controller.generation == generation

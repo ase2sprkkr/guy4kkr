@@ -101,7 +101,9 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
     assert workspace.empty_spheres_added == 3
     assert workspace.potential_path == "Fe.pot"
     assert workspace.result is None
-    assert workspace.result_history == (previous_result,)
+    assert len(workspace.result_history) == 1
+    assert workspace.result_history[0].result is previous_result
+    assert not workspace.result_history[0].current
     assert controller.generation == generation.next_major()
 
 

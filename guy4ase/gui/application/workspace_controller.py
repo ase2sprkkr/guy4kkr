@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import Generation, ResultRecord, WorkspaceState
 
 _KEEP_DIRECTORY = object()
 _RESULT_HISTORY_LIMIT = 10
@@ -23,20 +23,6 @@ def _result_is_scf(result: Any) -> bool:
         return str(result.task_name).strip().lower() == "scf"
     except (AttributeError, TypeError, ValueError):
         return False
-
-
-@dataclass(frozen=True)
-class Generation:
-    """Workspace revision split into calculation epoch and local revision."""
-
-    major: int = 0
-    minor: int = 0
-
-    def next_major(self) -> Generation:
-        return Generation(self.major + 1, 0)
-
-    def next_minor(self) -> Generation:
-        return Generation(self.major, self.minor + 1)
 
 
 class DocumentChange(Enum):
@@ -96,10 +82,17 @@ class WorkspaceController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._workspace = workspace or WorkspaceState()
-        if self._workspace.result is not None and not self._workspace.result_history:
-            self._workspace.result_history = (self._workspace.result,)
         self._generation = Generation()
+        self._workspace = workspace or WorkspaceState()
+        history = tuple(
+            record
+            if isinstance(record, ResultRecord)
+            else ResultRecord(record, self._generation)
+            for record in self._workspace.result_history
+        )
+        if self._workspace.result is not None and not history:
+            history = (ResultRecord(self._workspace.result, self._generation),)
+        self._workspace.result_history = history
 
     @property
     def workspace(self) -> WorkspaceController:
@@ -129,7 +122,7 @@ class WorkspaceController(QObject):
         return self._workspace.result
 
     @property
-    def result_history(self) -> tuple[Any, ...]:
+    def result_history(self) -> tuple[ResultRecord, ...]:
         return self._workspace.result_history
 
     @property
@@ -182,6 +175,10 @@ class WorkspaceController(QObject):
         return expected is None or expected == self._generation
 
     def _changed(self) -> None:
+        self._workspace.result_history = tuple(
+            replace(record, current=False) if record.current else record
+            for record in self._workspace.result_history
+        )
         self._generation = self._generation.next_major()
 
     def _result_changed(self) -> None:
@@ -200,11 +197,12 @@ class WorkspaceController(QObject):
         self, result: Any, *, replace_history: bool = False
     ) -> None:
         self._workspace.result = result
+        record = ResultRecord(result, self._generation)
         if replace_history:
-            self._workspace.result_history = (result,)
+            self._workspace.result_history = (record,)
             return
         self._workspace.result_history = (
-            result, *self._workspace.result_history
+            record, *self._workspace.result_history
         )[:_RESULT_HISTORY_LIMIT]
 
     def _set_directory(self, directory: Any) -> bool:
@@ -311,7 +309,6 @@ class WorkspaceController(QObject):
         if not self._generation_is_current(expected_generation):
             return replace(adoption, adopted=False)
 
-        self._remember_result(loaded.result, replace_history=True)
         self._workspace.atoms = loaded.atoms
         self._workspace.input_parameters = loaded.input_parameters
         self._workspace.potential_path = (
@@ -323,6 +320,7 @@ class WorkspaceController(QObject):
         self._workspace.restarted = False
         directory_changed = self._set_directory(loaded.directory)
         self._changed()
+        self._remember_result(loaded.result, replace_history=True)
 
         self.structureChanged.emit(loaded.atoms)
         self.inputParametersChanged.emit(loaded.input_parameters)

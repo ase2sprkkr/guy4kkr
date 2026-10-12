@@ -134,7 +134,10 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
 
     assert load_calls == [(backend_result, str(tmp_path))]
     assert controller.workspace.result is backend_result
-    assert controller.workspace.result_history == (backend_result,)
+    assert len(controller.workspace.result_history) == 1
+    record = controller.workspace.result_history[0]
+    assert record.result is backend_result
+    assert record.current
     assert history.paths("output") == (str(output_path.resolve()),)
 
     window.close()
