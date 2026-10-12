@@ -149,7 +149,6 @@ class GuidedInputParametersDialog(QDialog):
             self._add_navigation_page(page)
         self.form.statusChanged.connect(self._update_all_statuses)
         self.navigation.currentRowChanged.connect(self._select_page_index)
-        self.navigation.setCurrentRow(0)
 
         footer = QHBoxLayout()
         self.undo_button = QToolButton(self)
@@ -204,6 +203,8 @@ class GuidedInputParametersDialog(QDialog):
         calculate.clicked.connect(self._accept)
         footer.addWidget(calculate)
         root.addLayout(footer)
+
+        self.navigation.setCurrentRow(0)
 
     def _add_navigation_page(self, page: PageSpec) -> None:
         item = QListWidgetItem(page.title)
@@ -287,8 +288,6 @@ class GuidedInputParametersDialog(QDialog):
         if 0 <= index < self.pages.count():
             self.pages.setCurrentIndex(index)
         self._update_navigation_styles()
-        if not hasattr(self, "previous_button"):
-            return
         self.previous_button.setEnabled(index > 0)
         self.next_button.setEnabled(0 <= index < self.pages.count() - 1)
 
@@ -334,13 +333,12 @@ class GuidedInputParametersDialog(QDialog):
             return
         self.accept()
 
-    def _show_model_error(self, exception: Exception) -> None:
-        message = str(exception)
-        for path, page_id in self.form.primary_pages.items():
-            if ".".join(path) in message:
+    def _show_model_error(self, exception: InputParametersValidationError) -> None:
+        if exception.path is not None:
+            page_id = self.form.primary_pages.get(exception.path)
+            if page_id is not None:
                 self.select_page(page_id)
-                break
-        QMessageBox.critical(self, "Invalid Settings", message)
+        QMessageBox.critical(self, "Invalid Settings", str(exception))
 
     def _open_expert_settings(self) -> None:
         """Edit an isolated Expert draft and import it as one undoable change."""
