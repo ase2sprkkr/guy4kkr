@@ -107,7 +107,7 @@ def test_explicit_editor_overrides_grammar_default(application):
 @pytest.mark.parametrize("path, default", [
     (("SCF", "VXC"), "VWN"),
     (("MODE", "OP"), "NONE"),
-    (("TAU", "BZINT"), "POINTS"),  # Callable default, resolved by Option.
+    (("TAU", "BZINT"), "POINTS"),
 ])
 def test_optional_keyword_with_default_selects_default_without_unset(application, path, default):
     session = InputParametersSession(InputParameters.create("scf"))
@@ -189,7 +189,7 @@ def test_empty_atom_choices_do_not_fall_back_to_static_choices(application, monk
     option = parameters.SCF.VXC
     monkeypatch.setattr(option._definition, "choices_for_atoms", lambda atoms: {}, raising=False)
     assert list(keyword_items(option, atoms=Atoms("Fe"))) == []
-    assert "PBE" in {value for value, _ in keyword_items(option)}  # No structure available.
+    assert "PBE" in {value for value, _ in keyword_items(option)}
 
 
 @pytest.mark.parametrize("symbol, lattice, expected", [
@@ -218,7 +218,7 @@ def test_custom_path_enablement_follows_unset_zero_and_undo(application):
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 0}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=bulk("Fe", "bcc", a=2.8))
     quick, primary = dialog.editors_for(("TASK", "KPATH"))
-    assert not quick.control.path_edit.isEnabled()  # Zero is a predefined path, not unset.
+    assert not quick.control.path_edit.isEnabled()
     quick.control.path_combo.setCurrentIndex(quick.control.path_combo.findData(None))
     assert quick.control.path_edit.isEnabled() and primary.control.path_edit.isEnabled()
     assert dialog.editors_for(("TASK", "KA"))[0].control.isEnabled()
@@ -280,7 +280,7 @@ def test_expert_dialog_passes_structure_to_keyword_editor(application):
     assert combo.itemText(combo.findData("1")).startswith("1: ")
     assert " — " not in combo.itemText(combo.findData("1"))
     combo.setCurrentIndex(combo.findData(None))
-    assert dialog.result().TASK.KPATH() is None
+    assert dialog.parameters().TASK.KPATH() is None
     dialog.close()
 
 
