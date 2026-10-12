@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs.structures.source import select_structure_source
 from guy4ase.gui.dialogs.structures.transforms import rotate_atoms, scale_atoms
-from guy4ase.gui.flows.structure_candidates import edit_structure_candidate
 from guy4ase.gui.plots.lattice import plot_structure_axis_projection
 from guy4ase.gui.widgets.structures.structure_pane import StructurePane
 from guy4ase.physics.lattice import match_structure_axis_length
@@ -226,12 +225,7 @@ class Build2DStructureDialog(QDialog):
                 f"No structure available for {description.lower()}.", error=True
             )
             return
-        updated = edit_structure_candidate(
-            pane.atoms,
-            operation,
-            self,
-            error_title=description,
-        )
+        updated = operation(pane.atoms, parent=self)
         if updated is None:
             return
         pane.set_atoms(updated)
@@ -248,17 +242,35 @@ class Build2DStructureDialog(QDialog):
                 "No replacement structure to match against.", error=True
             )
             return
+
+        axis = int(self._axis.currentData())
         try:
-            axis = int(self._axis.currentData())
-            pane.set_atoms(
-                match_structure_axis_length(pane.atoms, other.atoms, axis)
-            )
-            self._structures_changed()
-        except Exception as error:
+            updated = match_structure_axis_length(pane.atoms, other.atoms, axis)
+        except ValueError as error:
             self._set_status(f"{description} failed: {error}", error=True)
+            return
+
+        pane.set_atoms(updated)
+        self._structures_changed()
 
     def _schedule_result_preview(self, _value: Any = None) -> None:
         self._preview_timer.start()
+
+    def _show_preview_error(self, error: ValueError) -> None:
+        self._result_ax.clear()
+        self._result_ax.set_axis_off()
+        message = str(error) if str(error) else type(error).__name__
+        self._result_ax.text(
+            0.5,
+            0.5,
+            f"Preview error:\n{message}",
+            ha="center",
+            va="center",
+            wrap=True,
+            transform=self._result_ax.transAxes,
+        )
+        self._result_canvas.draw_idle()
+        self._set_status(f"Preview error: {message}", error=True)
 
     def _update_result_preview(self) -> None:
         self._result_ax.clear()
@@ -267,47 +279,38 @@ class Build2DStructureDialog(QDialog):
         if self._ok_button is not None:
             self._ok_button.setEnabled(False)
 
+        left_repeat = float(self._repeat_left.value())
+        right_repeat = float(self._repeat_right.value())
+        repeat = (left_repeat, right_repeat)
+        axis = int(self._axis.currentData())
+        atoms = self.left.atoms.copy()
+        atoms2 = (
+            self.right.atoms.copy()
+            if self.right.atoms is not None
+            else None
+        )
+
         try:
-            left_repeat = float(self._repeat_left.value())
-            right_repeat = float(self._repeat_right.value())
-            repeat = (left_repeat, right_repeat)
-            axis = int(self._axis.currentData())
-            atoms2 = (
-                self.right.atoms.copy()
-                if self.right.atoms is not None
-                else None
-            )
             semi = semiinfinite_system(
-                self.left.atoms.copy(),
+                atoms,
                 repeat=repeat,
                 atoms2=atoms2,
                 axis=axis,
             )
-            self._semiinfinite_atoms = semi
-            plot_structure_axis_projection(
-                self._result_ax,
-                semi,
-                axis,
-                canvas=self._result_canvas,
-            )
-            self._set_status("Preview ready.")
-            if self._ok_button is not None:
-                self._ok_button.setEnabled(True)
-        except Exception as e:
-            self._result_ax.clear()
-            self._result_ax.set_axis_off()
-            message = str(e) if str(e) else type(e).__name__
-            self._result_ax.text(
-                0.5,
-                0.5,
-                f"Preview error:\n{message}",
-                ha='center',
-                va='center',
-                wrap=True,
-                transform=self._result_ax.transAxes,
-            )
-            self._result_canvas.draw_idle()
-            self._set_status(f"Preview error: {str(e)}", error=True)
+        except ValueError as error:
+            self._show_preview_error(error)
+            return
+
+        plot_structure_axis_projection(
+            self._result_ax,
+            semi,
+            axis,
+            canvas=self._result_canvas,
+        )
+        self._semiinfinite_atoms = semi
+        self._set_status("Preview ready.")
+        if self._ok_button is not None:
+            self._ok_button.setEnabled(True)
 
     def _on_ok(self) -> None:
         if self._semiinfinite_atoms is None:

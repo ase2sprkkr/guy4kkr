@@ -144,20 +144,3 @@ def download_structure_candidate(
     select = selector or select_online_structure
     atoms = select(parent=parent)
     return None if atoms is None else StructureCandidate(atoms)
-
-
-def edit_structure_candidate(
-    atoms: Any,
-    editor: Callable[..., Any],
-    parent: QWidget | None,
-    *,
-    error_title: str,
-) -> Any | None:
-    """Run an editor over detached atoms; internal editor failures propagate.
-
-    ``error_title`` is retained in the shared call contract for compatibility,
-    but this layer deliberately does not translate arbitrary editor exceptions
-    into user-facing errors. Expected parser/backend failures belong at their
-    concrete boundary; dialog, transform, and controller bugs must propagate.
-    """
-    return editor(atoms, parent=parent)
