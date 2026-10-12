@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Iterable
 import logging
 from pathlib import Path

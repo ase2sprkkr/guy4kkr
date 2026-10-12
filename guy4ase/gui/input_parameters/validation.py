@@ -1,4 +1,6 @@
 """Completion checks shared by both dialogs, without save-only I/O requirements."""
+from __future__ import annotations
+
 from ase2sprkkr.common.warnings import DataValidityError
 from ase2sprkkr.input_parameters.definitions.arpes import angular_scan_errors
 from ase2sprkkr.input_parameters.definitions.sections import energy_reference_error

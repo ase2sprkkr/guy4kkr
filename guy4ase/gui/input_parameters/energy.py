@@ -1,4 +1,6 @@
 """Energy units and absolute/relative InputParameters mappings."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from ase2sprkkr.common.grammar_types import Energy
