@@ -1,7 +1,7 @@
 """Compatibility shim for the former GUI run registry.
 
 Run ownership, persistence and collision policy belong to ASE2SPRKKR execution.
-Guy4ASE no longer keeps a second registry of live calculations.  The class is
+Guy4ASE no longer keeps a second registry of live calculations. The class is
 kept temporarily only so older view/test construction signatures can be
 removed independently.
 """
@@ -17,5 +17,5 @@ class ActiveRunRegistry:
         self.launch_lock = Lock()
 
     @property
-    def active(self) -> tuple[()]:
+    def active(self) -> tuple[object, ...]:
         return ()
