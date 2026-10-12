@@ -149,7 +149,6 @@ class GuidedInputParametersDialog(QDialog):
             self._add_navigation_page(page)
         self.form.statusChanged.connect(self._update_all_statuses)
         self.navigation.currentRowChanged.connect(self._select_page_index)
-        self.navigation.setCurrentRow(0)
 
         footer = QHBoxLayout()
         self.undo_button = QToolButton(self)
@@ -204,6 +203,8 @@ class GuidedInputParametersDialog(QDialog):
         calculate.clicked.connect(self._accept)
         footer.addWidget(calculate)
         root.addLayout(footer)
+
+        self.navigation.setCurrentRow(0)
 
     def _add_navigation_page(self, page: PageSpec) -> None:
         item = QListWidgetItem(page.title)
@@ -287,8 +288,6 @@ class GuidedInputParametersDialog(QDialog):
         if 0 <= index < self.pages.count():
             self.pages.setCurrentIndex(index)
         self._update_navigation_styles()
-        if not hasattr(self, "previous_button"):
-            return
         self.previous_button.setEnabled(index > 0)
         self.next_button.setEnabled(0 <= index < self.pages.count() - 1)
 
