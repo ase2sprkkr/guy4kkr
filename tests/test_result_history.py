@@ -33,7 +33,7 @@ def test_calculation_result_history_is_newest_first_and_bounded():
     for result in results:
         adoption = controller.adopt_calculation_result(
             _loaded(result),
-            expected_generation=controller.generation,
+            expected_major=controller.generation.major,
         )
         assert adoption.adopted
 
@@ -48,7 +48,7 @@ def test_structure_change_clears_history_after_current_result_is_invalidated():
     result = SimpleNamespace(task_name="scf")
     controller.adopt_calculation_result(
         _loaded(result),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     controller.replace_input_parameters(object())

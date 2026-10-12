@@ -216,7 +216,7 @@ def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
     result = SimpleNamespace(files={}, directory=str(tmp_path))
     loaded = load_result(result, fallback_directory=tmp_path)
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=request_generation
+        loaded, expected_major=request_generation.major
     )
     assert not adoption.adopted
     assert controller.workspace.atoms is replacement
@@ -315,7 +315,7 @@ def test_directory_change_invalidates_and_rejects_stale_calculation_result(
 
     adoption = controller.adopt_calculation_result(
         loaded,
-        expected_generation=generation,
+        expected_major=generation.major,
     )
     assert not adoption.adopted
     assert controller.generation == generation.next_major()

@@ -38,9 +38,6 @@ class Generation:
     def next_minor(self) -> Generation:
         return Generation(self.major, self.minor + 1)
 
-    def same_major(self, other: Generation) -> bool:
-        return self.major == other.major
-
 
 class DocumentChange(Enum):
     """Semantic result of a revision-sensitive document command."""
@@ -183,9 +180,6 @@ class WorkspaceController(QObject):
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
         return expected is None or expected == self._generation
-
-    def _calculation_generation_is_current(self, expected: Generation) -> bool:
-        return expected.same_major(self._generation)
 
     def _changed(self) -> None:
         self._generation = self._generation.next_major()
@@ -353,10 +347,10 @@ class WorkspaceController(QObject):
         self,
         loaded: LoadedResult,
         *,
-        expected_generation: Generation,
+        expected_major: int,
     ) -> ResultAdoption:
         adoption = self._result_adoption(loaded)
-        if not self._calculation_generation_is_current(expected_generation):
+        if expected_major != self._generation.major:
             return replace(adoption, adopted=False)
 
         if loaded.atoms is not None:

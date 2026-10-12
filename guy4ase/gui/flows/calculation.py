@@ -70,7 +70,7 @@ def run_calculation(
         try:
             adoption = controller.adopt_calculation_result(
                 loaded,
-                expected_generation=request.generation,
+                expected_major=request.generation.major,
             )
         except Exception as exc:  # noqa: BLE001 - backend metadata varies
             QMessageBox.critical(
