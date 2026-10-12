@@ -73,6 +73,17 @@ def test_profile_form_parses_mpi_and_backend_specific_values():
     form.close()
 
 
+class _Option:
+    def __init__(self, value=None):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+
 class _Profile:
     def __init__(self, values, *, read_only=False):
         self._values = dict(values)
@@ -98,8 +109,9 @@ class _Profiles:
 
 
 class _Config:
-    def __init__(self):
+    def __init__(self, *, default_profile=None):
         self.profiles = _Profiles()
+        self.default_profile = _Option(default_profile)
         self.saved = False
 
     def save_user_preferences(self):
@@ -123,7 +135,40 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
     assert config.profiles.saved == {
         "local": {"executor": "local", "mpi": 12},
     }
+    assert config.default_profile() is None
     assert config.saved
+    dialog.close()
+
+
+def test_profile_editor_clears_default_when_that_profile_is_deleted(monkeypatch):
+    _application = _app()
+    config = _Config(default_profile="local")
+    monkeypatch.setattr(profiles_module, "config", config)
+    dialog = profiles_module.ProfilesDialog()
+
+    del dialog._drafts["local"]
+    dialog.accept()
+
+    assert config.profiles.saved == {}
+    assert config.default_profile() is None
+    assert config.saved
+    dialog.close()
+
+
+def test_read_only_profile_cannot_be_deleted_or_edited(monkeypatch):
+    _application = _app()
+    config = _Config(default_profile="ase")
+    monkeypatch.setattr(profiles_module, "config", config)
+    dialog = profiles_module.ProfilesDialog()
+
+    for row in range(dialog.list.count()):
+        item = dialog.list.item(row)
+        if item.data(profiles_module.Qt.ItemDataRole.UserRole) == "ase":
+            dialog.list.setCurrentRow(row)
+            break
+
+    assert not dialog.delete_button.isEnabled()
+    assert not dialog.form.form_widget.isEnabled()
     dialog.close()
 
 
@@ -146,6 +191,8 @@ def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
         return Calculator()
 
     class Runner:
+        reference = None
+
         def wait(self):
             return backend_result
 
@@ -164,3 +211,32 @@ def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
 
     assert captured == {"profile": "cluster"}
     assert finished == [loaded_result]
+
+
+def test_run_window_refreshes_state_without_gui_thread_io(monkeypatch, tmp_path):
+    _application = _app()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+
+    window = run_module.SprkkrRunWindow(request)
+    window._cancellation = run_module._RunCancellation()
+    runner = SimpleNamespace(state=SimpleNamespace(value="queued"))
+    assert window._cancellation.register(runner)
+
+    class InlineThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(run_module, "Thread", InlineThread)
+    window._on_refresh()
+
+    assert window._status.text() == "Queued"
+    window.close()
