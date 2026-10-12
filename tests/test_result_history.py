@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import Generation, ResultRecord, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -26,6 +26,10 @@ def _loaded(result, *, atoms=None):
     )
 
 
+def _results(history):
+    return tuple(record.result for record in history)
+
+
 def test_calculation_result_history_is_newest_first_and_bounded():
     controller = WorkspaceController()
     results = [SimpleNamespace(task_name="scf") for _ in range(12)]
@@ -36,11 +40,42 @@ def test_calculation_result_history_is_newest_first_and_bounded():
             expected_major=controller.generation.major,
         )
         assert adoption.adopted
+        assert controller.result_history[0].generation == controller.generation
 
     assert controller.workspace.result is results[-1]
-    assert controller.workspace.result_history == tuple(
+    assert _results(controller.workspace.result_history) == tuple(
         reversed(results[-10:])
     )
+    assert all(record.current for record in controller.workspace.result_history)
+    assert tuple(
+        record.generation for record in controller.workspace.result_history
+    ) == tuple(
+        Generation(controller.generation.major, minor)
+        for minor in range(
+            controller.generation.minor,
+            controller.generation.minor - len(controller.workspace.result_history),
+            -1,
+        )
+    )
+
+
+def test_input_change_preserves_history_but_marks_it_stale():
+    controller = WorkspaceController()
+    result = SimpleNamespace(task_name="scf")
+    controller.adopt_calculation_result(
+        _loaded(result),
+        expected_major=controller.generation.major,
+    )
+    result_generation = controller.result_history[0].generation
+
+    controller.replace_input_parameters(object())
+
+    assert controller.workspace.result is None
+    assert _results(controller.workspace.result_history) == (result,)
+    record = controller.workspace.result_history[0]
+    assert record.generation == result_generation
+    assert not record.current
+    assert record.generation.major != controller.generation.major
 
 
 def test_structure_change_clears_history_after_current_result_is_invalidated():
@@ -53,13 +88,14 @@ def test_structure_change_clears_history_after_current_result_is_invalidated():
 
     controller.replace_input_parameters(object())
     assert controller.workspace.result is None
-    assert controller.workspace.result_history == (result,)
+    assert _results(controller.workspace.result_history) == (result,)
+    assert controller.workspace.result_history[0].stale
 
     controller.replace_structure(Atoms("Fe"))
     assert controller.workspace.result_history == ()
 
 
-def test_use_for_new_calculation_preserves_result_history():
+def test_use_for_new_calculation_preserves_stale_result_history():
     result = SimpleNamespace(task_name="scf")
     atoms = SimpleNamespace(
         potential=SimpleNamespace(
@@ -79,10 +115,11 @@ def test_use_for_new_calculation_preserves_result_history():
     )
 
     assert workspace.result is None
-    assert workspace.result_history == (result,)
+    assert _results(workspace.result_history) == (result,)
+    assert workspace.result_history[0].stale
 
 
-def test_external_result_starts_new_history():
+def test_external_result_starts_new_current_history():
     old = SimpleNamespace(task_name="scf")
     external = SimpleNamespace(task_name="dos")
     workspace = WorkspaceState(result=old)
@@ -95,7 +132,10 @@ def test_external_result_starts_new_history():
 
     assert adoption.adopted
     assert workspace.result is external
-    assert workspace.result_history == (external,)
+    assert _results(workspace.result_history) == (external,)
+    record = workspace.result_history[0]
+    assert record.current
+    assert record.generation == controller.generation
 
 
 def test_empty_sphere_result_replaces_history_when_structure_changes():
@@ -113,7 +153,9 @@ def test_empty_sphere_result_replaces_history_when_structure_changes():
     )
 
     assert workspace.result == EmptySpheresResult(found=1)
-    assert workspace.result_history == (workspace.result,)
+    assert _results(workspace.result_history) == (workspace.result,)
+    assert workspace.result_history[0].current
+    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_result_is_added_when_structure_does_not_change():
@@ -121,14 +163,19 @@ def test_empty_sphere_result_is_added_when_structure_does_not_change():
     atoms = Atoms("Fe")
     workspace = WorkspaceState(atoms=atoms, result=old)
     controller = WorkspaceController(workspace)
+    generation = controller.generation
 
     controller.update_empty_spheres(
         lambda current, _previous: (current, 0, False),
-        expected_generation=controller.generation,
+        expected_generation=generation,
     )
 
     assert workspace.result == EmptySpheresResult(found=0)
-    assert workspace.result_history == (workspace.result, old)
+    assert _results(workspace.result_history) == (workspace.result, old)
+    assert all(record.current for record in workspace.result_history)
+    assert controller.generation == generation.next_minor()
+    assert workspace.result_history[0].generation == controller.generation
+    assert workspace.result_history[1].generation == generation
 
 
 class _Value:
@@ -156,12 +203,14 @@ def test_result_selector_is_newest_first_and_switches_displayed_result():
         output_file="old.out",
         output_values={"value": _Value("old")},
     )
+    newest_record = ResultRecord(newest, Generation(1, 1))
+    older_record = ResultRecord(older, Generation(1, 0))
     widget = ResultActionsWidget(
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
 
-    widget.set_results((newest, older))
+    widget.set_results((newest_record, older_record))
 
     assert widget._selector.count() == 2
     assert widget._selector.itemText(0) == "Latest: SCF — new.out"
@@ -171,7 +220,7 @@ def test_result_selector_is_newest_first_and_switches_displayed_result():
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "old"
 
     # Refreshing the same history keeps the user's selection.
-    widget.set_results((newest, older))
+    widget.set_results((newest_record, older_record))
     assert widget._selector.currentIndex() == 1
 
     # A newly added result selects the newest item.
@@ -180,7 +229,26 @@ def test_result_selector_is_newest_first_and_switches_displayed_result():
         output_file="latest.out",
         output_values={"value": _Value("latest")},
     )
-    widget.set_results((latest, newest, older))
+    latest_record = ResultRecord(latest, Generation(1, 2))
+    widget.set_results((latest_record, newest_record, older_record))
     assert widget._selector.currentIndex() == 0
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "latest"
+    widget.close()
+
+
+def test_result_selector_marks_historical_result_as_stale():
+    _application = QApplication.instance() or QApplication([])
+    result = SimpleNamespace(
+        task_name="scf",
+        output_file="old.out",
+        output_values={"value": _Value("old")},
+    )
+    widget = ResultActionsWidget(
+        lambda _value, _action: None,
+        show_values_without_actions=True,
+    )
+
+    widget.set_results((ResultRecord(result, Generation(0, 0), current=False),))
+
+    assert widget._selector.itemText(0) == "Latest (stale): SCF — old.out"
     widget.close()

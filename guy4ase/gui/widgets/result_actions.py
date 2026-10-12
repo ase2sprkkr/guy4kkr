@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.workspace import ResultRecord
 from guy4ase.gui.misc.resources import icon_path
 
 
@@ -101,7 +102,7 @@ class ResultActionsWidget(QWidget):
         self._show_values_without_actions = show_values_without_actions
         self._empty_text = empty_text
         self._row_count = 0
-        self._results: tuple[Any, ...] = ()
+        self._results: tuple[ResultRecord, ...] = ()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -133,8 +134,8 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
-    def set_results(self, results: Iterable[Any]) -> None:
-        """Show a newest-first result history."""
+    def set_results(self, results: Iterable[ResultRecord]) -> None:
+        """Show a newest-first result history with provenance."""
         new_results = tuple(results)
         same_history = (
             len(new_results) == len(self._results)
@@ -149,8 +150,8 @@ class ResultActionsWidget(QWidget):
         self._selector.blockSignals(True)
         try:
             self._selector.clear()
-            for index, result in enumerate(self._results):
-                self._selector.addItem(self._result_label(result, index))
+            for index, record in enumerate(self._results):
+                self._selector.addItem(self._result_label(record, index))
             if not self._results:
                 selected = -1
             elif not same_history or not 0 <= selected < len(self._results):
@@ -161,15 +162,16 @@ class ResultActionsWidget(QWidget):
 
         self._selector.setVisible(bool(self._results))
         self.set_result(
-            self._results[selected] if selected >= 0 else None
+            self._results[selected].result if selected >= 0 else None
         )
 
     def _select_result(self, index: int) -> None:
         if 0 <= index < len(self._results):
-            self.set_result(self._results[index])
+            self.set_result(self._results[index].result)
 
     @staticmethod
-    def _result_label(result: Any, index: int) -> str:
+    def _result_label(record: ResultRecord, index: int) -> str:
+        result = record.result
         try:
             task = str(result.task_name).strip().upper()
         except (AttributeError, TypeError, ValueError):
@@ -185,6 +187,8 @@ class ResultActionsWidget(QWidget):
         if not details:
             details = type(result).__name__
         prefix = "Latest" if index == 0 else str(index + 1)
+        if record.stale:
+            prefix += " (stale)"
         return f"{prefix}: {details}"
 
     def set_result(self, result: Any | None) -> None:

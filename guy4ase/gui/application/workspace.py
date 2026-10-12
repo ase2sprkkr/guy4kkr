@@ -9,6 +9,39 @@ from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 
+@dataclass(frozen=True)
+class Generation:
+    """Workspace revision split into calculation epoch and local revision."""
+
+    major: int = 0
+    minor: int = 0
+
+    def next_major(self) -> Generation:
+        return Generation(self.major + 1, 0)
+
+    def next_minor(self) -> Generation:
+        return Generation(self.major, self.minor + 1)
+
+
+@dataclass(frozen=True)
+class ResultRecord:
+    """One historical result together with its publication provenance.
+
+    Invariant: ``generation`` is exactly the workspace generation immediately
+    after this result was published. A result-only publication advances the
+    minor revision; a document/input transition advances the major revision
+    and resets the minor revision to zero.
+    """
+
+    result: Any
+    generation: Generation
+    current: bool = True
+
+    @property
+    def stale(self) -> bool:
+        return not self.current
+
+
 @dataclass
 class WorkspaceState:
     """Mutable document storage owned by ``WorkspaceController``."""
@@ -18,8 +51,8 @@ class WorkspaceState:
     directory: str | None = None
     potential_path: str | None = None
     result: Any | None = None
-    # Results available for browsing in the UI, newest first.
-    result_history: tuple[Any, ...] = ()
+    # Results available for browsing in the UI, newest first, with provenance.
+    result_history: tuple[ResultRecord, ...] = ()
     # None = not searched / provenance unknown; 0 = searched and none found;
     # positive = number of trailing empty-sphere sites added by Guy4ASE.
     empty_spheres_added: int | None = None
