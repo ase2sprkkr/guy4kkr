@@ -176,14 +176,19 @@ class InputParametersSession(QObject):
 
     @property
     def working_parameters(self) -> InputParameters:
-        """Return the live snapshot; write through session methods, never directly.
+        """Borrow the live working parameters for read-only inspection.
 
-        Undo commands retain this object, so mutating it would also alter history.
+        This property does not copy. Callers must not mutate the returned object:
+        edits would bypass session transactions, notifications and plugins, and
+        undo commands may retain the same object as a history snapshot. Prefer
+        :meth:`option` and :meth:`value` for ordinary reads, session mutation
+        methods for edits, and :meth:`result` when an independently mutable copy
+        is required.
         """
         return self._working
 
     def result(self) -> InputParameters:
-        """Return a detached copy safe for callers or a nested editor to modify."""
+        """Return an independently mutable copy of the current parameters."""
         return self._working.copy(copy_values=True)
 
     def fork(self, parent: QObject | None = None) -> "InputParametersSession":
