@@ -95,11 +95,6 @@ class WorkspaceController(QObject):
         self._workspace.result_history = history
 
     @property
-    def workspace(self) -> WorkspaceController:
-        """Compatibility alias for callers not yet migrated to controller reads."""
-        return self
-
-    @property
     def atoms(self) -> Any:
         """Return the current published structure; callers must not mutate it."""
         return self._workspace.atoms

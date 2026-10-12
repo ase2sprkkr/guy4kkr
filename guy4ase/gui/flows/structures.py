@@ -212,8 +212,8 @@ def update_empty_spheres(
 ) -> bool:
     """Find empty spheres explicitly and publish the resulting structure."""
     generation = controller.generation
-    recalculate = bool(controller.workspace.empty_spheres_added)
-    previous_result = controller.workspace.result
+    recalculate = bool(controller.empty_spheres_added)
+    previous_result = controller.result
     initial_parameters = (
         previous_result.parameters
         if isinstance(previous_result, EmptySpheresResult)
@@ -272,7 +272,7 @@ def update_empty_spheres(
     if not document_change_applied(parent, change):
         return False
 
-    if controller.workspace.empty_spheres_added == 0:
+    if controller.empty_spheres_added == 0:
         QMessageBox.information(
             parent,
             "Empty Spheres",

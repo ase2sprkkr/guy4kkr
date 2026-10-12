@@ -72,7 +72,6 @@ class MainWindow(QMainWindow):
         )
 
         self.controller = controller
-        self.workspace = self.controller.workspace
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings
@@ -101,9 +100,9 @@ class MainWindow(QMainWindow):
         self._connect_workspace()
         self.recent_history.changed.connect(self._refresh_recent_menus)
         self._refresh_recent_menus()
-        self._workspace_structure_changed(self.workspace.atoms)
+        self._workspace_structure_changed(self.controller.atoms)
         self._workspace_input_parameters_changed(
-            self.workspace.input_parameters
+            self.controller.input_parameters
         )
         self._workspace_directory_changed()
         self._refresh_result_panel()
@@ -133,7 +132,7 @@ class MainWindow(QMainWindow):
         self._refresh_input_parameters()
 
     def _refresh_input_parameters(self) -> None:
-        parameters = self.workspace.input_parameters
+        parameters = self.controller.input_parameters
         self._update_input_params_preview()
         self._refresh_action_availability()
         self.create_input_btn.setText(
@@ -151,7 +150,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_action_availability(self) -> None:
         """Keep shared expert actions synchronized with workspace state."""
-        has_structure = self.workspace.atoms is not None
+        has_structure = self.controller.atoms is not None
         for action in (
             self.save_structure_action,
             self.edit_structure_action,
@@ -163,14 +162,14 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(has_structure)
 
-        has_input = self.workspace.input_parameters is not None
+        has_input = self.controller.input_parameters is not None
         self.save_input_action.setEnabled(has_input)
         if self.save_input_btn is not None:
             self.save_input_btn.setEnabled(has_input)
 
-        self.run_calculation_action.setEnabled(self.workspace.can_calculate())
+        self.run_calculation_action.setEnabled(self.controller.can_calculate())
 
-        empty_spheres = self.workspace.empty_spheres_action()
+        empty_spheres = self.controller.empty_spheres_action()
         self.empty_spheres_action.setVisible(empty_spheres is not None)
         if empty_spheres is not None:
             self.empty_spheres_action.setText(
@@ -182,28 +181,28 @@ class MainWindow(QMainWindow):
     def _update_input_params_preview(self) -> None:
         if self.input_params_preview is None:
             return
-        if self.workspace.input_parameters is None:
+        if self.controller.input_parameters is None:
             self.input_params_preview.setPlainText("")
             return
-        txt = self.workspace.input_parameters.to_string(validate=False)
+        txt = self.controller.input_parameters.to_string(validate=False)
         self.input_params_preview.setPlainText(txt)
 
     def _update_directory_label(self) -> None:
         if self._directory_label is None:
             return
-        if not self.workspace.directory:
+        if not self.controller.directory:
             self._directory_label.setText("—")
             self._directory_label.setToolTip("")
             return
-        self._directory_label.setText(self.workspace.directory)
-        self._directory_label.setToolTip(self.workspace.directory)
+        self._directory_label.setText(self.controller.directory)
+        self._directory_label.setToolTip(self.controller.directory)
 
     def _update_potential_path_label(self) -> None:
         if self._potential_path_label is None:
             return
-        value = self.workspace.potential_path or "—"
+        value = self.controller.potential_path or "—"
         self._potential_path_label.setText(value)
-        self._potential_path_label.setToolTip(self.workspace.potential_path or "")
+        self._potential_path_label.setToolTip(self.controller.potential_path or "")
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
         handlers = {
@@ -781,7 +780,7 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_results(self.workspace.result_history)
+        self._result_actions_widget.set_results(self.controller.result_history)
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -796,7 +795,7 @@ class MainWindow(QMainWindow):
 
     def _update_structure_view(self) -> None:
         """Update all structure visualization and information panels."""
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             self._clear_view()
             return
 
@@ -828,9 +827,9 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             return
-        if row < 0 or row >= len(self.workspace.atoms):
+        if row < 0 or row >= len(self.controller.atoms):
             return
         if self._hovered_atom_index == row:
             return
@@ -882,21 +881,21 @@ class MainWindow(QMainWindow):
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             return
         self._site_colors = plot_atoms_preview(
             self.ax,
-            self.workspace.atoms,
+            self.controller.atoms,
             canvas=self.canvas,
             hovered_atom_indices=self._hovered_atom_index,
         )
 
     def _update_lattice_params(self) -> None:
         """Update lattice parameters display."""
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             return
 
-        cell = self.workspace.atoms.get_cell()
+        cell = self.controller.atoms.get_cell()
         lengths = cell.lengths()
         angles = cell.angles()
 
@@ -914,19 +913,19 @@ class MainWindow(QMainWindow):
 
     def _update_positions_table(self) -> None:
         """Update atomic positions table."""
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             self.positions_table.setRowCount(0)
             return
 
-        positions = self.workspace.atoms.get_positions()
-        symbols = self.workspace.atoms.get_chemical_symbols()
-        arrays = getattr(self.workspace.atoms, 'arrays', {})
+        positions = self.controller.atoms.get_positions()
+        symbols = self.controller.atoms.get_chemical_symbols()
+        arrays = getattr(self.controller.atoms, 'arrays', {})
         empty = [None] * len(symbols)
         kinds = arrays.get('spacegroup_kinds', empty)
         labels = arrays.get('labels', empty)
         color_lookup = self._site_colors
         self.positions_table.setRowCount(len(positions))
-        scaled_positions = self.workspace.atoms.get_scaled_positions()
+        scaled_positions = self.controller.atoms.get_scaled_positions()
         counter = {}
 
         for i, (sym, pos, scaled_pos, kind, label) in enumerate(zip(symbols, positions, scaled_positions, kinds, labels)):
@@ -937,7 +936,7 @@ class MainWindow(QMainWindow):
                     counter[sym] = 1
                 label = f"{sym}.{counter[sym]}"
 
-            comp_text = site_composition(self.workspace.atoms, i)
+            comp_text = site_composition(self.controller.atoms, i)
 
             item_site = QTableWidgetItem(label)
             item_comp = QTableWidgetItem(comp_text)
@@ -965,15 +964,14 @@ class MainWindow(QMainWindow):
                 item_scaled.setTextAlignment(align_num)
                 self.positions_table.setItem(i, 6 + j, item_scaled)
 
-
     def _update_info_label(self) -> None:
         """Update structure information label."""
-        atoms = self.workspace.atoms
+        atoms = self.controller.atoms
         if atoms is None:
             return
-        status = self.workspace.scf_status()
+        status = self.controller.scf_status()
         status_text = ""
-        if self.workspace.is_scf_converged():
+        if self.controller.is_scf_converged():
             status_text = "SCF Status: CONVERGED"
         elif status and status != "START":
             status_text = f"SCF Status: {status}"

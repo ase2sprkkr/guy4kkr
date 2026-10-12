@@ -21,12 +21,12 @@ def test_failed_structure_edit_does_not_mutate_workspace():
     with pytest.raises(RuntimeError, match="edit failed"):
         controller.apply_structure_edit(fail, expected_generation=generation)
 
-    assert controller.workspace.atoms is atoms
+    assert controller.atoms is atoms
     assert atoms.get_chemical_symbols() == ["Fe"]
     assert atoms.cell[0, 0] == 1.0
-    assert controller.workspace.result is result
-    assert len(controller.workspace.result_history) == 1
-    assert controller.workspace.result_history[0].result is result
-    assert controller.workspace.result_history[0].current
-    assert controller.workspace.potential_path == "Fe.pot"
+    assert controller.result is result
+    assert len(controller.result_history) == 1
+    assert controller.result_history[0].result is result
+    assert controller.result_history[0].current
+    assert controller.potential_path == "Fe.pot"
     assert controller.generation == generation
