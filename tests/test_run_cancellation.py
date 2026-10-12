@@ -11,69 +11,61 @@ from guy4ase.gui.dialogs.run_calculation import (
 )
 
 
-class _Process:
-    def __init__(self, run_action=None) -> None:
-        self.stop_calls = 0
-        self.run_calls = 0
-        self._run_action = run_action
+class _Runner:
+    def __init__(self, wait_action=None) -> None:
+        self.cancel_calls = 0
+        self.wait_calls = 0
+        self._wait_action = wait_action
 
-    def stop_the_process(self) -> None:
-        self.stop_calls += 1
+    def cancel(self) -> None:
+        self.cancel_calls += 1
 
-    def run(self):
-        self.run_calls += 1
-        if self._run_action is not None:
-            return self._run_action()
+    def wait(self):
+        self.wait_calls += 1
+        if self._wait_action is not None:
+            return self._wait_action()
         return object()
 
 
-class _Calculator:
-    def __init__(self, process) -> None:
-        self._process = process
-
-    def calculate(self, **_kwargs):
-        return self._process
-
-
-def _make_worker(monkeypatch, process, cancellation=None):
-    monkeypatch.setattr(
-        run_calculation, "SPRKKR", lambda: _Calculator(process)
-    )
+def _make_worker(monkeypatch, runner, cancellation=None):
     request = run_calculation.CalculationRequest(
         atoms=object(),
         input_parameters=object(),
         directory=".",
         generation=Generation(),
     )
-    return _SprkkrRunWorker(request, cancellation)
+    worker = _SprkkrRunWorker(request, cancellation)
+    monkeypatch.setattr(worker, "_launch", lambda _calculator: runner)
+    return worker
 
 
-def test_stop_before_process_prevents_start():
+def test_stop_before_runner_prevents_registration():
     cancellation = _RunCancellation()
 
     cancellation.request()
 
     assert cancellation.requested
-    assert not cancellation.register(_Process())
+    assert not cancellation.register(_Runner())
 
 
-def test_stop_after_process_stops_it_once():
+def test_stop_after_runner_cancels_it_once():
     cancellation = _RunCancellation()
-    process = _Process()
-    assert cancellation.register(process)
+    runner = _Runner()
+    assert cancellation.register(runner)
 
     cancellation.request()
     cancellation.request()
 
     assert cancellation.requested
-    assert process.stop_calls == 1
+    assert runner.cancel_calls == 1
 
 
-def test_stop_before_process_is_cancelled_outcome(monkeypatch):
+def test_stop_before_launch_is_cancelled_outcome(monkeypatch):
     cancellation = _RunCancellation()
     cancellation.request()
-    process = _Process()
-    worker = _make_worker(monkeypatch, process, cancellation)
+    runner = _Runner()
+    worker = _make_worker(monkeypatch, runner, cancellation)
+    monkeypatch.setattr(worker, "_launch", lambda _calculator: None)
 
     cancelled = []
     errors = []
@@ -90,24 +82,23 @@ def test_stop_before_process_is_cancelled_outcome(monkeypatch):
     assert errors == []
     assert finished == []
     assert statuses[-1] == "Cancelled"
-    assert process.run_calls == 0
+    assert runner.wait_calls == 0
 
 
 @pytest.mark.parametrize(
     "exception",
     [RuntimeError("terminated"), asyncio.CancelledError()],
 )
-def test_stop_during_run_is_cancelled_outcome(
-    monkeypatch, exception
-):
+def test_stop_during_wait_is_cancelled_outcome(monkeypatch, exception):
     cancellation = _RunCancellation()
 
     def stop_and_fail():
         cancellation.request()
         raise exception
 
-    process = _Process(stop_and_fail)
-    worker = _make_worker(monkeypatch, process, cancellation)
+    runner = _Runner(stop_and_fail)
+    worker = _make_worker(monkeypatch, runner, cancellation)
+    cancellation.register(runner)
 
     cancelled = []
     errors = []
@@ -121,17 +112,15 @@ def test_stop_during_run_is_cancelled_outcome(
     assert cancelled == [True]
     assert errors == []
     assert finished == []
-    assert process.stop_calls == 1
+    assert runner.cancel_calls == 1
 
 
-def test_unexpected_worker_error_is_logged_with_traceback(
-    monkeypatch, caplog
-):
+def test_unexpected_worker_error_is_logged_with_traceback(monkeypatch, caplog):
     def fail():
         raise RuntimeError("worker invariant")
 
-    process = _Process(fail)
-    worker = _make_worker(monkeypatch, process)
+    runner = _Runner(fail)
+    worker = _make_worker(monkeypatch, runner)
 
     cancelled = []
     errors = []
@@ -146,7 +135,7 @@ def test_unexpected_worker_error_is_logged_with_traceback(
     record = next(
         record
         for record in caplog.records
-        if record.getMessage() == "SPR-KKR calculation failed"
+        if record.getMessage() == "SPR-KKR calculation or result loading failed"
     )
     assert record.exc_info is not None
     assert record.exc_info[0] is RuntimeError

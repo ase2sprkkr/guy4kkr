@@ -28,7 +28,7 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
-        self.active_runs = ActiveRunRegistry(parent=self)
+        self.active_runs = ActiveRunRegistry()
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,

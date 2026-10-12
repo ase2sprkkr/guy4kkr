@@ -14,7 +14,6 @@ from guy4ase.gui.application.workspace_controller import (
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
-from guy4ase.gui.widgets.input_parameters.dataset import dataset_value
 
 
 def choose_working_directory(
@@ -36,26 +35,6 @@ def choose_working_directory(
     return True
 
 
-def _continue_with_parallel_run(parent: QWidget, dataset: str | None) -> bool:
-    message = QMessageBox(parent)
-    message.setIcon(QMessageBox.Icon.Warning)
-    message.setWindowTitle("Calculation Already Running")
-    message.setText("A calculation is already running in this workspace.")
-    current = f"Current DATASET: {dataset}" if dataset else "Current DATASET is unset."
-    message.setInformativeText(
-        "Another run will share the selected directory. SPR-KKR derives auxiliary "
-        "result filenames from CONTROL.DATASET, so parallel runs are isolated only "
-        "when they use different DATASET values.\n\n" + current
-    )
-    cancel = message.addButton(QMessageBox.StandardButton.Cancel)
-    proceed = message.addButton(
-        "Run Anyway", QMessageBox.ButtonRole.AcceptRole
-    )
-    message.setDefaultButton(cancel)
-    message.exec()
-    return message.clickedButton() is proceed
-
-
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
@@ -66,12 +45,6 @@ def run_calculation(
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
-        return None
-
-    if active_runs.count and not _continue_with_parallel_run(
-        parent,
-        dataset_value(request.input_parameters),
-    ):
         return None
 
     def adoption_completed(adoption) -> None:
@@ -109,22 +82,14 @@ def run_calculation(
             return
         adoption_completed(adoption)
 
-    # Reserve synchronously before the run window starts its worker thread. This
-    # closes the launch race where a second click could otherwise still observe
-    # an empty registry before the worker emitted activityStarted.
-    reservation = object()
-    active_runs.register(reservation)
-    try:
-        window = SprkkrRunWindow(
-            request=request,
-            parent=parent,
-            on_finished=finished,
-            on_activity_ended=lambda _run_id: active_runs.unregister(reservation),
-        )
-        window.show()
-    except Exception:
-        active_runs.unregister(reservation)
-        raise
+    window = SprkkrRunWindow(
+        request=request,
+        run_registry=active_runs,
+        launch_lock=active_runs.launch_lock,
+        parent=parent,
+        on_finished=finished,
+    )
+    window.show()
     return window
 
 

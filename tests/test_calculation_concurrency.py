@@ -132,22 +132,21 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
     )
     request = controller.create_calculation_request()
 
-    class Process:
-        def run(self):
+    class Runner:
+        def wait(self):
             process_entered.set()
             assert release_process.wait(5)
             return object()
 
-    class Calculator:
-        def calculate(self, **kwargs):
-            assert kwargs["atoms"] is atoms
-            assert kwargs["input_parameters"] is request.input_parameters
-            preparation_entered.set()
-            assert release_preparation.wait(5)
-            return Process()
+    def launch(worker, _calculator):
+        assert worker._request.atoms is atoms
+        assert worker._request.input_parameters is request.input_parameters
+        preparation_entered.set()
+        assert release_preparation.wait(5)
+        return Runner()
 
-    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
     worker = run_dialog._SprkkrRunWorker(request)
+    monkeypatch.setattr(worker, "_launch", lambda calculator: launch(worker, calculator))
     thread = Thread(target=worker.run)
     thread.start()
     assert preparation_entered.wait(5)
@@ -165,44 +164,42 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
     assert not thread.is_alive()
 
 
-def test_preparation_exception_ends_activity(monkeypatch, tmp_path):
+def test_preparation_exception_leaves_backend_registry_empty(monkeypatch, tmp_path):
     registry = ActiveRunRegistry()
     request = CalculationRequest(
         Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
     )
-
-    class Calculator:
-        def calculate(self, **_kwargs):
-            raise RuntimeError("preparation failed")
-
-    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
-    worker = run_dialog._SprkkrRunWorker(request)
+    worker = run_dialog._SprkkrRunWorker(
+        request,
+        run_registry=registry,
+        launch_lock=registry.launch_lock,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_launch",
+        lambda _calculator: (_ for _ in ()).throw(RuntimeError("preparation failed")),
+    )
     errors = []
-    activity = []
     worker.error.connect(errors.append)
-    worker.activityStarted.connect(lambda run_id: activity.append(("start", run_id)))
-    worker.activityEnded.connect(lambda run_id: activity.append(("end", run_id)))
-    worker.activityStarted.connect(registry.register)
-    worker.activityEnded.connect(registry.unregister)
 
     worker.run()
 
     assert errors == ["preparation failed"]
-    assert [event for event, _run_id in activity] == ["start", "end"]
-    assert activity[0][1] is activity[1][1]
-    assert registry.count == 0
+    assert registry.active == ()
 
 
-def test_unstarted_worker_reserves_no_activity(tmp_path):
+def test_unstarted_worker_reserves_no_backend_run(tmp_path):
     registry = ActiveRunRegistry()
     request = CalculationRequest(
         Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
     )
-    worker = run_dialog._SprkkrRunWorker(request)
-    worker.activityStarted.connect(registry.register)
-    worker.activityEnded.connect(registry.unregister)
+    run_dialog._SprkkrRunWorker(
+        request,
+        run_registry=registry,
+        launch_lock=registry.launch_lock,
+    )
 
-    assert registry.count == 0
+    assert registry.active == ()
 
 
 def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
@@ -231,24 +228,6 @@ def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
     )
     assert change is DocumentChange.STALE
     assert controller.workspace.atoms is replacement
-
-
-def test_active_registry_counts_concurrent_worker_lifetimes():
-    registry = ActiveRunRegistry()
-    counts = []
-    registry.countChanged.connect(counts.append)
-    first = object()
-    second = object()
-
-    registry.register(first)
-    registry.register(second)
-    registry.unregister(first)
-
-    assert registry.count == 1
-    assert counts == [1, 2, 1]
-    registry.unregister(second)
-    assert registry.count == 0
-    assert counts[-1] == 0
 
 
 def test_reset_advances_instead_of_resetting_generation():
