@@ -153,13 +153,11 @@ def edit_structure_candidate(
     *,
     error_title: str,
 ) -> Any | None:
-    """Run an editor over already-detached atoms with the shared error policy."""
-    try:
-        return editor(atoms, parent=parent)
-    except Exception as exc:  # noqa: BLE001 - editor/backend boundary
-        QMessageBox.critical(
-            parent,
-            error_title,
-            f"Failed to edit structure:\n{exc}",
-        )
-        return None
+    """Run an editor over detached atoms; internal editor failures propagate.
+
+    ``error_title`` is retained in the shared call contract for compatibility,
+    but this layer deliberately does not translate arbitrary editor exceptions
+    into user-facing errors. Expected parser/backend failures belong at their
+    concrete boundary; dialog, transform, and controller bugs must propagate.
+    """
+    return editor(atoms, parent=parent)
