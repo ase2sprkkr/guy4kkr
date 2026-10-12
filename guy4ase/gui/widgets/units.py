@@ -1,4 +1,6 @@
 """Unit selector for structure dimensions."""
+from __future__ import annotations
+
 from typing import Callable, Dict, Iterable
 
 from ase import units as ase_units
