@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from ase import Atoms
 
-from guy4ase.gui.application.result_loading import load_result
+from guy4ase.gui.application.result_loading import LoadedResult, load_result
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
@@ -80,6 +80,59 @@ def test_parallel_results_from_same_major_generation_are_both_adopted(tmp_path):
         controller.generation,
         after_first,
     )
+
+
+def test_sibling_non_scf_result_cannot_roll_back_scf_workspace_state(tmp_path):
+    source_atoms = Atoms("Fe")
+    source_potential = tmp_path / "source.pot"
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=source_atoms,
+            directory=str(tmp_path),
+            potential_path=str(source_potential),
+        )
+    )
+    source_generation = controller.generation
+
+    scf_atoms = Atoms("Cu")
+    scf_potential = tmp_path / "converged.pot"
+    scf_result = SimpleNamespace(task_name="SCF")
+    scf_loaded = LoadedResult(
+        result=scf_result,
+        output_path=None,
+        potential_path=scf_potential,
+        atoms=scf_atoms,
+        potential_error=None,
+        directory=str(tmp_path),
+    )
+
+    stale_atoms = Atoms("Ni")
+    dos_result = SimpleNamespace(task_name="DOS")
+    dos_loaded = LoadedResult(
+        result=dos_result,
+        output_path=None,
+        potential_path=source_potential,
+        atoms=stale_atoms,
+        potential_error=None,
+        directory=str(tmp_path),
+    )
+
+    scf_adoption = controller.adopt_calculation_result(
+        scf_loaded, expected_major=source_generation.major
+    )
+    dos_adoption = controller.adopt_calculation_result(
+        dos_loaded, expected_major=source_generation.major
+    )
+
+    assert scf_adoption.adopted
+    assert dos_adoption.adopted
+    assert controller.result is dos_result
+    assert tuple(record.result for record in controller.result_history[:2]) == (
+        dos_result,
+        scf_result,
+    )
+    assert controller.atoms is scf_atoms
+    assert controller.potential_path == str(scf_potential)
 
 
 def test_result_minor_change_stales_full_revision_but_not_sibling_run(tmp_path):
