@@ -366,8 +366,8 @@ class GuidedInputParametersDialog(QDialog):
     def _edit_input_file(self) -> None:
         edit_input_parameters_file(self.session, self)
 
-    def result(self) -> InputParameters:
-        """Return a detached parameter copy."""
+    def parameters(self) -> InputParameters:
+        """Return a detached copy of the currently edited parameters."""
         return self.session.result()
 
 
@@ -393,4 +393,4 @@ def select_guided_input_parameters(
     )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    return dialog.result()
+    return dialog.parameters()
