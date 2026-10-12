@@ -162,10 +162,28 @@ class ResultActionsWidget(QWidget):
         self._current_state_id = state_id
         self._refresh_record_actions(self._record_for_item(self._selector.currentItem()))
 
-    def set_results(self, store: ResultStore) -> None:
-        """Render the result tree without reconstructing provenance in the UI."""
+    def set_results(self, results: Any) -> None:
+        """Render only from the authoritative ResultStore.
+
+        Older window refresh methods still pass ``result_history``. Once this
+        widget has been wired to a ResultStore those calls deliberately reuse
+        that store instead of reconstructing lineage from a flat sequence.
+        During top-level window construction, before wiring, they simply leave
+        the result view empty.
+        """
+        if isinstance(results, ResultStore):
+            self._store = results
+        elif self._store is None:
+            self._records = {}
+            self._selector.clear()
+            self._selector.hide()
+            self.set_result(None)
+            self._record_actions.hide()
+            return
+        store = self._store
+        assert store is not None
+
         selected_id = self._selected_result_id()
-        self._store = store
         records = store.results
         self._records = {record.id: record for record in records}
 
