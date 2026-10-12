@@ -467,7 +467,9 @@ class WorkflowWindow(QMainWindow):
 
         if not converged:
             empty_spheres_action = (
-                None if status in stage_names else self.controller.empty_spheres_action()
+                None
+                if self.controller.structure_change_requires_scf_restart()
+                else self.controller.empty_spheres_action()
             )
             if empty_spheres_action is not None:
                 self._add_action(
@@ -529,7 +531,7 @@ class WorkflowWindow(QMainWindow):
                 icon='run-build-clean.svg',
             )
 
-        if structure_kind == "3d":
+        if self.controller.can_build_2d():
             self._add_action(
                 "Create a 2D Surface",
                 "Derive a surface from the current 3D structure",

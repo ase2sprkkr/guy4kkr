@@ -153,6 +153,10 @@ class WorkspaceController(QObject):
     def can_calculate(self) -> bool:
         return self._workspace.can_calculate()
 
+    def can_build_2d(self) -> bool:
+        """Return whether the current structure can seed the 2D builder."""
+        return self.structure_kind() == "3d"
+
     def scf_status(self) -> str | None:
         return self._workspace.scf_status()
 
@@ -164,6 +168,14 @@ class WorkspaceController(QObject):
 
     def empty_spheres_action(self) -> str | None:
         return self._workspace.empty_spheres_action()
+
+    def structure_change_requires_scf_restart(self) -> bool:
+        """Return whether changing sites would invalidate current SCF state."""
+        if self.atoms is None or self.restarted:
+            return False
+        if self.is_scf_converged():
+            return True
+        return self.scf_status() not in (None, "START")
 
     def create_calculation_request(self) -> CalculationRequest:
         """Borrow read-only Atoms and capture independent calculation inputs."""
