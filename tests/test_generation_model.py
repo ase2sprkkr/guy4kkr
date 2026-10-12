@@ -42,6 +42,7 @@ def test_generation_major_and_minor_changes_have_distinct_semantics(tmp_path):
     assert adoption.adopted
     assert controller.workspace.result is result
     assert controller.generation == initial.next_minor()
+    assert controller.result_history[0].generation == controller.generation
 
     before_structure_change = controller.generation
     controller.replace_structure(Atoms("Cu"))
@@ -75,9 +76,10 @@ def test_parallel_results_from_same_major_generation_are_both_adopted(tmp_path):
         first_result,
     )
     assert all(record.current for record in records)
-    assert {record.generation.major for record in records} == {
-        source_generation.major
-    }
+    assert tuple(record.generation for record in records) == (
+        controller.generation,
+        after_first,
+    )
 
 
 def test_result_minor_change_stales_full_revision_but_not_sibling_run(tmp_path):

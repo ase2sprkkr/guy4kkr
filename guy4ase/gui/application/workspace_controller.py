@@ -193,9 +193,22 @@ class WorkspaceController(QObject):
         self._workspace.result_history = ()
         return had_results
 
-    def _remember_result(
-        self, result: Any, *, replace_history: bool = False
+    def _publish_result(
+        self,
+        result: Any,
+        *,
+        replace_history: bool = False,
+        advance_generation: bool = True,
     ) -> None:
+        """Publish ``result`` and record the resulting workspace generation.
+
+        ``ResultRecord.generation`` always equals the workspace generation
+        immediately after publication. Result-only publications advance the
+        minor revision here; callers that already performed a major document
+        transition pass ``advance_generation=False``.
+        """
+        if advance_generation:
+            self._result_changed()
         self._workspace.result = result
         record = ResultRecord(result, self._generation)
         if replace_history:
@@ -320,7 +333,11 @@ class WorkspaceController(QObject):
         self._workspace.restarted = False
         directory_changed = self._set_directory(loaded.directory)
         self._changed()
-        self._remember_result(loaded.result, replace_history=True)
+        self._publish_result(
+            loaded.result,
+            replace_history=True,
+            advance_generation=False,
+        )
 
         self.structureChanged.emit(loaded.atoms)
         self.inputParametersChanged.emit(loaded.input_parameters)
@@ -356,8 +373,7 @@ class WorkspaceController(QObject):
             self._workspace.potential_path = str(loaded.potential_path)
             if _result_is_scf(loaded.result):
                 self._workspace.restarted = False
-        self._remember_result(loaded.result)
-        self._result_changed()
+        self._publish_result(loaded.result)
 
         if loaded.atoms is not None:
             self.structureChanged.emit(loaded.atoms)
@@ -420,7 +436,9 @@ class WorkspaceController(QObject):
             self._workspace.potential_path = None
             self._workspace.restarted = True
             self._changed()
-        self._remember_result(result)
+            self._publish_result(result, advance_generation=False)
+        else:
+            self._publish_result(result)
 
         self.structureChanged.emit(updated if structure_changed else source)
         self.resultChanged.emit(result)

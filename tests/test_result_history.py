@@ -40,15 +40,23 @@ def test_calculation_result_history_is_newest_first_and_bounded():
             expected_major=controller.generation.major,
         )
         assert adoption.adopted
+        assert controller.result_history[0].generation == controller.generation
 
     assert controller.workspace.result is results[-1]
     assert _results(controller.workspace.result_history) == tuple(
         reversed(results[-10:])
     )
     assert all(record.current for record in controller.workspace.result_history)
-    assert {
-        record.generation.major for record in controller.workspace.result_history
-    } == {controller.generation.major}
+    assert tuple(
+        record.generation for record in controller.workspace.result_history
+    ) == tuple(
+        Generation(controller.generation.major, minor)
+        for minor in range(
+            controller.generation.minor,
+            controller.generation.minor - len(controller.workspace.result_history),
+            -1,
+        )
+    )
 
 
 def test_input_change_preserves_history_but_marks_it_stale():
@@ -155,15 +163,19 @@ def test_empty_sphere_result_is_added_when_structure_does_not_change():
     atoms = Atoms("Fe")
     workspace = WorkspaceState(atoms=atoms, result=old)
     controller = WorkspaceController(workspace)
+    generation = controller.generation
 
     controller.update_empty_spheres(
         lambda current, _previous: (current, 0, False),
-        expected_generation=controller.generation,
+        expected_generation=generation,
     )
 
     assert workspace.result == EmptySpheresResult(found=0)
     assert _results(workspace.result_history) == (workspace.result, old)
     assert all(record.current for record in workspace.result_history)
+    assert controller.generation == generation.next_minor()
+    assert workspace.result_history[0].generation == controller.generation
+    assert workspace.result_history[1].generation == generation
 
 
 class _Value:

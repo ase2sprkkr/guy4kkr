@@ -25,7 +25,8 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
     assert workspace.empty_spheres_added == 0
     assert workspace.empty_spheres_action() is None
     assert workspace.result == EmptySpheresResult(found=0)
-    assert controller.generation == generation
+    assert controller.generation == generation.next_minor()
+    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_update_publishes_found_count_as_result():
@@ -53,6 +54,7 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     assert workspace.result == EmptySpheresResult(found=1)
     assert published == [workspace.result]
     assert controller.generation == generation.next_major()
+    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_result_keeps_search_parameters():

@@ -25,7 +25,13 @@ class Generation:
 
 @dataclass(frozen=True)
 class ResultRecord:
-    """One historical result together with its document provenance."""
+    """One historical result together with its publication provenance.
+
+    Invariant: ``generation`` is exactly the workspace generation immediately
+    after this result was published. A result-only publication advances the
+    minor revision; a document/input transition advances the major revision
+    and resets the minor revision to zero.
+    """
 
     result: Any
     generation: Generation
