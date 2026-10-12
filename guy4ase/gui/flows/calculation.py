@@ -134,6 +134,8 @@ def configure_and_run_task(
     active_runs: ActiveRunRegistry,
     parent: QWidget,
     task: str,
+    *,
+    dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, and start the calculation."""
     try:
@@ -161,6 +163,7 @@ def configure_and_run_task(
             task,
             parent=parent,
             atoms=atoms,
+            dataset_default_mode=dataset_default_mode,
         )
         if parameters is None:
             return None

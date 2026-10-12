@@ -376,6 +376,7 @@ def select_guided_input_parameters(
     parent: QWidget | None = None,
     *,
     atoms: Any = None,
+    dataset_default_mode: str,
 ) -> InputParameters | None:
     task = task.lower()
     spec = task_dialog_spec(
@@ -383,7 +384,7 @@ def select_guided_input_parameters(
         is_2d=detect_structure_kind(atoms) == "2d",
     )
     parameters = InputParameters.create(spec.parameter_task)
-    apply_default_dataset(parameters, atoms)
+    apply_default_dataset(parameters, dataset_default_mode, atoms)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,

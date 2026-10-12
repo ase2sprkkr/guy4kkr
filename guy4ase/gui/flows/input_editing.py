@@ -17,6 +17,7 @@ def create_input_parameters(
     controller: WorkspaceController,
     parent: QWidget,
     *,
+    dataset_default_mode: str,
     task: str = "scf",
 ) -> bool:
     """Create parameters for a task from the current read-only structure."""
@@ -25,6 +26,7 @@ def create_input_parameters(
         controller.atoms,
         parent=parent,
         task=task,
+        dataset_default_mode=dataset_default_mode,
     )
     if parameters is None:
         return False
@@ -43,6 +45,7 @@ def edit_current_input_parameters(
     *,
     create_task: str | None = "scf",
     show_changed_only: bool = False,
+    dataset_default_mode: str | None = None,
 ) -> bool:
     """Edit current parameters and commit only against the captured revision."""
     generation = controller.generation
@@ -50,10 +53,13 @@ def edit_current_input_parameters(
     if parameters is None:
         if create_task is None:
             return False
+        if dataset_default_mode is None:
+            raise ValueError("dataset_default_mode is required when creating parameters")
         return create_input_parameters(
             controller,
             parent,
             task=create_task,
+            dataset_default_mode=dataset_default_mode,
         )
 
     atoms = controller.atoms

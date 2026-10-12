@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         controller: WorkspaceController,
         recent_files: RecentFiles,
         active_runs: ActiveRunRegistry,
-        settings: ApplicationSettings | None = None,
+        settings: ApplicationSettings,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         self.workspace = self.controller.workspace
         self.recent_history = recent_files
         self.active_runs = active_runs
-        self.settings = settings or ApplicationSettings()
+        self.settings = settings
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -740,6 +740,7 @@ class MainWindow(QMainWindow):
             self.controller,
             self,
             task=task,
+            dataset_default_mode=self.settings.dataset_default_mode,
         )
 
     def _on_input_preview_double_click(self, event) -> None:
@@ -752,6 +753,7 @@ class MainWindow(QMainWindow):
         input_editing_flow.edit_current_input_parameters(
             self.controller,
             self,
+            dataset_default_mode=self.settings.dataset_default_mode,
         )
 
     def _on_load_sprkkr_input(self) -> None:

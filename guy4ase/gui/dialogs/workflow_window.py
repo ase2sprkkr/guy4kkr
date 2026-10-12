@@ -76,7 +76,7 @@ class WorkflowWindow(QMainWindow):
         active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
-        settings: ApplicationSettings | None = None,
+        settings: ApplicationSettings,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
@@ -87,7 +87,7 @@ class WorkflowWindow(QMainWindow):
         self.workspace = self.controller.workspace
         self.recent_history = recent_files
         self.active_runs = active_runs
-        self.settings = settings or ApplicationSettings()
+        self.settings = settings
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.directoryChanged.connect(
@@ -606,6 +606,7 @@ class WorkflowWindow(QMainWindow):
             self.active_runs,
             self,
             task,
+            dataset_default_mode=self.settings.dataset_default_mode,
         )
 
     def _update_empty_spheres(self) -> None:
