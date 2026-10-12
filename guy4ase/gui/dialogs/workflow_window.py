@@ -84,7 +84,6 @@ class WorkflowWindow(QMainWindow):
             self, "workflow", default_size=(1120, 700)
         )
         self.controller = controller
-        self.workspace = self.controller.workspace
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings
@@ -294,7 +293,7 @@ class WorkflowWindow(QMainWindow):
         display_title = (
             "Create derived structure"
             if title == self._GROUP_CREATE
-            and self.workspace.atoms is not None
+            and self.controller.atoms is not None
             else title
         )
         label = QLabel(display_title, group)
@@ -314,13 +313,13 @@ class WorkflowWindow(QMainWindow):
         return layout
 
     def _refresh_working_directory(self) -> None:
-        directory = self.workspace.directory
+        directory = self.controller.directory
         self._working_directory_label.setText(directory or "(not defined)")
         self._working_directory_label.setToolTip(directory or "")
         self._browse_working_directory_button.setEnabled(bool(directory))
 
     def _browse_working_directory(self) -> None:
-        directory = self.workspace.directory
+        directory = self.controller.directory
         if not directory:
             return
         path = Path(directory).expanduser().resolve()
@@ -332,7 +331,7 @@ class WorkflowWindow(QMainWindow):
             )
 
     def _refresh_result_actions(self) -> None:
-        results = self.workspace.result_history
+        results = self.controller.result_history
         self._result_actions_widget.set_results(results)
         self._result_actions.setVisible(bool(results))
 
@@ -399,7 +398,7 @@ class WorkflowWindow(QMainWindow):
     def _refresh(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
-        atoms = self.workspace.atoms
+        atoms = self.controller.atoms
         if atoms is None:
             self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
             self._add_action("Create a 3D Structure", "Build a periodic bulk crystal", self._create_3d)
@@ -438,9 +437,9 @@ class WorkflowWindow(QMainWindow):
             return
 
         formula = atoms.get_chemical_formula()
-        structure_kind = self.workspace.structure_kind()
-        status = self.workspace.scf_status()
-        converged = self.workspace.is_scf_converged()
+        structure_kind = self.controller.structure_kind()
+        status = self.controller.scf_status()
+        converged = self.controller.is_scf_converged()
         stage_names = {
             "ITR": "iterating SCF",
             "ITR-BULK": "converging bulk",
@@ -468,7 +467,7 @@ class WorkflowWindow(QMainWindow):
 
         if not converged:
             empty_spheres_action = (
-                None if status in stage_names else self.workspace.empty_spheres_action()
+                None if status in stage_names else self.controller.empty_spheres_action()
             )
             if empty_spheres_action is not None:
                 self._add_action(
@@ -591,7 +590,7 @@ class WorkflowWindow(QMainWindow):
             file_path,
             self,
         )
-        if self.workspace.atoms is None:
+        if self.controller.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:

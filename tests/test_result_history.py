@@ -42,18 +42,18 @@ def test_calculation_result_history_is_newest_first_and_bounded():
         assert adoption.adopted
         assert controller.result_history[0].generation == controller.generation
 
-    assert controller.workspace.result is results[-1]
-    assert _results(controller.workspace.result_history) == tuple(
+    assert controller.result is results[-1]
+    assert _results(controller.result_history) == tuple(
         reversed(results[-10:])
     )
-    assert all(record.current for record in controller.workspace.result_history)
+    assert all(record.current for record in controller.result_history)
     assert tuple(
-        record.generation for record in controller.workspace.result_history
+        record.generation for record in controller.result_history
     ) == tuple(
         Generation(controller.generation.major, minor)
         for minor in range(
             controller.generation.minor,
-            controller.generation.minor - len(controller.workspace.result_history),
+            controller.generation.minor - len(controller.result_history),
             -1,
         )
     )
@@ -70,9 +70,9 @@ def test_input_change_preserves_history_but_marks_it_stale():
 
     controller.replace_input_parameters(object())
 
-    assert controller.workspace.result is None
-    assert _results(controller.workspace.result_history) == (result,)
-    record = controller.workspace.result_history[0]
+    assert controller.result is None
+    assert _results(controller.result_history) == (result,)
+    record = controller.result_history[0]
     assert record.generation == result_generation
     assert not record.current
     assert record.generation.major != controller.generation.major
@@ -87,12 +87,12 @@ def test_structure_change_clears_history_after_current_result_is_invalidated():
     )
 
     controller.replace_input_parameters(object())
-    assert controller.workspace.result is None
-    assert _results(controller.workspace.result_history) == (result,)
-    assert controller.workspace.result_history[0].stale
+    assert controller.result is None
+    assert _results(controller.result_history) == (result,)
+    assert controller.result_history[0].stale
 
     controller.replace_structure(Atoms("Fe"))
-    assert controller.workspace.result_history == ()
+    assert controller.result_history == ()
 
 
 def test_use_for_new_calculation_preserves_stale_result_history():

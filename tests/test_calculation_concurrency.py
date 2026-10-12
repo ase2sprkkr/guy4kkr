@@ -58,13 +58,13 @@ def test_confirmed_structure_edit_is_copy_on_write():
     )
 
     assert returned is DocumentChange.APPLIED
-    assert controller.workspace.atoms is not atoms
+    assert controller.atoms is not atoms
     assert atoms.get_chemical_symbols() == ["Fe"]
-    assert controller.workspace.atoms.get_chemical_symbols() == ["Cu"]
-    assert controller.workspace.result is None
-    assert controller.workspace.potential_path is None
+    assert controller.atoms.get_chemical_symbols() == ["Cu"]
+    assert controller.result is None
+    assert controller.potential_path is None
     assert controller.generation == generation.next_major()
-    assert structures == [controller.workspace.atoms]
+    assert structures == [controller.atoms]
     assert results == [None]
 
 
@@ -219,20 +219,20 @@ def test_stale_result_and_element_draft_do_not_replace_new_document(tmp_path):
         loaded, expected_major=request_generation.major
     )
     assert not adoption.adopted
-    assert controller.workspace.atoms is replacement
-    assert controller.workspace.result is None
+    assert controller.atoms is replacement
+    assert controller.result is None
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
         expected_generation=source_generation,
     )
     assert change is DocumentChange.STALE
-    assert controller.workspace.atoms is replacement
+    assert controller.atoms is replacement
 
 
 def test_reset_advances_instead_of_resetting_generation():
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
-    controller.replace_structure(controller.workspace.atoms)
+    controller.replace_structure(controller.atoms)
     before_reset = controller.generation
 
     controller.reset()
@@ -254,7 +254,7 @@ def test_file_loads_reject_an_intervening_document_change(
     structure_controller = WorkspaceController(
         WorkspaceState(atoms=Atoms("Cu"))
     )
-    original_structure = structure_controller.workspace.atoms
+    original_structure = structure_controller.atoms
     structure_history = RecentFiles(tmp_path / "structure-recent.json")
 
     def read_structure(_path):
@@ -277,7 +277,7 @@ def test_file_loads_reject_an_intervening_document_change(
     result_controller = WorkspaceController(
         WorkspaceState(atoms=Atoms("Cu"))
     )
-    original_result_structure = result_controller.workspace.atoms
+    original_result_structure = result_controller.atoms
     result_generation = result_controller.generation
 
     loaded_result = load_result_file(tmp_path / "Fe.out")
@@ -289,10 +289,10 @@ def test_file_loads_reject_an_intervening_document_change(
 
     assert not structure_loaded
     assert not result_adoption.adopted
-    assert structure_controller.workspace.atoms is original_structure
+    assert structure_controller.atoms is original_structure
     assert structure_history.paths("structure") == ()
-    assert result_controller.workspace.atoms is original_result_structure
-    assert result_controller.workspace.result is None
+    assert result_controller.atoms is original_result_structure
+    assert result_controller.result is None
 
 
 def test_directory_change_invalidates_and_rejects_stale_calculation_result(
@@ -310,8 +310,8 @@ def test_directory_change_invalidates_and_rejects_stale_calculation_result(
     controller.change_directory(str(next_directory))
 
     assert controller.generation == generation.next_major()
-    assert controller.workspace.result is None
-    assert controller.workspace.directory == str(next_directory)
+    assert controller.result is None
+    assert controller.directory == str(next_directory)
 
     adoption = controller.adopt_calculation_result(
         loaded,
@@ -319,8 +319,8 @@ def test_directory_change_invalidates_and_rejects_stale_calculation_result(
     )
     assert not adoption.adopted
     assert controller.generation == generation.next_major()
-    assert controller.workspace.result is None
-    assert controller.workspace.directory == str(next_directory)
+    assert controller.result is None
+    assert controller.directory == str(next_directory)
 
 
 def test_structure_file_is_parsed_before_revision_checked(monkeypatch, tmp_path):

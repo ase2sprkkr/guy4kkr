@@ -57,8 +57,8 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
     )
 
     assert change is DocumentChange.APPLIED
-    assert controller.workspace.restarted
-    assert not controller.workspace.is_scf_converged()
+    assert controller.restarted
+    assert not controller.is_scf_converged()
 
 
 def test_use_for_new_calculation_marks_restart_without_touching_atoms():
@@ -70,11 +70,11 @@ def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     )
 
     assert change is DocumentChange.APPLIED
-    assert controller.workspace.atoms is atoms
+    assert controller.atoms is atoms
     assert atoms.sprkkr_is_scf_converged()
-    assert controller.workspace.restarted
-    assert controller.workspace.scf_status() == "START"
-    assert not controller.workspace.is_scf_converged()
+    assert controller.restarted
+    assert controller.scf_status() == "START"
+    assert not controller.is_scf_converged()
 
 
 def test_adopting_scf_result_with_new_potential_clears_restart_override():
@@ -89,9 +89,9 @@ def test_adopting_scf_result_with_new_potential_clears_restart_override():
     )
 
     assert adoption.adopted
-    assert controller.workspace.atoms is new_atoms
-    assert not controller.workspace.restarted
-    assert controller.workspace.is_scf_converged()
+    assert controller.atoms is new_atoms
+    assert not controller.restarted
+    assert controller.is_scf_converged()
 
 
 def test_scf_result_without_new_potential_keeps_restart_override():
@@ -105,8 +105,8 @@ def test_scf_result_without_new_potential_keeps_restart_override():
     )
 
     assert adoption.adopted
-    assert controller.workspace.restarted
-    assert not controller.workspace.is_scf_converged()
+    assert controller.restarted
+    assert not controller.is_scf_converged()
 
 
 def test_non_scf_result_does_not_clear_restart_override():
@@ -120,7 +120,7 @@ def test_non_scf_result_does_not_clear_restart_override():
     )
 
     assert adoption.adopted
-    assert controller.workspace.restarted
+    assert controller.restarted
 
 
 def test_external_result_starts_new_document_without_restart_override():
@@ -134,4 +134,4 @@ def test_external_result_starts_new_document_without_restart_override():
     )
 
     assert adoption.adopted
-    assert not controller.workspace.restarted
+    assert not controller.restarted

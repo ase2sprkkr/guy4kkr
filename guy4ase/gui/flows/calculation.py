@@ -23,7 +23,7 @@ def choose_working_directory(
     title: str = "Select Calculation Directory",
 ) -> bool:
     """Choose and publish the workspace calculation directory."""
-    start_directory = controller.workspace.directory or str(Path.home())
+    start_directory = controller.directory or str(Path.home())
     directory = QFileDialog.getExistingDirectory(
         parent,
         title,
@@ -96,7 +96,7 @@ def configure_and_run_task(
     """Configure one Guided task, commit it, and start the calculation."""
     try:
         if (
-            not controller.workspace.directory
+            not controller.directory
             and not choose_working_directory(
                 controller,
                 parent,
