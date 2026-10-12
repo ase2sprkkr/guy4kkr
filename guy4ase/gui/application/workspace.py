@@ -14,20 +14,16 @@ from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 @dataclass(frozen=True)
 class Generation:
-    """Revision of the mutable workspace draft.
+    """Monotonic revision of the mutable workspace draft."""
 
-    Calculation completion does not advance this revision.  It is only used to
-    reject delayed callbacks which would otherwise overwrite a newer draft.
-    """
+    value: int = 0
 
-    major: int = 0
-    minor: int = 0
+    def next(self) -> Generation:
+        return Generation(self.value + 1)
 
     def next_major(self) -> Generation:
-        return Generation(self.major + 1, 0)
-
-    def next_minor(self) -> Generation:
-        return Generation(self.major, self.minor + 1)
+        """Advance the draft revision after a semantic workspace change."""
+        return self.next()
 
 
 @dataclass(frozen=True)
@@ -53,9 +49,9 @@ class EmptySpheresState:
 class WorkspaceState:
     """Inputs prepared for the next calculation.
 
-    Results deliberately do not live here.  ``structure_id`` identifies the
-    user-visible physical structure and ``state_id`` the concrete structure /
-    potential state from which the next task will start.
+    Results deliberately do not live here. ``structure_id`` identifies the
+    user-visible structure and ``state_id`` the exact structure/potential input
+    from which the next task will start.
     """
 
     atoms: Any | None = None

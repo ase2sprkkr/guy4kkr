@@ -235,9 +235,10 @@ def update_empty_spheres(
             "Reset SCF State?",
             (
                 "Changing empty spheres changes the site configuration. "
-                "If this search adds or removes empty spheres, the current SCF "
-                "state and calculation results will be invalidated and a new SCF "
-                "sequence will be required.\n\nContinue?"
+                "If this search adds or removes empty spheres, the current "
+                "potential will no longer be active and a new SCF sequence "
+                "will be required. Existing calculation results are kept.\n\n"
+                "Continue?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -268,11 +269,7 @@ def update_empty_spheres(
         if updated is None:
             updated = atoms
         count = len(updated) - base_count
-        structure_changed = (
-            structure_changed
-            or updated is not atoms
-            or count != 0
-        )
+        structure_changed = structure_changed or updated is not atoms or count != 0
         return updated, count, structure_changed
 
     try:

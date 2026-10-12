@@ -1,4 +1,4 @@
-"""Semantic transitions over the mutable calculation draft and result history."""
+"""Semantic transitions over the mutable calculation draft and result tree."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -39,10 +39,10 @@ class CalculationNotReady(RuntimeError):
 class CalculationRequest:
     """Immutable provenance captured when a calculation is launched.
 
-    ``generation`` protects preparation against delayed draft callbacks. Result
-    adoption instead uses ``structure_id``/``state_id``: every completed result
-    is recorded, while an SCF result may advance the active workspace potential
-    only when it was launched from the potential which is still active.
+    ``generation`` protects preparation against delayed draft callbacks.
+    Completed calculations are always recorded against ``structure_id`` and
+    ``state_id``. An SCF output may advance the workspace only while that exact
+    input state is still active.
     """
 
     atoms: Any
@@ -55,19 +55,18 @@ class CalculationRequest:
 
 @dataclass(frozen=True)
 class ResultAdoption:
-    """Outcome of recording a completed calculation result."""
+    """Artifacts and workspace effect of recording a completed result."""
 
     output_path: Path | None = None
     potential_path: Path | None = None
     potential_error: Exception | None = None
     input_parameters_error: Exception | None = None
-    adopted: bool = True
     workspace_updated: bool = False
     record: ResultRecord | None = None
 
 
 class WorkspaceController(QObject):
-    """Own the next-calculation draft and an independent result provenance store."""
+    """Own the next-calculation draft and an independent result tree."""
 
     structureChanged = pyqtSignal(object)
     inputParametersChanged = pyqtSignal(object)
@@ -117,12 +116,13 @@ class WorkspaceController(QObject):
 
     @property
     def result(self) -> Any | None:
-        """Return the most recently recorded result (compatibility read API)."""
-        history = self.result_history
-        return history[0].result if history else None
+        """Return the latest result attached to the active workspace state."""
+        record = self._results.latest_result_for_state(self.state_id)
+        return record.result if record is not None else None
 
     @property
     def result_history(self) -> tuple[ResultRecord, ...]:
+        """Compatibility view; presentation should use ``result_store``."""
         return self._results.results
 
     @property
@@ -202,7 +202,7 @@ class WorkspaceController(QObject):
         return expected is None or expected == self._generation
 
     def _changed(self) -> None:
-        self._generation = self._generation.next_major()
+        self._generation = self._generation.next()
         self._workspace.generation = self._generation
 
     def _set_directory(self, directory: Any) -> bool:
@@ -210,26 +210,6 @@ class WorkspaceController(QObject):
             return False
         self._workspace.directory = directory
         return True
-
-    def _state_still_uses_source_potential(self, source_state_id: int) -> bool:
-        """Return whether the active state still uses ``source_state_id``'s potential.
-
-        ``Use for New Calculation`` creates a bookkeeping child so a new SCF
-        sequence can be shown as a separate branch, but it deliberately keeps
-        the same starting potential. Such restart-only children therefore do
-        not prevent an already running SCF from fast-forwarding the workspace.
-        Any state produced by an actual result (SCF, Empty Spheres, ...) is a
-        real change and stops the walk.
-        """
-        current_id = self._workspace.state_id
-        while current_id is not None:
-            if current_id == source_state_id:
-                return True
-            current = self._results.state(current_id)
-            if current.produced_by_result_id is not None:
-                return False
-            current_id = current.parent_id
-        return False
 
     def _install_new_structure_state(
         self,
@@ -329,17 +309,11 @@ class WorkspaceController(QObject):
             potential_path=loaded.potential_path,
             potential_error=loaded.potential_error,
             input_parameters_error=loaded.input_parameters_error,
-            adopted=True,
             workspace_updated=workspace_updated,
             record=record,
         )
 
-    def adopt_external_result(
-        self,
-        loaded: LoadedResult,
-        *,
-        expected_generation: Generation | None = None,
-    ) -> ResultAdoption:
+    def adopt_external_result(self, loaded: LoadedResult) -> ResultAdoption:
         """Record an imported result without implicitly replacing the draft."""
         produces_state = loaded.atoms is not None and _result_is_scf(loaded.result)
         record = self._results.add_external_result(
@@ -359,40 +333,26 @@ class WorkspaceController(QObject):
         loaded: LoadedResult,
         *,
         request: CalculationRequest | None = None,
-        expected_major: int | None = None,
     ) -> ResultAdoption:
-        """Always record a result; conditionally advance the active SCF state.
+        """Always record a result; fast-forward only the exact active SCF input.
 
-        For SCF, ``pot_new``/loaded atoms become the workspace starting point
-        exactly when the calculation was launched from the potential which is
-        still active. Sibling or late SCF results form independent history
-        branches and never roll the workspace back. Non-SCF results never
-        mutate the active workspace state.
+        A state selected by the user, including ``Use for New Calculation``, is
+        a write barrier. Results finishing from an older state remain in their
+        original branch and can become active only through an explicit action.
         """
         if request is None:
             if self.structure_id is None or self.state_id is None:
-                if loaded.atoms is not None:
-                    self._install_new_structure_state(
-                        loaded.atoms,
-                        potential_path=(
-                            str(loaded.potential_path)
-                            if loaded.potential_path is not None
-                            else None
-                        ),
-                    )
-                else:
-                    record = self._results.add_external_result(
-                        loaded.result,
-                        atoms=None,
-                        input_parameters=loaded.input_parameters,
-                        directory=loaded.directory,
-                        output_path=loaded.output_path,
-                        potential_path=loaded.potential_path,
-                        produces_state=False,
-                    )
-                    self.resultChanged.emit(loaded.result)
-                    return self._result_adoption(loaded, record=record)
-            assert self.structure_id is not None and self.state_id is not None
+                record = self._results.add_external_result(
+                    loaded.result,
+                    atoms=loaded.atoms,
+                    input_parameters=loaded.input_parameters,
+                    directory=loaded.directory,
+                    output_path=loaded.output_path,
+                    potential_path=loaded.potential_path,
+                    produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
+                )
+                self.resultChanged.emit(loaded.result)
+                return self._result_adoption(loaded, record=record)
             request = CalculationRequest(
                 atoms=self.atoms,
                 input_parameters=loaded.input_parameters,
@@ -426,7 +386,7 @@ class WorkspaceController(QObject):
             is_scf
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
-            and self._state_still_uses_source_potential(request.state_id)
+            and request.state_id == self._workspace.state_id
         ):
             state = self._results.state(record.output_state_id)
             self._workspace.atoms = state.atoms
@@ -444,19 +404,21 @@ class WorkspaceController(QObject):
             workspace_updated=workspace_updated,
         )
 
-    def use_result_structure(self, result_id: int) -> None:
-        """Explicitly copy a historical result's state into the draft."""
+    def use_result_state(self, result_id: int) -> None:
+        """Explicitly activate the structure/potential represented by a result."""
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
         if state_id is None:
-            raise ValueError("The selected result has no reusable structure state.")
+            raise ValueError("The selected result has no reusable calculation input.")
         state = self._results.state(state_id)
         self._workspace.atoms = state.atoms
         self._workspace.potential_path = state.potential_path
         self._workspace.structure_id = state.structure_id
         self._workspace.state_id = state.id
         self._workspace.empty_spheres = None
-        self._workspace.restarted = False
+        self._workspace.restarted = (
+            state.potential_path is None and state.parent_id is not None
+        )
         self._changed()
         self.structureChanged.emit(state.atoms)
 
@@ -483,7 +445,10 @@ class WorkspaceController(QObject):
         state_id = self._workspace.state_id
         if state_id is None:
             raise ValueError("No calculation state is active.")
-        self._workspace.state_id = self._results.new_child_state(state_id)
+        self._workspace.state_id = self._results.new_child_state(
+            state_id,
+            new_branch=True,
+        )
         self._workspace.restarted = True
         self._changed()
         self.structureChanged.emit(self.atoms)
@@ -530,8 +495,8 @@ class WorkspaceController(QObject):
             self._workspace.potential_path = None
             self._workspace.state_id = record.output_state_id
             self._workspace.restarted = True
-        self._changed()
+            self._changed()
+            self.structureChanged.emit(updated)
 
-        self.structureChanged.emit(updated if structure_changed else source)
         self.resultChanged.emit(result)
         return DocumentChange.APPLIED

@@ -38,18 +38,17 @@ def _loaded(result, *, atoms=None, potential_path=None, directory=None):
 
 
 def test_generation_is_a_regular_value_type_without_integer_compatibility():
-    generation = Generation(1, 0)
+    generation = Generation(1)
 
-    assert generation == Generation(1, 0)
-    assert hash(generation) == hash(Generation(1, 0))
-    assert {generation: "value"}[Generation(1, 0)] == "value"
+    assert generation == Generation(1)
+    assert hash(generation) == hash(Generation(1))
+    assert {generation: "value"}[Generation(1)] == "value"
     assert generation != 1
-    assert Generation(1, 1) != 1
-    assert generation != (1, 0)
+    assert generation != (1,)
 
 
 def test_controller_restores_workspace_generation():
-    generation = Generation(8, 3)
+    generation = Generation(8)
     workspace = WorkspaceState(generation=generation)
 
     controller = WorkspaceController(workspace)
@@ -69,7 +68,6 @@ def test_result_publication_does_not_advance_workspace_generation(tmp_path):
         request=request,
     )
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.generation == generation
     assert controller.result_history[0].result is result
@@ -132,7 +130,6 @@ def test_structure_change_does_not_reject_completed_job_from_history(tmp_path):
 
     adoption = controller.adopt_calculation_result(_loaded(result), request=request)
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.result_history[0].result is result
     assert controller.result_history[0].structure_id == old_structure_id

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.physics.composition import structure_formula
 
 
 logger = logging.getLogger(__name__)
@@ -87,9 +86,9 @@ class ElidedValueLabel(QLabel):
 
 
 class ResultActionsWidget(QWidget):
-    """Browse calculation history grouped by formula and real lineage forks."""
+    """Browse the calculation tree grouped by formula and branch."""
 
-    useStructureRequested = pyqtSignal(int)
+    useStateRequested = pyqtSignal(int)
     recomputeRequested = pyqtSignal(int)
 
     def __init__(
@@ -105,8 +104,10 @@ class ResultActionsWidget(QWidget):
         self._show_values_without_actions = show_values_without_actions
         self._empty_text = empty_text
         self._row_count = 0
+        self._store: ResultStore | None = None
         self._records: dict[int, ResultRecord] = {}
         self._current_structure_id: int | None = None
+        self._current_state_id: int | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -121,9 +122,9 @@ class ResultActionsWidget(QWidget):
         self._record_actions = QWidget(self)
         record_actions_layout = QHBoxLayout(self._record_actions)
         record_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self._use_structure_button = QPushButton("Use this structure", self._record_actions)
-        self._use_structure_button.clicked.connect(self._use_selected_structure)
-        record_actions_layout.addWidget(self._use_structure_button)
+        self._use_state_button = QPushButton("Use this potential", self._record_actions)
+        self._use_state_button.clicked.connect(self._use_selected_state)
+        record_actions_layout.addWidget(self._use_state_button)
         self._recompute_button = QPushButton("Recompute", self._record_actions)
         self._recompute_button.clicked.connect(self._recompute_selected)
         record_actions_layout.addWidget(self._recompute_button)
@@ -152,100 +153,91 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
-    def set_current_structure_id(self, structure_id: int | None) -> None:
+    def set_workspace_state(
+        self,
+        structure_id: int | None,
+        state_id: int | None,
+    ) -> None:
         self._current_structure_id = structure_id
+        self._current_state_id = state_id
         self._refresh_record_actions(self._record_for_item(self._selector.currentItem()))
 
-    def set_results(
-        self, results: ResultStore | Iterable[ResultRecord]
-    ) -> None:
-        """Render results without assuming they are current workspace state."""
+    def set_results(self, results: Any) -> None:
+        """Render only from the authoritative ResultStore.
+
+        Older window refresh methods still pass ``result_history``. Once this
+        widget has been wired to a ResultStore those calls deliberately reuse
+        that store instead of reconstructing lineage from a flat sequence.
+        During top-level window construction, before wiring, they simply leave
+        the result view empty.
+        """
+        if isinstance(results, ResultStore):
+            self._store = results
+        elif self._store is None:
+            self._records = {}
+            self._selector.clear()
+            self._selector.hide()
+            self.set_result(None)
+            self._record_actions.hide()
+            return
+        store = self._store
+        assert store is not None
+
         selected_id = self._selected_result_id()
-        store = results if isinstance(results, ResultStore) else None
-        records = store.results if store is not None else tuple(results)
+        records = store.results
         self._records = {record.id: record for record in records}
-
-        parent_by_state = {
-            record.output_state_id: record.input_state_id
-            for record in records
-            if record.output_state_id is not None
-        }
-        children: dict[int, list[int]] = {}
-        for state_id, parent_id in parent_by_state.items():
-            if parent_id is not None:
-                children.setdefault(parent_id, []).append(state_id)
-        child_ids = {key: tuple(sorted(value)) for key, value in children.items()}
-
-        def branch_path(record: ResultRecord) -> tuple[int, ...]:
-            if store is not None:
-                return store.branch_path(record)
-            state_id = record.output_state_id or record.input_state_id
-            path: list[int] = []
-            while state_id is not None and state_id in parent_by_state:
-                parent_id = parent_by_state[state_id]
-                if parent_id is None:
-                    break
-                siblings = child_ids.get(parent_id, ())
-                if len(siblings) > 1:
-                    path.append(siblings.index(state_id) + 1)
-                state_id = parent_id
-            path.reverse()
-            return tuple(path)
 
         self._selector.blockSignals(True)
         try:
             self._selector.clear()
-            branch_nodes: dict[tuple[int | None, tuple[int, ...]], QTreeWidgetItem] = {}
-            grouped: dict[int | None, list[ResultRecord]] = {}
-            for record in records:
-                grouped.setdefault(record.structure_id, []).append(record)
-
             formula_counts: dict[str, int] = {}
-            for structure_id, group in grouped.items():
-                if structure_id is None:
-                    formula = "Unknown structure"
-                elif store is not None:
-                    formula = store.structure(structure_id).formula
-                else:
-                    atoms = next((record.atoms for record in group if record.atoms is not None), None)
-                    formula = structure_formula(atoms) if atoms is not None else "Structure"
-                    formula = formula or "Structure"
-                formula_counts[formula] = formula_counts.get(formula, 0) + 1
-                number = formula_counts[formula]
-                title = formula if number == 1 else f"{formula} ({number})"
 
+            for structure in store.structures:
+                branch_ids = store.branch_ids(structure.id)
+                if not branch_ids:
+                    continue
+                formula_counts[structure.formula] = formula_counts.get(structure.formula, 0) + 1
+                number = formula_counts[structure.formula]
+                title = structure.formula if number == 1 else f"{structure.formula} ({number})"
                 structure_item = QTreeWidgetItem([title])
                 structure_item.setFlags(
                     structure_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
                 )
                 self._selector.addTopLevelItem(structure_item)
 
-                paths = {branch_path(record) for record in group}
-                show_branches = any(path for path in paths)
-                for record in reversed(group):
+                show_branches = len(branch_ids) > 1
+                for branch_id in branch_ids:
                     parent = structure_item
-                    path = branch_path(record)
-                    if show_branches and path:
-                        prefix: tuple[int, ...] = ()
-                        for number in path:
-                            prefix += (number,)
-                            key = (structure_id, prefix)
-                            branch = branch_nodes.get(key)
-                            if branch is None:
-                                label = "Branch " + ".".join(map(str, prefix))
-                                branch = QTreeWidgetItem([label])
-                                branch.setFlags(
-                                    branch.flags() & ~Qt.ItemFlag.ItemIsSelectable
-                                )
-                                parent.addChild(branch)
-                                branch_nodes[key] = branch
-                            parent = branch
+                    if show_branches:
+                        branch_number = store.branch_number(structure.id, branch_id)
+                        branch_item = QTreeWidgetItem([f"Branch {branch_number}"])
+                        branch_item.setFlags(
+                            branch_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                        )
+                        structure_item.addChild(branch_item)
+                        parent = branch_item
+                    for record in store.results_in_branch(structure.id, branch_id):
+                        item = QTreeWidgetItem([self._result_label(record)])
+                        item.setData(0, _RESULT_ID_ROLE, record.id)
+                        parent.addChild(item)
+
+            if store.unstructured_results:
+                unknown_item = QTreeWidgetItem(["Unknown structure"])
+                unknown_item.setFlags(
+                    unknown_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                )
+                self._selector.addTopLevelItem(unknown_item)
+                for record in store.unstructured_results:
                     item = QTreeWidgetItem([self._result_label(record)])
                     item.setData(0, _RESULT_ID_ROLE, record.id)
-                    parent.addChild(item)
+                    unknown_item.addChild(item)
 
             self._selector.expandAll()
             target = self._find_result_item(selected_id)
+            if target is None:
+                active = store.latest_result_for_state(self._current_state_id)
+                if active is not None:
+                    target = self._find_result_item(active.id)
             if target is None and records:
                 target = self._find_result_item(records[0].id)
             if target is not None:
@@ -296,16 +288,25 @@ class ResultActionsWidget(QWidget):
         self._refresh_record_actions(record)
 
     def _refresh_record_actions(self, record: ResultRecord | None) -> None:
-        if record is None:
+        store = self._store
+        if record is None or store is None:
             self._record_actions.hide()
             return
-        has_state = record.output_state_id is not None or record.input_state_id is not None
+
+        state = store.state_for_result(record)
+        different_state = state is not None and state.id != self._current_state_id
         different_structure = (
             record.structure_id is not None
             and record.structure_id != self._current_structure_id
         )
-        show_use_structure = has_state and different_structure
-        self._use_structure_button.setVisible(show_use_structure)
+        can_use = different_state
+        self._use_state_button.setVisible(can_use)
+        if can_use and state is not None:
+            self._use_state_button.setText(
+                "Use this structure"
+                if different_structure or state.potential_path is None
+                else "Use this potential"
+            )
 
         try:
             task = str(record.result.task_name).strip()
@@ -317,17 +318,19 @@ class ResultActionsWidget(QWidget):
             and self._current_structure_id is not None
         )
         self._recompute_button.setVisible(can_recompute)
-        self._recompute_button.setText(
-            "Recompute on current structure"
-            if different_structure
-            else "Recompute"
-        )
-        self._record_actions.setVisible(show_use_structure or can_recompute)
+        if different_structure:
+            recompute_text = "Recompute on current structure"
+        elif different_state:
+            recompute_text = "Recompute on current potential"
+        else:
+            recompute_text = "Recompute"
+        self._recompute_button.setText(recompute_text)
+        self._record_actions.setVisible(can_use or can_recompute)
 
-    def _use_selected_structure(self) -> None:
+    def _use_selected_state(self) -> None:
         result_id = self._selected_result_id()
         if result_id is not None:
-            self.useStructureRequested.emit(result_id)
+            self.useStateRequested.emit(result_id)
 
     def _recompute_selected(self) -> None:
         result_id = self._selected_result_id()
