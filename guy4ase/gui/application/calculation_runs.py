@@ -13,8 +13,9 @@ from threading import Lock
 class ActiveRunRegistry:
     """Deprecated no-op compatibility object; not an execution registry."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, profile_selection_enabled: bool = False) -> None:
         self.launch_lock = Lock()
+        self.profile_selection_enabled = profile_selection_enabled
 
     @property
     def active(self) -> tuple[object, ...]:
