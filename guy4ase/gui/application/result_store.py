@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.result_artifacts import (
+    ResultArtifactVersion,
+    capture_result_artifacts,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
 
@@ -84,6 +88,7 @@ class ResultRecord:
     atoms: Any | None
     input_parameters: Any | None
     directory: str | None
+    artifacts: Mapping[str, ResultArtifactVersion]
     restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
@@ -355,6 +360,7 @@ class ResultStore:
             restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
+            artifacts=capture_result_artifacts(result),
         )
         self._results[result_id] = record
         state_id = output_state_id or input_state_id
