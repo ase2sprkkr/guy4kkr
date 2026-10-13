@@ -23,15 +23,12 @@ from guy4ase.gui.widgets.input_parameters.dataset import (
 
 logger = logging.getLogger(__name__)
 
-# Compatibility alias while callers/tests migrate to the generic monitor module.
-_RunCancellation = RunCancellation
-
 
 def _execution_request(request: CalculationRequest) -> CalculationRequest:
     """Return a request whose atoms can be mutated freely by ASE2SPRKKR.
 
     Worker construction happens on the GUI thread, before the QObject is moved to
-    its QThread.  Copying here therefore creates the thread boundary explicitly:
+    its QThread. Copying here therefore creates the thread boundary explicitly:
     lazy promotion, site initialization and other backend bookkeeping can mutate
     the execution copy without touching the authoritative workspace structure.
     """
@@ -57,14 +54,11 @@ class _SprkkrRunWorker(QObject):
         cancellation: RunCancellation | None = None,
         *,
         profile_name: str | None = None,
-        run_registry=None,
-        launch_lock=None,
     ):
         super().__init__()
         self._request = _execution_request(request)
         self._profile_name = profile_name
         self._cancellation = cancellation or RunCancellation()
-        del run_registry, launch_lock
 
     def _emit_cancelled(self) -> None:
         self.status.emit("Cancelled")
@@ -199,13 +193,7 @@ class SprkkrRunWindow(RunMonitorWindow):
             warning_title="MPI Not Detected",
             background_thread_factory=lambda **kwargs: Thread(**kwargs),
             on_finished=on_finished,
-            autostart=False,
         )
-        self._start(request)
-
-    def _start(self, _request: CalculationRequest) -> None:
-        """Compatibility seam; actual monitor startup is backend-agnostic."""
-        self._start_worker()
 
     @pyqtSlot(str)
     def _on_warning(self, message: str) -> None:

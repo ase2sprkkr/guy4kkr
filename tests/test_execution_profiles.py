@@ -276,7 +276,7 @@ def test_run_window_shows_mpi_warning_message_box(monkeypatch, tmp_path):
         directory=str(tmp_path),
         generation=object(),
     )
-    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start_worker", lambda self: None)
     shown = []
     monkeypatch.setattr(
         run_module.QMessageBox,
@@ -299,7 +299,7 @@ def test_run_window_close_hides_without_cancelling_running_job(monkeypatch, tmp_
         directory=str(tmp_path),
         generation=object(),
     )
-    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start_worker", lambda self: None)
 
     class RunningThread:
         @staticmethod
@@ -307,7 +307,7 @@ def test_run_window_close_hides_without_cancelling_running_job(monkeypatch, tmp_
             return True
 
     window = run_module.SprkkrRunWindow(request)
-    window._cancellation = run_module._RunCancellation()
+    window._cancellation = run_module.RunCancellation()
     window._thread = RunningThread()
     window.show()
     app.processEvents()
@@ -331,10 +331,10 @@ def test_run_window_refreshes_state_without_gui_thread_io(monkeypatch, tmp_path)
         directory=str(tmp_path),
         generation=object(),
     )
-    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start_worker", lambda self: None)
 
     window = run_module.SprkkrRunWindow(request)
-    window._cancellation = run_module._RunCancellation()
+    window._cancellation = run_module.RunCancellation()
     runner = SimpleNamespace(state=SimpleNamespace(value="queued"))
     assert window._cancellation.register(runner)
 
