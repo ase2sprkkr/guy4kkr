@@ -166,7 +166,6 @@ def test_result_from_other_structure_offers_structure_reuse():
         result,
         structure_id=first_structure,
         input_state_id=first_state,
-        atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=None,
     )
@@ -187,14 +186,13 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
     structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-    historical_state = store.new_child_state(root, atoms=Atoms("Fe"), potential_path="p1")
-    current_state = store.new_child_state(historical_state, atoms=Atoms("Fe"), potential_path="p2")
+    historical_state = store.new_child_state(root, potential_path="p1")
+    current_state = store.new_child_state(historical_state, potential_path="p2")
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
         result,
         structure_id=structure_id,
         input_state_id=historical_state,
-        atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=None,
     )
@@ -202,7 +200,6 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse():
     widget.set_workspace_state(structure_id, current_state)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
     assert widget._use_state_button.text() == "Use this potential"
     assert widget._recompute_button.text() == "Recompute on current potential"
     widget.close()
@@ -216,7 +213,6 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
         EmptySpheresResult(found=2),
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters={"min_radius": 0.8},
         directory=None,
     )

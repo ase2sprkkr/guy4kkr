@@ -8,7 +8,10 @@ from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 from guy4ase.gui.application import result_loading
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    PotentialVersionChanged,
+    WorkspaceController,
+)
 from guy4ase.gui.flows import files as file_flows
 
 
@@ -100,7 +103,7 @@ def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
     assert not hasattr(request, "potential_path")
 
 
-def test_result_state_restart_decision_uses_atoms_not_path(tmp_path):
+def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_path):
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
@@ -116,7 +119,6 @@ def test_result_state_restart_decision_uses_atoms_not_path(tmp_path):
     assert parent is not None
     child = controller.result_store.new_child_state(
         parent,
-        atoms=atoms,
         potential_path=None,
         produced_by_result_id=None,
     )
@@ -124,19 +126,23 @@ def test_result_state_restart_decision_uses_atoms_not_path(tmp_path):
         SimpleNamespace(task_name="scf"),
         structure_id=controller.structure_id,
         input_state_id=child,
-        atoms=atoms,
         input_parameters=_Parameters(),
         directory=str(tmp_path),
     )
 
+    controller.replace_structure(Atoms("Cu"))
     controller.use_result_state(result.id)
 
-    assert controller.atoms is atoms
+    assert controller.atoms is not atoms
+    assert controller.atoms.get_chemical_symbols() == ["Fe"]
+    assert not getattr(controller.atoms, "has_potential", lambda: False)()
     assert controller.potential_path is None
-    assert not controller.restarted
+    assert controller.restarted
 
 
-def test_use_result_state_never_reloads_historical_potential(tmp_path, monkeypatch):
+def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "Fe.pot"
     path.write_text("historical potential")
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
@@ -152,11 +158,12 @@ def test_use_result_state_never_reloads_historical_potential(tmp_path, monkeypat
     )
     state_id = controller.state_id
     assert state_id is not None
+    state = controller.result_store.state(state_id)
+    assert state.structure_snapshot is None
     result = controller.result_store.add_result(
         SimpleNamespace(task_name="dos"),
         structure_id=controller.structure_id,
         input_state_id=state_id,
-        atoms=atoms,
         input_parameters=_Parameters(),
         directory=str(tmp_path),
         potential_path=path,
@@ -169,14 +176,12 @@ def test_use_result_state_never_reloads_historical_potential(tmp_path, monkeypat
         "from_file",
         staticmethod(
             lambda *_args, **_kwargs: pytest.fail(
-                "use_result_state() must not reload a historical potential"
+                "missing historical POTFIL must fail before parsing"
             )
         ),
     )
 
-    controller.use_result_state(result.id)
+    with pytest.raises(PotentialVersionChanged):
+        controller.use_result_state(result.id)
 
-    assert controller.atoms is atoms
-    assert controller.atoms.potential is potential
-    assert controller.potential_path == str(path)
-    assert not controller.restarted
+    assert controller.atoms.get_chemical_symbols() == ["Cu"]

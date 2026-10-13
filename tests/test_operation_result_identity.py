@@ -12,7 +12,6 @@ def test_empty_spheres_result_has_stable_task_identity():
         EmptySpheresResult(found=2),
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters={},
         directory=None,
     )

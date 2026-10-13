@@ -262,7 +262,7 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
     assert record.output_state_id == controller.state_id
     assert controller.state_id != input_state_id
     assert controller.atoms is atoms
-    assert state.atoms is atoms
+    assert state.structure_snapshot is not None
     assert controller.potential_path == "Fe.pot"
     assert state.potential_path == "Fe.pot"
     assert controller.generation != generation
@@ -324,7 +324,6 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         older,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
     )
@@ -332,7 +331,6 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         newest,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
     )
@@ -364,7 +362,6 @@ def test_result_selector_shows_branch_nodes_only_after_real_fork():
         _ui_result("scf", "a"),
         structure_id=structure_id,
         input_state_id=root_state,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
         output_atoms=Atoms("Fe"),
@@ -383,7 +380,6 @@ def test_result_selector_shows_branch_nodes_only_after_real_fork():
         _ui_result("scf", "b"),
         structure_id=structure_id,
         input_state_id=root_state,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
         output_atoms=Atoms("Fe"),

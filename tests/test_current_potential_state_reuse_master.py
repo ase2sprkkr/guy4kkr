@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application import workspace_controller as controller_module
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -45,7 +46,6 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         _result("scf"),
         structure_id=structure_id,
         input_state_id=initial_state_id,
-        atoms=controller.atoms,
         input_parameters=None,
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
@@ -58,7 +58,6 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         _result("scf"),
         structure_id=structure_id,
         input_state_id=scf1.output_state_id,
-        atoms=controller.atoms,
         input_parameters=None,
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
@@ -68,7 +67,7 @@ def _make_two_scf_versions(controller, potential, tmp_path):
     return scf1, scf2
 
 
-def test_continue_current_version_reuses_scf2_state(tmp_path):
+def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
     potential = tmp_path / "Fe.pot"
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
     scf1, scf2 = _make_two_scf_versions(controller, potential, tmp_path)
@@ -78,6 +77,14 @@ def test_continue_current_version_reuses_scf2_state(tmp_path):
     version2 = PotentialFileVersion.capture(potential)
     assert scf2_state.potential_version == version2
     assert scf2_state.potential_source_result_id == scf2.id
+    assert scf2_state.structure_snapshot is None
+
+    loaded_atoms = Atoms("Fe")
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        staticmethod(lambda path: SimpleNamespace(atoms=loaded_atoms)),
+    )
 
     structures_before = store.structures
     generation_before = controller.generation
@@ -85,7 +92,7 @@ def test_continue_current_version_reuses_scf2_state(tmp_path):
 
     assert controller.state_id == scf2.output_state_id
     assert controller.structure_id == scf2_state.structure_id
-    assert controller.atoms is scf2_state.atoms
+    assert controller.atoms is loaded_atoms
     assert store.structures == structures_before
     assert controller.generation != generation_before
     assert store.potential_source_result(controller.state_id) is scf2
@@ -100,7 +107,6 @@ def test_continue_current_version_reuses_scf2_state(tmp_path):
         _result("dos"),
         structure_id=controller.structure_id,
         input_state_id=controller.state_id,
-        atoms=controller.atoms,
         input_parameters=None,
         directory=str(tmp_path),
     )

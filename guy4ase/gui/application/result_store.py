@@ -13,12 +13,14 @@ from guy4ase.gui.application.result_artifacts import (
     ResultArtifactVersion,
     capture_result_artifacts,
 )
+from guy4ase.gui.application.structure_snapshot import StructureSnapshot
 from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
 _KEEP_EMPTY_SPHERES = object()
 _KEEP_POTENTIAL_SOURCE = object()
+_KEEP_STRUCTURE = object()
 
 
 def _task_name(result: Any) -> str:
@@ -46,6 +48,14 @@ def _snapshot_input_parameters(parameters: Any | None) -> Any | None:
     return deepcopy(parameters)
 
 
+def _capture_potential(path: str | Path | None) -> PotentialFileVersion | None:
+    return PotentialFileVersion.capture(path) if path is not None else None
+
+
+def _snapshot_needed(version: PotentialFileVersion | None) -> bool:
+    return version is None or not version.available
+
+
 @dataclass(frozen=True)
 class StructureRecord:
     """Identity of one user-visible physical structure."""
@@ -56,15 +66,20 @@ class StructureRecord:
 
 @dataclass(frozen=True)
 class CalculationStateRecord:
-    """One concrete restorable state in a calculation lineage."""
+    """One calculation state without retaining a live ``Atoms`` object.
+
+    A usable POTFIL version is sufficient structure provenance and is preferred.
+    ``structure_snapshot`` is populated only when no usable POTFIL existed when
+    the state was created.
+    """
 
     id: int
     structure_id: int
     parent_id: int | None
     branch_id: int
-    atoms: Any
     potential_path: str | None
     potential_version: PotentialFileVersion | None
+    structure_snapshot: StructureSnapshot | None = None
     empty_spheres: EmptySpheresState | None = None
     produced_by_result_id: int | None = None
     potential_source_result_id: int | None = None
@@ -72,7 +87,7 @@ class CalculationStateRecord:
 
 @dataclass(frozen=True)
 class ResultRecord:
-    """Immutable provenance captured for one completed calculation/operation."""
+    """Immutable lightweight provenance captured for one completed operation."""
 
     id: int
     result: Any
@@ -80,7 +95,6 @@ class ResultRecord:
     structure_id: int | None
     input_state_id: int | None
     output_state_id: int | None
-    atoms: Any | None
     input_parameters: Any | None
     directory: str | None
     artifacts: Mapping[str, ResultArtifactVersion]
@@ -119,7 +133,6 @@ class ResultStore:
 
     @property
     def results(self) -> tuple[ResultRecord, ...]:
-        """Return a newest-first compatibility view over the tree."""
         return tuple(
             self._results[result_id]
             for result_id in sorted(self._results, reverse=True)
@@ -169,11 +182,16 @@ class ResultStore:
         return self._states.get(state_id) if state_id is not None else None
 
     def state_for_potential_version(
-        self, version: PotentialFileVersion
+        self,
+        version: PotentialFileVersion,
+        *,
+        structure_id: int | None = None,
     ) -> CalculationStateRecord | None:
-        """Return the newest state known to represent this exact potential file."""
+        """Return the newest state known to represent this exact POTFIL version."""
         for state_id in sorted(self._states, reverse=True):
             state = self._states[state_id]
+            if structure_id is not None and state.structure_id != structure_id:
+                continue
             if state.potential_version == version:
                 return state
         return None
@@ -246,28 +264,45 @@ class ResultStore:
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> tuple[int, int]:
+        if potential_version is not None:
+            if potential_path is None:
+                raise AssertionError(
+                    "A captured potential version requires its potential path."
+                )
+            resolved_path = Path(potential_path).expanduser().absolute()
+            if potential_version.path != resolved_path:
+                raise AssertionError(
+                    "Captured potential version does not match potential path."
+                )
+            resolved_version = potential_version
+        else:
+            resolved_version = _capture_potential(potential_path)
+
         structure_id = self._next_structure_id
         self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
         self._structures[structure_id] = StructureRecord(structure_id, formula)
         branch_id = self._allocate_branch(structure_id)
-        resolved_version = (
-            potential_version
-            if potential_version is not None
-            else PotentialFileVersion.capture(potential_path)
-            if potential_path is not None
+        snapshot = (
+            StructureSnapshot.capture(atoms)
+            if _snapshot_needed(resolved_version)
+            else None
+        )
+        source_result_id = (
+            potential_source_result_id
+            if resolved_version is not None and resolved_version.available
             else None
         )
         state_id = self._new_state(
             structure_id,
-            atoms,
             potential_path=potential_path,
             potential_version=resolved_version,
+            structure_snapshot=snapshot,
             empty_spheres=empty_spheres,
             parent_id=None,
             branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
-            potential_source_result_id=potential_source_result_id,
+            potential_source_result_id=source_result_id,
         )
         return structure_id, state_id
 
@@ -275,8 +310,8 @@ class ResultStore:
         self,
         parent_id: int,
         *,
-        atoms: Any | None = None,
         potential_path: str | None | object = _KEEP_POTENTIAL,
+        structure_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE,
         empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
@@ -284,13 +319,11 @@ class ResultStore:
     ) -> int:
         parent = self.state(parent_id)
         reuses_potential = potential_path is _KEEP_POTENTIAL
-        resolved_potential = parent.potential_path if reuses_potential else potential_path
+        resolved_path = parent.potential_path if reuses_potential else potential_path
         resolved_version = (
             parent.potential_version
             if reuses_potential
-            else PotentialFileVersion.capture(resolved_potential)
-            if resolved_potential is not None
-            else None
+            else _capture_potential(resolved_path)
         )
         resolved_source = (
             parent.potential_source_result_id
@@ -299,8 +332,22 @@ class ResultStore:
             if potential_source_result_id is _KEEP_POTENTIAL_SOURCE
             else potential_source_result_id
         )
-        if resolved_version is None:
+        if resolved_version is None or not resolved_version.available:
             resolved_source = None
+
+        if _snapshot_needed(resolved_version):
+            resolved_snapshot = (
+                parent.structure_snapshot
+                if structure_snapshot is _KEEP_STRUCTURE
+                else structure_snapshot
+            )
+            if resolved_snapshot is None:
+                raise ValueError(
+                    "A state without a usable potential requires a structure snapshot."
+                )
+        else:
+            resolved_snapshot = None
+
         resolved_empty_spheres = (
             parent.empty_spheres
             if empty_spheres is _KEEP_EMPTY_SPHERES
@@ -317,9 +364,9 @@ class ResultStore:
         )
         return self._new_state(
             parent.structure_id,
-            parent.atoms if atoms is None else atoms,
-            potential_path=resolved_potential,
+            potential_path=resolved_path,
             potential_version=resolved_version,
+            structure_snapshot=resolved_snapshot,
             empty_spheres=resolved_empty_spheres,
             parent_id=parent.id,
             branch_id=branch_id,
@@ -333,7 +380,6 @@ class ResultStore:
         *,
         structure_id: int | None,
         input_state_id: int | None,
-        atoms: Any | None,
         input_parameters: Any | None,
         directory: str | None,
         restart_scf: bool = False,
@@ -343,6 +389,7 @@ class ResultStore:
         output_potential_path: str | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
     ) -> ResultRecord:
+        input_state = None
         if input_state_id is not None:
             input_state = self.state(input_state_id)
             if input_state.structure_id != structure_id:
@@ -383,12 +430,21 @@ class ResultStore:
                     potential_source_result_id=potential_source_result_id,
                 )
             else:
-                if input_state_id is None:
+                if input_state is None:
                     raise ValueError("A derived result requires an input state.")
+                child_potential: str | None | object = output_potential_path
+                if (
+                    output_atoms is None
+                    and output_potential_path == input_state.potential_path
+                ):
+                    child_potential = _KEEP_POTENTIAL
+                child_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE
+                if output_atoms is not None:
+                    child_snapshot = StructureSnapshot.capture(output_atoms)
                 output_state_id = self.new_child_state(
                     input_state_id,
-                    atoms=output_atoms,
-                    potential_path=output_potential_path,
+                    potential_path=child_potential,
+                    structure_snapshot=child_snapshot,
                     empty_spheres=output_empty_spheres,
                     produced_by_result_id=result_id,
                     potential_source_result_id=potential_source_result_id,
@@ -401,7 +457,6 @@ class ResultStore:
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
-            atoms=atoms,
             input_parameters=_snapshot_input_parameters(input_parameters),
             directory=directory,
             restart_scf=restart_scf,
@@ -433,7 +488,6 @@ class ResultStore:
                 result,
                 structure_id=None,
                 input_state_id=None,
-                atoms=None,
                 input_parameters=input_parameters,
                 directory=directory,
                 output_path=output_path,
@@ -445,7 +499,6 @@ class ResultStore:
                 result,
                 structure_id=None,
                 input_state_id=None,
-                atoms=atoms,
                 input_parameters=input_parameters,
                 directory=directory,
                 output_path=output_path,
@@ -462,7 +515,6 @@ class ResultStore:
             result,
             structure_id=structure_id,
             input_state_id=state_id,
-            atoms=atoms,
             input_parameters=input_parameters,
             directory=directory,
             output_path=output_path,
@@ -487,10 +539,10 @@ class ResultStore:
     def _new_state(
         self,
         structure_id: int,
-        atoms: Any,
         *,
         potential_path: str | None,
         potential_version: PotentialFileVersion | None,
+        structure_snapshot: StructureSnapshot | None,
         empty_spheres: EmptySpheresState | None,
         parent_id: int | None,
         branch_id: int,
@@ -504,9 +556,9 @@ class ResultStore:
             structure_id=structure_id,
             parent_id=parent_id,
             branch_id=branch_id,
-            atoms=atoms,
             potential_path=potential_path,
             potential_version=potential_version,
+            structure_snapshot=structure_snapshot,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=potential_source_result_id,

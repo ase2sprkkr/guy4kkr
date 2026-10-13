@@ -49,7 +49,6 @@ def test_add_result_rejects_cross_structure_input_state_atomically():
             result,
             structure_id=first_structure,
             input_state_id=second_state,
-            atoms=Atoms("Cu"),
             input_parameters=None,
             directory=None,
         )
@@ -61,7 +60,6 @@ def test_add_result_rejects_cross_structure_input_state_atomically():
         result,
         structure_id=second_structure,
         input_state_id=second_state,
-        atoms=Atoms("Cu"),
         input_parameters=None,
         directory=None,
     )
@@ -80,7 +78,6 @@ def test_result_record_snapshots_task_name_and_input_parameters():
         result,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=parameters,
         directory=None,
     )
@@ -110,7 +107,6 @@ def test_result_record_deep_copies_generic_mapping_parameters():
         SimpleNamespace(task_name="empty-spheres"),
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=parameters,
         directory=None,
     )

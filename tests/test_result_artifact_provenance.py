@@ -56,7 +56,6 @@ def _add_result(store: ResultStore, path: Path, context: str):
         result,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=str(path.parent),
     )
@@ -106,8 +105,6 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     assert store.current_value_for_artifact(old_record.artifacts["dos"]) is new_value
     assert new_value is not old_value
 
-    # Refresh after the new calculation completes. Selection remains on the old
-    # job, but its overwritten row deliberately exposes the current result.
     widget.set_results(store)
     assert widget._selected_result_id() == old_record.id
 
