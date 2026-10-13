@@ -6,7 +6,6 @@ from pathlib import Path
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -29,7 +28,6 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
-        self.active_runs = ActiveRunRegistry(profile_selection_enabled=True)
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,
@@ -48,7 +46,6 @@ class GuiApplication(QObject):
             self._workflow_window = WorkflowWindow(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 open_expert=self.show_main_window,
                 settings=self.settings,
             )
@@ -61,7 +58,6 @@ class GuiApplication(QObject):
             self._main_window = MainWindow(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 self.settings,
             )
             self._wire_result_actions(self._main_window)
@@ -81,9 +77,6 @@ class GuiApplication(QObject):
             widget.set_results(self.controller.result_store)
 
         def select_result(result_id: int) -> None:
-            # Selection is a presentation concern. ResultActionsWidget deliberately
-            # keeps normal refreshes sticky, so an explicit user import selects by
-            # id only after resultChanged has rebuilt the selector.
             item = widget._find_result_item(result_id)
             if item is not None:
                 widget._selector.setCurrentItem(item)
@@ -93,7 +86,6 @@ class GuiApplication(QObject):
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 target,
                 result_id,
             )
