@@ -49,6 +49,10 @@ class CalculationRequest:
     ``empty_spheres=False``, so preparing/running the calculation may lazily
     initialise SPR-KKR data on it but must not change the physical structure.
 
+    ``restart_scf`` is execution intent captured with the request. It asks the
+    backend to serialize the starting potential with ``SCFSTATUS START`` without
+    changing the workspace potential itself.
+
     ``generation`` protects preparation against delayed draft callbacks.
     Completed calculations are always recorded against ``structure_id`` and
     ``state_id``. An SCF output may advance the workspace only while that exact
@@ -61,6 +65,7 @@ class CalculationRequest:
     generation: Generation
     structure_id: int = 0
     state_id: int = 0
+    restart_scf: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,7 +149,11 @@ class WorkspaceController(QObject):
 
     @property
     def restarted(self) -> bool:
-        return self._workspace.restarted
+        return self._workspace.restart_scf_requested
+
+    @property
+    def restart_scf_requested(self) -> bool:
+        return self._workspace.restart_scf_requested
 
     @property
     def generation(self) -> Generation:
@@ -172,7 +181,7 @@ class WorkspaceController(QObject):
         return self._workspace.empty_spheres_action()
 
     def structure_change_requires_scf_restart(self) -> bool:
-        if self.atoms is None or self.restarted:
+        if self.atoms is None or self.restart_scf_requested:
             return False
         if self.is_scf_converged():
             return True
@@ -201,6 +210,7 @@ class WorkspaceController(QObject):
             generation=self._generation,
             structure_id=structure_id,
             state_id=state_id,
+            restart_scf=self._workspace.restart_scf_requested,
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
@@ -243,7 +253,7 @@ class WorkspaceController(QObject):
         self._workspace.atoms = atoms
         self._workspace.potential_path = potential_path
         self._workspace.empty_spheres = None
-        self._workspace.restarted = restarted
+        self._workspace.restart_scf_requested = restarted
         self._install_new_structure_state(atoms, potential_path=potential_path)
         directory_changed = self._set_directory(directory)
         self._changed()
@@ -271,7 +281,7 @@ class WorkspaceController(QObject):
             return DocumentChange.STALE
 
         self._workspace.atoms = atoms
-        self._workspace.restarted = True
+        self._workspace.restart_scf_requested = True
         self._workspace.potential_path = None
         self._workspace.empty_spheres = None
         self._install_new_structure_state(atoms, potential_path=None)
@@ -356,6 +366,7 @@ class WorkspaceController(QObject):
             atoms=request.atoms,
             input_parameters=request.input_parameters,
             directory=request.directory,
+            restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             output_atoms=output_atoms,
@@ -378,7 +389,7 @@ class WorkspaceController(QObject):
             self._workspace.atoms = output_atoms
             self._workspace.potential_path = state.potential_path
             self._workspace.state_id = state.id
-            self._workspace.restarted = False
+            self._workspace.restart_scf_requested = False
             self._changed()
             workspace_updated = True
             self.structureChanged.emit(output_atoms)
@@ -448,7 +459,7 @@ class WorkspaceController(QObject):
         self._workspace.structure_id = structure_id
         self._workspace.state_id = target_state_id
         self._workspace.empty_spheres = None
-        self._workspace.restarted = False
+        self._workspace.restart_scf_requested = False
         self._changed()
         self.structureChanged.emit(atoms)
 
@@ -460,7 +471,7 @@ class WorkspaceController(QObject):
         self._workspace.structure_id = None
         self._workspace.state_id = None
         self._workspace.empty_spheres = None
-        self._workspace.restarted = False
+        self._workspace.restart_scf_requested = False
         self._set_directory(None)
         self._changed()
         self.structureChanged.emit(None)
@@ -476,23 +487,11 @@ class WorkspaceController(QObject):
         if state_id is None:
             raise ValueError("No calculation state is active.")
 
-        atoms = self.atoms
-        if atoms is not None:
-            has_potential = getattr(atoms, "has_potential", None)
-            if callable(has_potential):
-                if not has_potential():
-                    raise ValueError("The active structure has no reusable potential.")
-                potential = atoms.potential
-            else:
-                potential = getattr(atoms, "potential", None)
-            if potential is not None:
-                potential.SCF_INFO.SCFSTATUS = "START"
-
         self._workspace.state_id = self._results.new_child_state(
             state_id,
             new_lineage=True,
         )
-        self._workspace.restarted = True
+        self._workspace.restart_scf_requested = True
         self._changed()
         self.structureChanged.emit(self.atoms)
         return DocumentChange.APPLIED
@@ -537,7 +536,7 @@ class WorkspaceController(QObject):
             self._workspace.atoms = updated
             self._workspace.potential_path = None
             self._workspace.state_id = record.output_state_id
-            self._workspace.restarted = True
+            self._workspace.restart_scf_requested = True
             self._changed()
             self.structureChanged.emit(updated)
 
