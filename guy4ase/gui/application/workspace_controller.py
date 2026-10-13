@@ -153,11 +153,6 @@ class WorkspaceController(QObject):
         return record.result if record is not None else None
 
     @property
-    def result_history(self) -> tuple[ResultRecord, ...]:
-        """Compatibility view; presentation should use ``result_store``."""
-        return self._results.results
-
-    @property
     def result_store(self) -> ResultStore:
         return self._results
 
@@ -391,6 +386,7 @@ class WorkspaceController(QObject):
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             produces_state=produces_state,
+            persistent_ref=loaded.persistent_ref,
         )
         self.resultChanged.emit(loaded.result)
         if select_result:
@@ -419,6 +415,7 @@ class WorkspaceController(QObject):
                     output_path=loaded.output_path,
                     potential_path=loaded.potential_path,
                     produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
+                    persistent_ref=loaded.persistent_ref,
                 )
                 self.resultChanged.emit(loaded.result)
                 return self._result_adoption(loaded, record=record)
@@ -440,6 +437,7 @@ class WorkspaceController(QObject):
             input_state_id=request.state_id,
             input_parameters=request.input_parameters,
             directory=request.directory,
+            persistent_ref=loaded.persistent_ref,
             restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
