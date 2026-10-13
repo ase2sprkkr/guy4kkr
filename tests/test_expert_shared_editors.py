@@ -40,6 +40,12 @@ def scaling(dialog, name='SOC'):
     return tree.itemWidget(item, 2), item
 
 
+def option_item(dialog, path):
+    item = dialog.tree_editor._runtime.option_item(path)
+    assert item is not None
+    return item
+
+
 @pytest.mark.parametrize('task', ['scf', 'bsf'])
 @pytest.mark.parametrize('name', ['C', 'SOC'])
 def test_expert_scaling_uses_compact_inline_defaultdict_editor(application, task, name):
@@ -216,7 +222,7 @@ def test_incomplete_fixed_array_is_presentation_draft_only(application, monkeypa
     monkeypatch.setattr(option._definition, "grammar_type", fixed_array)
     dialog = InputParametersDialog(parameters)
     path = ("TAU", "CLURAD")
-    item = dialog.tree_editor._option_rows[path]
+    item = option_item(dialog, path)
     tree = dialog.tree_editor.tree
     editors = [tree.itemWidget(item.child(index), 2) for index in range(3)]
 
@@ -233,7 +239,7 @@ def test_incomplete_fixed_array_is_presentation_draft_only(application, monkeypa
     dialog.session.undo_stack.undo()
     application.processEvents()
     assert dialog.session.value(path) is None
-    new_item = dialog.tree_editor._option_rows[path]
+    new_item = option_item(dialog, path)
     assert tree.itemWidget(new_item.child(0), 2).value() != 1.0
 
     tree.itemWidget(new_item.child(0), 2).setValue(8.0)
@@ -241,7 +247,7 @@ def test_incomplete_fixed_array_is_presentation_draft_only(application, monkeypa
     replacement = InputParameters.create("scf")
     replacement.TAU.CLURAD.set([4.0, 5.0, 6.0])
     dialog.session.replace_parameters(replacement)
-    item = dialog.tree_editor._option_rows[path]
+    item = option_item(dialog, path)
     assert list(dialog.session.value(path)) == [4.0, 5.0, 6.0]
     assert [tree.itemWidget(item.child(index), 2).value() for index in range(3)] == [
         4.0, 5.0, 6.0,

@@ -687,11 +687,3 @@ class ProfileSelectionDialog(QDialog):
     def profile_name(self) -> str | None:
         value = self.profiles.currentData()
         return None if value is None else str(value)
-
-
-def select_execution_profile(parent: QWidget | None = None) -> str | None:
-    """Return the selected profile name, or ``None`` if cancelled/automatic."""
-    dialog = ProfileSelectionDialog(parent)
-    if dialog.exec() != QDialog.DialogCode.Accepted:
-        return None
-    return dialog.profile_name()

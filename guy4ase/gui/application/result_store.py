@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_artifacts import (
@@ -105,7 +105,7 @@ class ResultRecord:
 
 
 class ResultStore:
-    """Own exact provenance independently of its user-facing tree projection."""
+    """Own exact result provenance and its queryable state graph."""
 
     def __init__(self) -> None:
         self._next_structure_id = 1
@@ -118,7 +118,6 @@ class ResultStore:
         self._state_children: dict[int, list[int]] = {}
         self._result_ids_by_state: dict[int, list[int]] = {}
         self._unstructured_result_ids: list[int] = []
-        self._structure_branches: dict[int, list[int]] = {}
         self._imported_result_ids_by_directory: dict[str | None, list[int]] = {}
 
     def __len__(self) -> int:
@@ -126,20 +125,6 @@ class ResultStore:
 
     def __bool__(self) -> bool:
         return bool(self._results)
-
-    def __iter__(self) -> Iterator[ResultRecord]:
-        return iter(self.results)
-
-    def __getitem__(self, index):
-        return self.results[index]
-
-    @property
-    def results(self) -> tuple[ResultRecord, ...]:
-        """Return results newest first."""
-        return tuple(
-            self._results[result_id]
-            for result_id in sorted(self._results, reverse=True)
-        )
 
     @property
     def structures(self) -> tuple[StructureRecord, ...]:
@@ -185,7 +170,8 @@ class ResultStore:
         self, artifact: ResultArtifactVersion
     ) -> Any | None:
         """Return the known result value that owns the file currently at this path."""
-        for record in self.results:
+        for result_id in sorted(self._results, reverse=True):
+            record = self._results[result_id]
             for name, candidate in record.artifacts.items():
                 if candidate.path != artifact.path:
                     continue
@@ -224,45 +210,6 @@ class ResultStore:
             return None
         source_id = self.state(state_id).potential_source_result_id
         return self._results.get(source_id) if source_id is not None else None
-
-    def branch_id_for_result(self, record: ResultRecord) -> int | None:
-        state = self.state_for_result(record)
-        return state.branch_id if state is not None else None
-
-    def branch_ids(self, structure_id: int) -> tuple[int, ...]:
-        """Return branches which currently contain at least one native result."""
-        used = {
-            branch_id
-            for record in self._results.values()
-            if record.structure_id == structure_id and not record.imported
-            for branch_id in (self.branch_id_for_result(record),)
-            if branch_id is not None
-        }
-        return tuple(
-            branch_id
-            for branch_id in self._structure_branches.get(structure_id, ())
-            if branch_id in used
-        )
-
-    def branch_number(self, structure_id: int, branch_id: int) -> int:
-        return self._structure_branches[structure_id].index(branch_id) + 1
-
-    def results_in_branch(
-        self, structure_id: int, branch_id: int
-    ) -> tuple[ResultRecord, ...]:
-        """Return one branch in calculation order."""
-        return tuple(
-            sorted(
-                (
-                    record
-                    for record in self._results.values()
-                    if record.structure_id == structure_id
-                    and not record.imported
-                    and self.branch_id_for_result(record) == branch_id
-                ),
-                key=lambda record: record.id,
-            )
-        )
 
     def results_for_state(self, state_id: int) -> tuple[ResultRecord, ...]:
         return tuple(
@@ -306,7 +253,7 @@ class ResultStore:
         self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
         self._structures[structure_id] = StructureRecord(structure_id, formula)
-        branch_id = self._allocate_branch(structure_id)
+        branch_id = self._allocate_branch()
         snapshot = (
             StructureSnapshot.capture(atoms)
             if _snapshot_needed(resolved_version)
@@ -382,7 +329,7 @@ class ResultStore:
             for child_id in self._state_children.get(parent_id, ())
         )
         branch_id = (
-            self._allocate_branch(parent.structure_id)
+            self._allocate_branch()
             if new_branch or same_branch_child_exists
             else parent.branch_id
         )
@@ -554,19 +501,9 @@ class ResultStore:
             imported=True,
         )
 
-    def branch_path(self, record: ResultRecord) -> tuple[int, ...]:
-        if record.structure_id is None:
-            return ()
-        branch_id = self.branch_id_for_result(record)
-        branches = self.branch_ids(record.structure_id)
-        if branch_id is None or len(branches) <= 1:
-            return ()
-        return (self.branch_number(record.structure_id, branch_id),)
-
-    def _allocate_branch(self, structure_id: int) -> int:
+    def _allocate_branch(self) -> int:
         branch_id = self._next_branch_id
         self._next_branch_id += 1
-        self._structure_branches.setdefault(structure_id, []).append(branch_id)
         return branch_id
 
     def _new_state(

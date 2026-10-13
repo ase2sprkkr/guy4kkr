@@ -36,15 +36,18 @@ class _FileValue:
         return f"{self._context}:{self._path.read_text()}"
 
 
-def _add_result(store: ResultStore, path: Path, context: str):
-    if not store.structures:
+def _add_result(
+    store: ResultStore,
+    path: Path,
+    context: str,
+    state_id: int | None = None,
+):
+    if state_id is None:
         structure_id, state_id = store.new_structure_state(
             Atoms("Fe"), potential_path=None
         )
     else:
-        structure_id = store.structures[0].id
-        state_id = store.results[-1].input_state_id
-        assert state_id is not None
+        structure_id = store.state(state_id).structure_id
 
     value = _FileValue(path, context)
     result = SimpleNamespace(
@@ -100,7 +103,13 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     assert widget._artifact_warning.isHidden()
 
     path.write_text("new current contents")
-    new_record, new_value = _add_result(store, path, "new")
+    assert old_record.input_state_id is not None
+    new_record, new_value = _add_result(
+        store,
+        path,
+        "new",
+        old_record.input_state_id,
+    )
     assert new_record.artifacts["dos"].state() is ArtifactState.CURRENT
     assert store.current_value_for_artifact(old_record.artifacts["dos"]) is new_value
     assert new_value is not old_value

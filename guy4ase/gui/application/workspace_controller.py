@@ -153,11 +153,6 @@ class WorkspaceController(QObject):
         return record.result if record is not None else None
 
     @property
-    def result_history(self) -> tuple[ResultRecord, ...]:
-        """Compatibility view; presentation should use ``result_store``."""
-        return self._results.results
-
-    @property
     def result_store(self) -> ResultStore:
         return self._results
 

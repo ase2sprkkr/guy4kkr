@@ -17,7 +17,6 @@ from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application import result_loading as result_loading_module
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import (
     LoadedResult,
@@ -113,7 +112,7 @@ def test_workspace_controller_owns_draft_mutations_and_result_notifications():
     controller.change_directory("calculation")
     controller.replace_structure(atoms, potential_path="Fe.pot")
     controller.replace_input_parameters(parameters)
-    controller.adopt_external_result(
+    adoption = controller.adopt_external_result(
         LoadedResult(
             result=result,
             output_path=None,
@@ -123,12 +122,14 @@ def test_workspace_controller_owns_draft_mutations_and_result_notifications():
             directory=None,
         )
     )
+    record = adoption.record
+    assert record is not None
 
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
     assert workspace.potential_path == "Fe.pot"
-    assert controller.result_history[0].result is result
+    assert record.result is result
     assert changes == [
         ("directory", "calculation"),
         ("structure", atoms),
@@ -141,7 +142,7 @@ def test_workspace_controller_owns_draft_mutations_and_result_notifications():
     assert workspace.input_parameters is None
     assert workspace.directory is None
     assert workspace.potential_path is None
-    assert controller.result_history[0].result is result
+    assert controller.result_store.result(record.id).result is result
     assert changes[-3:] == [
         ("structure", None),
         ("input", None),
@@ -149,7 +150,7 @@ def test_workspace_controller_owns_draft_mutations_and_result_notifications():
     ]
 
 
-def test_replacing_structure_preserves_result_history_and_drops_potential_source():
+def test_replacing_structure_preserves_results_and_drops_potential_source():
     old_atoms = Atoms("Fe")
     new_atoms = Atoms("Cu")
     parameters = object()
@@ -161,9 +162,11 @@ def test_replacing_structure_preserves_result_history_and_drops_potential_source
     )
     controller = WorkspaceController(workspace)
     result = object()
-    controller.adopt_external_result(
+    adoption = controller.adopt_external_result(
         LoadedResult(result, None, None, None, None, None)
     )
+    record = adoption.record
+    assert record is not None
     results = []
     controller.resultChanged.connect(results.append)
 
@@ -173,7 +176,7 @@ def test_replacing_structure_preserves_result_history_and_drops_potential_source
     assert workspace.potential_path is None
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
-    assert controller.result_history[0].result is result
+    assert controller.result_store.result(record.id).result is result
     assert results == []
 
 
@@ -188,9 +191,11 @@ def test_replacing_input_parameters_preserves_results():
     )
     controller = WorkspaceController(workspace)
     result = object()
-    controller.adopt_external_result(
+    adoption = controller.adopt_external_result(
         LoadedResult(result, None, None, None, None, None)
     )
+    record = adoption.record
+    assert record is not None
     directories = []
     controller.directoryChanged.connect(directories.append)
 
@@ -200,7 +205,7 @@ def test_replacing_input_parameters_preserves_results():
     assert workspace.potential_path == "Fe.pot"
     assert workspace.input_parameters is parameters
     assert workspace.directory == "calculation"
-    assert controller.result_history[0].result is result
+    assert controller.result_store.result(record.id).result is result
     assert directories == []
 
 
@@ -208,9 +213,11 @@ def test_changing_directory_preserves_results_and_same_directory_is_noop():
     workspace = WorkspaceState(directory="first")
     controller = WorkspaceController(workspace)
     result = object()
-    controller.adopt_external_result(
+    adoption = controller.adopt_external_result(
         LoadedResult(result, None, None, None, None, None)
     )
+    record = adoption.record
+    assert record is not None
     results = []
     directories = []
     controller.resultChanged.connect(results.append)
@@ -220,7 +227,7 @@ def test_changing_directory_preserves_results_and_same_directory_is_noop():
     controller.change_directory("next")
 
     assert workspace.directory == "next"
-    assert controller.result_history[0].result is result
+    assert controller.result_store.result(record.id).result is result
     assert controller.generation == generation.next_major()
     assert results == []
     assert directories == ["next"]
@@ -714,7 +721,8 @@ def test_external_result_without_potential_does_not_replace_workspace(
     assert adoption.output_path == output.resolve()
     assert adoption.potential_path is None
     assert adoption.potential_error is None
-    assert controller.result_history[0].result is result
+    assert adoption.record is not None
+    assert adoption.record.result is result
     assert workspace.atoms is original_atoms
     assert workspace.input_parameters is original_parameters
     assert workspace.potential_path == "Fe.pot"
@@ -750,7 +758,8 @@ def test_external_result_with_unreadable_potential_does_not_replace_workspace(
 
     assert adoption.potential_path == potential.resolve()
     assert adoption.potential_error is error
-    assert controller.result_history[0].result is result
+    assert adoption.record is not None
+    assert adoption.record.result is result
     assert workspace.atoms is original_atoms
     assert workspace.potential_path == "Cu.pot"
 
@@ -788,8 +797,9 @@ def test_external_result_with_potential_is_recorded_without_replacing_workspace(
     adoption = controller.adopt_external_result(loaded)
 
     assert adoption.potential_error is None
-    assert controller.result_history[0].result is result
-    assert controller.result_history[0].output_state_id is not None
+    assert adoption.record is not None
+    assert adoption.record.result is result
+    assert adoption.record.output_state_id is not None
     assert workspace.atoms is original_atoms
     assert workspace.input_parameters is original_parameters
     assert workspace.potential_path == "Cu.pot"
@@ -836,7 +846,7 @@ def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
     assert workspace.input_parameters is parameters
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
-    assert controller.result_history == ()
+    assert not controller.result_store
     assert signals == []
 
 
@@ -873,7 +883,7 @@ def test_result_artifact_resolution_failure_leaves_workspace_unchanged(
     assert workspace.atoms is atoms
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
-    assert controller.result_history == ()
+    assert not controller.result_store
 
 
 def test_result_loading_has_no_workspace_side_effects(tmp_path, monkeypatch):
@@ -944,7 +954,8 @@ def test_missing_referenced_potential_is_an_explicit_nonfatal_failure(
 
     assert adoption.potential_path == missing.resolve()
     assert isinstance(adoption.potential_error, FileNotFoundError)
-    assert controller.result_history[0].result is result
+    assert adoption.record is not None
+    assert adoption.record.result is result
     assert workspace.atoms is original_atoms
     assert workspace.potential_path == "Cu.pot"
 
@@ -985,9 +996,9 @@ def test_successful_external_result_load_only_publishes_result_signal(tmp_path):
     assert controller.generation == generation
     assert workspace.atoms is original_atoms
     assert workspace.potential_path == "Cu.pot"
-    record = controller.result_history[0]
-    assert record.result is result
-    assert record.output_state_id is not None
+    assert adoption.record is not None
+    assert adoption.record.result is result
+    assert adoption.record.output_state_id is not None
 
 
 def test_successful_file_flow_updates_history(tmp_path, monkeypatch):
@@ -1108,8 +1119,8 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
     application = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
         calculation_flow.SprkkrRunWindow,
-        "_start",
-        lambda self, inputs: None,
+        "_start_worker",
+        lambda self: None,
     )
     parent = QWidget()
     controller = WorkspaceController(
@@ -1120,10 +1131,9 @@ def test_run_window_lifetime_is_owned_by_its_qt_parent(tmp_path, monkeypatch):
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = ActiveRunRegistry()
 
     window = calculation_flow.run_calculation(
-        controller, history, active_runs, parent
+        controller, history, parent, select_profile=False
     )
     assert window is not None
     assert window.parent() is parent
@@ -1145,8 +1155,8 @@ def test_calculation_flow_records_result_and_remembers_output(
     _application = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
         calculation_flow.SprkkrRunWindow,
-        "_start",
-        lambda self, inputs: None,
+        "_start_worker",
+        lambda self: None,
     )
     output = tmp_path / "Fe.out"
     result = object()
@@ -1165,11 +1175,10 @@ def test_calculation_flow_records_result_and_remembers_output(
         or ResultAdoption(output_path=output),
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = ActiveRunRegistry()
     parent = QWidget()
 
     window = calculation_flow.run_calculation(
-        controller, history, active_runs, parent
+        controller, history, parent, select_profile=False
     )
     window._on_finished(result)
 
@@ -1185,8 +1194,8 @@ def test_calculation_flow_does_not_hide_controller_adoption_errors(
     _application = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
         calculation_flow.SprkkrRunWindow,
-        "_start",
-        lambda self, inputs: None,
+        "_start_worker",
+        lambda self: None,
     )
     controller = WorkspaceController(
         WorkspaceState(
@@ -1204,7 +1213,7 @@ def test_calculation_flow_does_not_hide_controller_adoption_errors(
     history = RecentFiles(tmp_path / "recent.json")
     parent = QWidget()
     window = calculation_flow.run_calculation(
-        controller, history, ActiveRunRegistry(), parent
+        controller, history, parent, select_profile=False
     )
 
     with pytest.raises(RuntimeError, match="controller invariant"):

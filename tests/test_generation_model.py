@@ -69,8 +69,9 @@ def test_result_publication_does_not_advance_workspace_generation(tmp_path):
     )
 
     assert not adoption.workspace_updated
+    assert adoption.record is not None
     assert controller.generation == generation
-    assert controller.result_history[0].result is result
+    assert adoption.record.result is result
 
 
 def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_path):
@@ -81,14 +82,16 @@ def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_p
     first = SimpleNamespace(task_name="DOS")
     second = SimpleNamespace(task_name="BSF")
 
-    controller.adopt_calculation_result(_loaded(first), request=request_a)
-    controller.adopt_calculation_result(_loaded(second), request=request_b)
+    first_adoption = controller.adopt_calculation_result(_loaded(first), request=request_a)
+    second_adoption = controller.adopt_calculation_result(_loaded(second), request=request_b)
 
     assert controller.generation == generation
-    assert tuple(record.result for record in controller.result_history[:2]) == (
-        second,
-        first,
-    )
+    assert first_adoption.record is not None
+    assert second_adoption.record is not None
+    assert tuple(
+        record.result
+        for record in controller.result_store.results_for_state(request_a.state_id)
+    ) == (first, second)
 
 
 def test_result_completion_does_not_stale_pending_draft_operation(tmp_path):
@@ -131,6 +134,7 @@ def test_structure_change_does_not_reject_completed_job_from_history(tmp_path):
     adoption = controller.adopt_calculation_result(_loaded(result), request=request)
 
     assert not adoption.workspace_updated
-    assert controller.result_history[0].result is result
-    assert controller.result_history[0].structure_id == old_structure_id
+    assert adoption.record is not None
+    assert adoption.record.result is result
+    assert adoption.record.structure_id == old_structure_id
     assert controller.atoms.get_chemical_symbols() == ["Cu"]
