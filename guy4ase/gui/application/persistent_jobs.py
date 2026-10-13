@@ -65,6 +65,14 @@ def _is_attachable(record: Any, state: str) -> bool:
     return True
 
 
+def _result_files(record: Any) -> Any | None:
+    """Return result-file metadata, accepting the legacy ``artifacts`` name."""
+    result_files = getattr(record, "result_files", None)
+    if result_files is None:
+        result_files = getattr(record, "artifacts", None)
+    return result_files
+
+
 @dataclass(frozen=True)
 class PersistentJob:
     """Stable presentation model for one persistent ASE2SPRKKR run."""
@@ -79,9 +87,10 @@ class PersistentJob:
     target: str
     return_code: int | None
     message: str | None
-    artifact_state: str | None
+    result_files_state: str | None = None
     finished_at: str | None = None
     attachable: bool = False
+    result_files_verified: bool = False
 
     @property
     def started_at(self) -> str:
@@ -92,11 +101,23 @@ class PersistentJob:
     def is_final(self) -> bool:
         return self.state in _FINAL_STATES
 
+    @property
+    def artifact_state(self) -> str | None:
+        """Compatibility alias for the old GUI-facing name."""
+        return self.result_files_state
+
     @classmethod
-    def from_run_record(cls, record: Any) -> "PersistentJob":
-        artifacts = getattr(record, "artifacts", None)
-        artifact_state = (
-            _value(getattr(artifacts, "state", None)) if artifacts is not None else None
+    def from_run_record(
+        cls,
+        record: Any,
+        *,
+        result_files_verified: bool = False,
+    ) -> "PersistentJob":
+        result_files = _result_files(record)
+        result_files_state = (
+            _value(getattr(result_files, "state", None))
+            if result_files is not None
+            else None
         )
         state = _value(record.state)
         finished_at = getattr(record, "finished_at", None)
@@ -111,9 +132,10 @@ class PersistentJob:
             target=_execution_target(record),
             return_code=getattr(record, "return_code", None),
             message=getattr(record, "message", None),
-            artifact_state=artifact_state or None,
+            result_files_state=result_files_state or None,
             finished_at=None if finished_at is None else str(finished_at),
             attachable=_is_attachable(record, state),
+            result_files_verified=result_files_verified,
         )
 
 
@@ -160,10 +182,20 @@ class PersistentJobSource:
     def supports_attach(self) -> bool:
         return self.available and callable(getattr(self._manager, "attach", None))
 
+    @property
+    def supports_result_file_check(self) -> bool:
+        if not self.available:
+            return False
+        return callable(getattr(self._manager, "check_result_files", None)) or callable(
+            getattr(self._manager, "check_artifacts", None)
+        )
+
     def jobs(self) -> tuple[PersistentJob, ...]:
         if self._manager is None:
             return ()
         records = self._manager.store.runs()
+        # RunStore.runs() is intentionally metadata-only, so freshness has not
+        # been checked merely because a persisted state says "current".
         return tuple(PersistentJob.from_run_record(record) for record in records)
 
     def refresh(self) -> tuple[PersistentJob, ...]:
@@ -173,6 +205,18 @@ class PersistentJobSource:
         if self.supports_refresh:
             self._manager.refresh()
         return self.jobs()
+
+    def check_result_files(self, job_id: str) -> PersistentJob:
+        """Explicitly verify freshness for one persisted final calculation."""
+        if not self.supports_result_file_check:
+            raise NotImplementedError(
+                "This ASE2SPRKKR version cannot verify persistent result files."
+            )
+        checker = getattr(self._manager, "check_result_files", None)
+        if not callable(checker):
+            checker = self._manager.check_artifacts
+        record = checker(job_id)
+        return PersistentJob.from_run_record(record, result_files_verified=True)
 
     def attach(self, job_id: str, *, output_listener=None) -> Any:
         """Reconnect to an active persistent run and replay its output."""
