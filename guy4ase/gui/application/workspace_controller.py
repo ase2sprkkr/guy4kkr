@@ -40,6 +40,10 @@ class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
 
 
+class PotentialVersionChanged(RuntimeError):
+    """The potential file no longer matches the version approved by the user."""
+
+
 @dataclass(frozen=True)
 class CalculationRequest:
     """Launch-time calculation input and assigned provenance identity.
@@ -401,14 +405,18 @@ class WorkspaceController(QObject):
             workspace_updated=workspace_updated,
         )
 
-    def use_result_state(self, result_id: int) -> None:
-        """Activate a result's potential if its file can still reconstruct it.
+    def use_result_state(
+        self,
+        result_id: int,
+        expected_potential: PotentialFileVersion,
+    ) -> None:
+        """Activate exactly the potential file version approved by the user.
 
-        A regular file is fingerprinted immediately before and after parsing.
-        If it changes during that read window, activation is rejected without
-        mutating the workspace or ResultStore. If the stable current version is
-        newer than the historical one, it becomes a fresh structure/state whose
-        provenance is the already verified fingerprint, with no third stat.
+        ``expected_potential`` is the fingerprint used when the UI decided which
+        action text to show. If the path changes before or during parsing, the
+        activation is rejected without mutating the workspace or ResultStore.
+        A newer version can therefore be used only after the UI has rendered and
+        the user has explicitly approved that newer version.
         """
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
@@ -418,44 +426,34 @@ class WorkspaceController(QObject):
         potential = state.potential
         if potential is None:
             raise ValueError("The selected result has no reusable potential.")
+        if expected_potential.path != potential.path:
+            raise ValueError("The approved potential does not belong to this result.")
 
-        before = potential.current()
-        if before.available:
-            atoms = Potential.from_file(str(before.path)).atoms
-            after = PotentialFileVersion.capture(before.path)
-            if not after.available or after != before:
-                raise RuntimeError(
-                    f"Potential file changed while it was being read: {before.path}"
-                )
+        before = PotentialFileVersion.capture(expected_potential.path)
+        if not before.available or before != expected_potential:
+            raise PotentialVersionChanged(
+                f"Potential file changed after it was presented: {expected_potential.path}"
+            )
 
-            if after == potential:
-                structure_id = state.structure_id
-                target_state_id = state.id
-            else:
-                structure_id, target_state_id = self._results.new_structure_state(
-                    atoms,
-                    potential_path=str(after.path),
-                    potential_version=after,
-                )
-            active_path = str(after.path)
-        elif (
-            not potential.available
-            and state.structure_id == self._workspace.structure_id
-            and self.atoms is not None
-        ):
-            # Compatibility for synthetic/in-memory states whose path never
-            # existed. The GUI never offers this action for an unavailable file.
-            atoms = self.atoms
+        atoms = Potential.from_file(str(expected_potential.path)).atoms
+        after = PotentialFileVersion.capture(expected_potential.path)
+        if not after.available or after != expected_potential:
+            raise PotentialVersionChanged(
+                f"Potential file changed while it was being read: {expected_potential.path}"
+            )
+
+        if expected_potential == potential:
             structure_id = state.structure_id
             target_state_id = state.id
-            active_path = str(potential.path)
         else:
-            raise FileNotFoundError(
-                f"The potential used by this result is no longer available: {potential.path}"
+            structure_id, target_state_id = self._results.new_structure_state(
+                atoms,
+                potential_path=str(expected_potential.path),
+                potential_version=expected_potential,
             )
 
         self._workspace.atoms = atoms
-        self._workspace.potential_path = active_path
+        self._workspace.potential_path = str(expected_potential.path)
         self._workspace.structure_id = structure_id
         self._workspace.state_id = target_state_id
         self._workspace.empty_spheres = None
