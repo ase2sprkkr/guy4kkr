@@ -8,8 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-
-FileFingerprint = tuple[int, int, int, int, int, int]
+from ase2sprkkr.common.file_fingerprints import FileFingerprint, file_fingerprint
 
 
 class ArtifactState(Enum):
@@ -19,18 +18,6 @@ class ArtifactState(Enum):
     OVERWRITTEN = "overwritten"
     MISSING = "missing"
     UNAVAILABLE = "unavailable"
-
-
-def _file_fingerprint(path: Path) -> FileFingerprint:
-    info = path.stat()
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_mode,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
 
 
 @dataclass(frozen=True)
@@ -44,14 +31,14 @@ class ResultArtifactVersion:
     def capture(cls, path: str | Path) -> ResultArtifactVersion:
         resolved = Path(path).expanduser().resolve()
         try:
-            fingerprint = _file_fingerprint(resolved)
+            fingerprint = file_fingerprint(resolved)
         except OSError:
             fingerprint = None
         return cls(path=resolved, fingerprint=fingerprint)
 
     def state(self) -> ArtifactState:
         try:
-            current = _file_fingerprint(self.path)
+            current = file_fingerprint(self.path)
         except FileNotFoundError:
             return ArtifactState.MISSING
         except OSError:
