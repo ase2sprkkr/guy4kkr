@@ -12,12 +12,13 @@ class _State(str, Enum):
     FINISHED = "finished"
 
 
-def _record(*, state=_State.RUNNING, endpoint=None, reference=None):
+def _record(*, state=_State.RUNNING, endpoint=None, reference=None, finished_at=None):
     return SimpleNamespace(
         id="1234567890abcdef",
         state=state,
         created_at="2026-10-13T06:00:00+00:00",
         updated_at="2026-10-13T06:30:00+00:00",
+        finished_at=finished_at,
         task="dos",
         directory="/tmp/calc",
         dataset="Fe-DOS",
@@ -44,8 +45,22 @@ def test_persistent_job_maps_endpoint_metadata():
     assert job.task == "DOS"
     assert job.target == "SSH · cluster.example · PSI/J slurm"
     assert job.artifact_state == "current"
+    assert job.finished_at is None
     assert not job.is_final
     assert not job.attachable
+
+
+def test_persistent_job_maps_stable_finished_at_independently_of_updated_at():
+    record = _record(
+        state=_State.FINISHED,
+        finished_at="2026-10-13T06:20:00+00:00",
+    )
+    record.updated_at = "2026-10-13T08:45:00+00:00"
+
+    job = PersistentJob.from_run_record(record)
+
+    assert job.finished_at == "2026-10-13T06:20:00+00:00"
+    assert job.updated_at == "2026-10-13T08:45:00+00:00"
 
 
 def test_active_reconnectable_job_is_attachable():

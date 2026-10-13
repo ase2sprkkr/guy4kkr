@@ -31,7 +31,9 @@ from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 _JOB_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 
 
-def _local_datetime(value: str) -> datetime | None:
+def _local_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
@@ -41,7 +43,9 @@ def _local_datetime(value: str) -> datetime | None:
     return parsed
 
 
-def _timestamp_label(value: str) -> str:
+def _timestamp_label(value: str | None) -> str:
+    if value is None:
+        return "—"
     parsed = _local_datetime(value)
     return parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed is not None else value
 
@@ -51,12 +55,20 @@ def _started_date(job: PersistentJob) -> str:
     return parsed.strftime("%Y-%m-%d") if parsed is not None else "Unknown date"
 
 
+def _finished_date(job: PersistentJob) -> str:
+    if job.finished_at is None:
+        return "Not finished"
+    parsed = _local_datetime(job.finished_at)
+    return parsed.strftime("%Y-%m-%d") if parsed is not None else "Unknown date"
+
+
 def _status_label(state: str) -> str:
     return state.replace("_", " ").title() or "Unknown"
 
 
 _GROUPS: tuple[tuple[str, Callable[[PersistentJob], str]], ...] = (
     ("Started date", _started_date),
+    ("Finished date", _finished_date),
     ("Status", lambda job: _status_label(job.state)),
     ("Task", lambda job: job.task or "Unknown task"),
     ("Execution target", lambda job: job.target),
@@ -110,13 +122,13 @@ class CalculationHistoryDialog(QDialog):
         root.addWidget(splitter, 1)
 
         self.tree = QTreeWidget(splitter)
-        self.tree.setColumnCount(5)
-        self.tree.setHeaderLabels(("Job", "Status", "Started", "Task", "Target"))
+        self.tree.setColumnCount(6)
+        self.tree.setHeaderLabels(("Job", "Status", "Started", "Finished", "Task", "Target"))
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         header = self.tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in range(1, 5):
+        for column in range(1, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemDoubleClicked.connect(self._item_double_clicked)
@@ -138,6 +150,7 @@ class CalculationHistoryDialog(QDialog):
         self.directory_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.dataset_value = QLabel("—", details)
         self.started_value = QLabel("—", details)
+        self.finished_value = QLabel("—", details)
         self.updated_value = QLabel("—", details)
         self.return_code_value = QLabel("—", details)
         self.artifacts_value = QLabel("—", details)
@@ -148,6 +161,7 @@ class CalculationHistoryDialog(QDialog):
             ("Directory", self.directory_value),
             ("Dataset", self.dataset_value),
             ("Started", self.started_value),
+            ("Finished", self.finished_value),
             ("Last update", self.updated_value),
             ("Return code", self.return_code_value),
             ("Artifacts", self.artifacts_value),
@@ -234,6 +248,7 @@ class CalculationHistoryDialog(QDialog):
                         title,
                         _status_label(job.state),
                         _timestamp_label(job.started_at),
+                        _timestamp_label(job.finished_at),
                         job.task,
                         job.target,
                     ]
@@ -287,6 +302,7 @@ class CalculationHistoryDialog(QDialog):
                 self.directory_value,
                 self.dataset_value,
                 self.started_value,
+                self.finished_value,
                 self.updated_value,
                 self.return_code_value,
                 self.artifacts_value,
@@ -306,6 +322,7 @@ class CalculationHistoryDialog(QDialog):
         self.directory_value.setToolTip(job.directory or "")
         self.dataset_value.setText(job.dataset or "—")
         self.started_value.setText(_timestamp_label(job.started_at))
+        self.finished_value.setText(_timestamp_label(job.finished_at))
         self.updated_value.setText(_timestamp_label(job.updated_at))
         self.return_code_value.setText(
             "—" if job.return_code is None else str(job.return_code)

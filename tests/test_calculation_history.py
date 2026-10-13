@@ -18,6 +18,7 @@ def _job(
     task: str,
     dataset: str,
     created_at: str,
+    finished_at: str | None = None,
     target: str = "SSH · cluster",
     attachable: bool | None = None,
 ) -> PersistentJob:
@@ -28,6 +29,7 @@ def _job(
         state=state,
         created_at=created_at,
         updated_at=created_at,
+        finished_at=finished_at,
         task=task,
         directory=f"/tmp/{job_id}",
         dataset=dataset,
@@ -80,6 +82,7 @@ def test_history_groups_jobs_and_shows_selected_metadata():
                 task="DOS",
                 dataset="Fe-DOS",
                 created_at="2026-10-12T08:00:00+00:00",
+                finished_at="2026-10-12T08:45:00+00:00",
             ),
         )
     )
@@ -89,25 +92,32 @@ def test_history_groups_jobs_and_shows_selected_metadata():
     assert dialog.windowTitle() == "Calculation Jobs"
     assert [dialog.group_by.itemText(i) for i in range(dialog.group_by.count())] == [
         "Started date",
+        "Finished date",
         "Status",
         "Task",
         "Execution target",
     ]
     assert dialog.tree.headerItem().text(2) == "Started"
+    assert dialog.tree.headerItem().text(3) == "Finished"
     assert dialog.tree.topLevelItem(0).text(0) == "2026-10-13"
     assert dialog.detail_title.text() == "Fe-SCF"
     assert dialog.status_value.text() == "Running"
     assert dialog.started_value.text() == "2026-10-13 10:00:00"
+    assert dialog.finished_value.text() == "—"
     assert dialog.result_widget._history_button is None
     assert not dialog.monitor_button.isHidden()
     assert dialog.load_result_button.isHidden()
+
+    dialog.group_by.setCurrentText("Finished date")
+    assert dialog.tree.topLevelItem(0).text(0) == "Not finished"
+    assert dialog.tree.topLevelItem(1).text(0) == "2026-10-12"
 
     dialog.group_by.setCurrentText("Task")
     assert dialog.tree.topLevelItem(0).text(0) == "SCF"
     dialog.close()
 
 
-def test_finished_job_can_load_historical_result():
+def test_finished_job_shows_stable_finished_time_and_can_load_result():
     _application = QApplication.instance() or QApplication([])
     job = _job(
         "finished-dos",
@@ -115,10 +125,13 @@ def test_finished_job_can_load_historical_result():
         task="DOS",
         dataset="Fe-DOS",
         created_at="2026-10-13T08:00:00+00:00",
+        finished_at="2026-10-13T08:37:00+00:00",
     )
     source = _Source((job,))
     dialog = CalculationHistoryDialog(source=source)
 
+    assert dialog.finished_value.text() == "2026-10-13 10:37:00"
+    assert dialog.tree.topLevelItem(0).child(0).text(3) == "2026-10-13 10:37:00"
     assert dialog.monitor_button.isHidden()
     assert not dialog.load_result_button.isHidden()
     dialog._load_selected_result()

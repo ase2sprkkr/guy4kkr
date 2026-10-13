@@ -80,6 +80,7 @@ class PersistentJob:
     return_code: int | None
     message: str | None
     artifact_state: str | None
+    finished_at: str | None = None
     attachable: bool = False
 
     @property
@@ -98,6 +99,7 @@ class PersistentJob:
             _value(getattr(artifacts, "state", None)) if artifacts is not None else None
         )
         state = _value(record.state)
+        finished_at = getattr(record, "finished_at", None)
         return cls(
             id=str(record.id),
             state=state,
@@ -110,6 +112,7 @@ class PersistentJob:
             return_code=getattr(record, "return_code", None),
             message=getattr(record, "message", None),
             artifact_state=artifact_state or None,
+            finished_at=None if finished_at is None else str(finished_at),
             attachable=_is_attachable(record, state),
         )
 
