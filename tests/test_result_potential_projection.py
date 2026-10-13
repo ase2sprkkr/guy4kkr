@@ -116,7 +116,9 @@ def test_explicit_potential_replacement_does_not_inherit_old_source():
         potential_path="external.pot",
     )
 
-    assert store.state(replacement).potential_path == "external.pot"
+    assert store.state(replacement).potential_path == str(
+        Path("external.pot").expanduser().absolute()
+    )
     assert store.potential_source_result(replacement) is None
 
 
