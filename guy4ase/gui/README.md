@@ -26,17 +26,17 @@
   primary/secondary action states. Semantic colors and layout remain with the
   window or task that owns their meaning; this is intentionally not a theme
   manager.
-- `application`: shared observable/document state, kept separate from windows
-  and reusable widgets. `application.workspace.WorkspaceState` is the
-  Qt-independent current document. `WorkspaceController` is not a bag of
-  setters: it is the single mutation/signalling boundary and owns semantic
-  document transitions and result adoption. Concrete file actions call public
-  ASE/ASE2SPRKKR APIs directly in their owning flow; `result_loading` provides
-  reusable functions for result-artifact interpretation. The controller
-  guarantees consistency between structure, calculation setup, potential
-  provenance and the current result. `RecentFiles` is observable persistent
-  application state. None of these objects knows file choosers, messages or
-  concrete windows.
+- `application`: shared observable state, kept separate from windows and
+  reusable widgets. `application.workspace.WorkspaceState` is the
+  Qt-independent draft for the next calculation. `WorkspaceController` is the
+  single mutation/signalling boundary for that draft and owns the transitions
+  between the draft and explicitly selected historical calculation states.
+  `application.result_store.ResultStore` independently owns completed-result
+  provenance as a structure/lineage/state tree. Concrete file actions call
+  public ASE/ASE2SPRKKR APIs directly in their owning flow;
+  `result_loading` provides reusable functions for result-artifact
+  interpretation. `RecentFiles` is observable persistent application state.
+  None of these objects knows file choosers, messages or concrete windows.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. `structures`, `files` and `calculation` are modules of ordinary
   functions, not service objects. They may show modal UI and publish changes
@@ -56,25 +56,53 @@ Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat
 module paths and `calculation_setup` package have no compatibility wrappers.
 
-### Workspace lifecycle
+### Workspace and result lifecycle
 
-Windows and flows use named `WorkspaceController` transitions rather than
-assigning workspace facets independently. `replace_structure()` invalidates the
-current result and drops potential provenance unless a new source is explicit;
-`replace_input_parameters()` invalidates the result while retaining structure.
-File-loading transitions also select the source file's directory.
+The workspace and completed results have deliberately different ownership.
+`WorkspaceState` contains only the structure, potential, input parameters and
+working directory that would be used for the next calculation. Editing those
+values never deletes or marks historical results stale. A concrete calculable
+state is identified by a result-store state and contains the matching atoms and
+potential together; switching to a different historical structure therefore
+also switches to the potential belonging to that state.
+
+`ResultStore` is not a chronological history list. It stores physical-structure
+groups, internal calculation lineages, concrete structure/potential states and
+the results attached to those states. IDs are assigned identities and are never
+inferred from file contents. The exact state graph is provenance, not the GUI
+hierarchy. Native results are projected as a deliberately flatter tree:
+SCF and Empty Spheres operations are siblings below the physical structure,
+while DOS, BSF and other potential-dependent results are children of the SCF
+result that produced the potential they actually used. There are no user-facing
+lineage or `Potential N` nodes.
+
+Potential provenance is explicit on calculation states. An operation that keeps
+a potential keeps its SCF source; an operation such as Empty Spheres that
+invalidates the potential clears that source. Views therefore never infer a
+potential source merely by walking state ancestors.
+
+A launched calculation captures a `CalculationRequest`. When it finishes,
+`WorkspaceController.record_finished_calculation()` requires that exact request
+and always records the result against its launch structure/state. An SCF result
+may fast-forward the workspace to its output potential only if the request's
+input state is still the active workspace state. A later result from an older
+state is recorded in its original lineage but never reactivates itself.
+`Use for New Calculation` creates a new lineage and is therefore a write
+barrier for already running calculations.
+
+Outputs opened from disk take the separate `adopt_external_result()` path. An
+imported output is recorded without implicitly replacing the workspace and is
+grouped under its source directory in the result view. Imported files do not
+have an invented SCF lineage. If an imported SCF state is explicitly activated
+and a later Guy4ASE calculation uses that potential, the dependent result stays
+nested below that imported SCF in the directory branch. Views may explicitly
+activate a historical state afterwards.
 
 File flows load or parse each document once, then use Qt waiting only around a
-short revision-sensitive controller transition. `adopt_external_result()`
-installs an output opened by the user. Its atoms and potential source therefore
-come only from that result; if its potential is missing or unreadable, old
-unrelated atoms are cleared. Existing input parameters may remain as an
-independent editable setup, but are not considered the provenance of the
-external result. In contrast, `adopt_calculation_result()` accepts a loaded
-result just produced from the current workspace. If no converged potential can
-be read, the current atoms and their potential provenance remain valid. Both
-operations return `ResultAdoption`; views decide how to present its non-fatal
-potential error.
+short revision-sensitive draft transition. Structure and input-file loading
+change only the workspace draft. `Generation` is a monotonic workspace revision
+used to reject delayed draft callbacks; calculation completion is not rejected
+by a later workspace revision.
 
 ## Parameter editing
 

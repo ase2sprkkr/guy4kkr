@@ -6,7 +6,6 @@ import pytest
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -68,12 +67,12 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         calculation_flow.run_calculation(
             controller,
             RecentFiles(),
-            ActiveRunRegistry(),
             None,
+            select_profile=False,
         )
 
 
-def test_run_calculation_does_not_hide_result_adoption_errors(
+def test_run_calculation_does_not_hide_result_recording_errors(
     tmp_path, monkeypatch
 ):
     _application = QApplication.instance() or QApplication([])
@@ -90,26 +89,26 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
         lambda _window, _request: None,
     )
 
-    def broken_adoption(_loaded, *, request):
+    def broken_recording(_loaded, *, request):
         assert request.structure_id == controller.structure_id
         assert request.state_id == controller.state_id
-        raise RuntimeError("broken adoption invariant")
+        raise RuntimeError("broken recording invariant")
 
     monkeypatch.setattr(
         controller,
-        "adopt_calculation_result",
-        broken_adoption,
+        "record_finished_calculation",
+        broken_recording,
     )
 
     window = calculation_flow.run_calculation(
         controller,
         RecentFiles(),
-        ActiveRunRegistry(),
         None,
+        select_profile=False,
     )
     assert window is not None
 
-    with pytest.raises(RuntimeError, match="broken adoption invariant"):
+    with pytest.raises(RuntimeError, match="broken recording invariant"):
         window._finished_callback(object())
 
     window.close()
@@ -119,7 +118,7 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     tmp_path, monkeypatch
 ):
     _application = QApplication.instance() or QApplication([])
-    backend_result = object()
+    backend_result = SimpleNamespace(task_name="DOS")
     output_path = tmp_path / "Fe.out"
     loaded = LoadedResult(
         result=backend_result,
@@ -137,7 +136,6 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = ActiveRunRegistry()
 
     def capture_start(window, request):
         window._test_request = request
@@ -164,8 +162,8 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     window = calculation_flow.run_calculation(
         controller,
         history,
-        active_runs,
         None,
+        select_profile=False,
     )
     assert window is not None
 
@@ -176,8 +174,10 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
 
     assert load_calls == [(backend_result, str(tmp_path))]
     assert controller.result is backend_result
-    assert len(controller.result_history) == 1
-    record = controller.result_history[0]
+    record = controller.result_store.latest_result_for_state(
+        window._test_request.state_id
+    )
+    assert record is not None
     assert record.result is backend_result
     assert record.input_state_id == window._test_request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)

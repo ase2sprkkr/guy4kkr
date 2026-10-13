@@ -32,6 +32,7 @@ def _loaded(
     atoms=None,
     potential_path: str | Path | None = None,
     input_parameters=None,
+    directory: str | None = None,
 ):
     return LoadedResult(
         result=result,
@@ -39,7 +40,7 @@ def _loaded(
         potential_path=Path(potential_path) if potential_path is not None else None,
         atoms=atoms,
         potential_error=None,
-        directory=None,
+        directory=directory,
         input_parameters=input_parameters,
     )
 
@@ -55,21 +56,26 @@ def _controller(tmp_path, atoms=None, potential_path=None):
     )
 
 
-def _results(history):
-    return tuple(record.result for record in history)
+def _single_lineage_results(controller: WorkspaceController):
+    store = controller.result_store
+    structure_id = store.structures[0].id
+    lineage_ids = store.lineage_ids(structure_id)
+    assert len(lineage_ids) == 1
+    return store.results_in_lineage(structure_id, lineage_ids[0])
 
 
-def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
+def test_result_tree_is_independent_and_not_bounded_to_ten(tmp_path):
     controller = _controller(tmp_path)
     results = [SimpleNamespace(task_name="dos") for _ in range(12)]
 
     for result in results:
         request = controller.create_calculation_request()
-        adoption = controller.adopt_calculation_result(_loaded(result), request=request)
+        adoption = controller.record_finished_calculation(_loaded(result), request=request)
         assert not adoption.workspace_updated
 
-    assert _results(controller.result_history) == tuple(reversed(results))
-    assert len(controller.result_history) == 12
+    records = _single_lineage_results(controller)
+    assert tuple(record.result for record in records) == tuple(results)
+    assert len(controller.result_store) == 12
 
 
 def test_input_and_structure_changes_do_not_delete_results(tmp_path):
@@ -77,13 +83,14 @@ def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     first_structure_id = controller.structure_id
     result = SimpleNamespace(task_name="dos")
     request = controller.create_calculation_request()
-    controller.adopt_calculation_result(_loaded(result), request=request)
+    record = controller.record_finished_calculation(_loaded(result), request=request).record
 
     controller.replace_input_parameters(_Parameters(2))
     controller.replace_structure(Atoms("Ni"))
 
-    assert _results(controller.result_history) == (result,)
-    assert controller.result_history[0].structure_id == first_structure_id
+    assert record is not None
+    assert controller.result_store.result(record.id).result is result
+    assert record.structure_id == first_structure_id
     assert controller.structure_id != first_structure_id
 
 
@@ -100,24 +107,28 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
             atoms=external_atoms,
             potential_path=tmp_path / "external.pot_new",
             input_parameters=_Parameters(7),
+            directory=str(tmp_path),
         )
     )
 
     assert not adoption.workspace_updated
     assert controller.atoms is original_atoms
     assert controller.state_id == original_state_id
-    assert controller.result_history[0].result is external
-    assert controller.result_history[0].output_state_id is not None
+    assert adoption.record is not None
+    assert adoption.record.result is external
+    assert adoption.record.output_state_id is not None
+    assert adoption.record.imported
+    assert controller.result_store.imported_results(str(tmp_path)) == (adoption.record,)
 
 
-def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_path):
+def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_lineage(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
     request_a = controller.create_calculation_request()
     request_b = controller.create_calculation_request()
 
     result_b = SimpleNamespace(task_name="scf")
     atoms_b = Atoms("Fe")
-    adoption_b = controller.adopt_calculation_result(
+    adoption_b = controller.record_finished_calculation(
         _loaded(result_b, atoms=atoms_b, potential_path=tmp_path / "pb.pot_new"),
         request=request_b,
     )
@@ -127,7 +138,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     request_c = controller.create_calculation_request()
     result_c = SimpleNamespace(task_name="scf")
     atoms_c = Atoms("Fe")
-    adoption_c = controller.adopt_calculation_result(
+    adoption_c = controller.record_finished_calculation(
         _loaded(result_c, atoms=atoms_c, potential_path=tmp_path / "pc.pot_new"),
         request=request_c,
     )
@@ -138,7 +149,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
 
     result_a = SimpleNamespace(task_name="scf")
     atoms_a = Atoms("Fe")
-    adoption_a = controller.adopt_calculation_result(
+    adoption_a = controller.record_finished_calculation(
         _loaded(result_a, atoms=atoms_a, potential_path=tmp_path / "pa.pot_new"),
         request=request_a,
     )
@@ -148,28 +159,29 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     assert controller.atoms is atoms_c
     assert controller.potential_path == str(tmp_path / "pc.pot_new")
     assert controller.result is result_c
-    assert controller.result_store.branch_id_for_result(adoption_b.record) == (
-        controller.result_store.branch_id_for_result(adoption_c.record)
+    store = controller.result_store
+    assert store.lineage_id_for_result(adoption_b.record) == store.lineage_id_for_result(
+        adoption_c.record
     )
-    assert controller.result_store.branch_id_for_result(adoption_a.record) != (
-        controller.result_store.branch_id_for_result(adoption_c.record)
+    assert store.lineage_id_for_result(adoption_a.record) != store.lineage_id_for_result(
+        adoption_c.record
     )
 
 
-def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
+def test_use_for_new_calculation_starts_new_lineage_and_is_write_barrier(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
     old_request = controller.create_calculation_request()
     old_state = controller.state_id
-    old_branch = controller.result_store.state(old_state).branch_id
+    old_lineage = controller.result_store.state(old_state).lineage_id
 
     controller.use_for_new_calculation(expected_generation=controller.generation)
     restart_state = controller.state_id
-    restart_branch = controller.result_store.state(restart_state).branch_id
-    assert restart_branch != old_branch
+    restart_lineage = controller.result_store.state(restart_state).lineage_id
+    assert restart_lineage != old_lineage
     assert controller.potential_path == "p0.pot"
 
     late_result = SimpleNamespace(task_name="scf")
-    late = controller.adopt_calculation_result(
+    late = controller.record_finished_calculation(
         _loaded(late_result, atoms=Atoms("Fe"), potential_path=tmp_path / "old.pot_new"),
         request=old_request,
     )
@@ -178,16 +190,16 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     assert controller.state_id == restart_state
     assert controller.restarted
     assert controller.potential_path == "p0.pot"
-    assert controller.result_store.branch_id_for_result(late.record) == old_branch
+    assert controller.result_store.lineage_id_for_result(late.record) == old_lineage
 
     new_request = controller.create_calculation_request()
     new_result = SimpleNamespace(task_name="scf")
-    new = controller.adopt_calculation_result(
+    new = controller.record_finished_calculation(
         _loaded(new_result, atoms=Atoms("Fe"), potential_path=tmp_path / "new.pot_new"),
         request=new_request,
     )
     assert new.workspace_updated
-    assert controller.result_store.branch_id_for_result(new.record) == restart_branch
+    assert controller.result_store.lineage_id_for_result(new.record) == restart_lineage
 
 
 def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
@@ -197,12 +209,12 @@ def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
     result_a = SimpleNamespace(task_name="scf")
     result_b = SimpleNamespace(task_name="scf")
 
-    a = controller.adopt_calculation_result(
+    a = controller.record_finished_calculation(
         _loaded(result_a, atoms=Atoms("Fe"), potential_path=tmp_path / "pa.pot_new"),
         request=request_a,
     )
     assert a.workspace_updated
-    b = controller.adopt_calculation_result(
+    b = controller.record_finished_calculation(
         _loaded(result_b, atoms=Atoms("Fe"), potential_path=tmp_path / "pb.pot_new"),
         request=request_b,
     )
@@ -230,8 +242,10 @@ def test_empty_spheres_is_result_transition_within_same_structure(tmp_path):
         expected_generation=controller.generation,
     )
 
-    record = controller.result_history[0]
+    records = _single_lineage_results(controller)
+    record = records[-1]
     assert record.result == EmptySpheresResult(found=1)
+    assert record.task_name == "empty_spheres"
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
     assert record.output_state_id == controller.state_id
@@ -250,8 +264,10 @@ def test_empty_spheres_without_structure_change_does_not_change_workspace(tmp_pa
         expected_generation=generation,
     )
 
-    record = controller.result_history[0]
+    records = _single_lineage_results(controller)
+    record = records[-1]
     assert record.result == EmptySpheresResult(found=0)
+    assert record.task_name == "empty_spheres"
     assert record.input_state_id == state_id
     assert record.output_state_id is None
     assert controller.state_id == state_id
@@ -281,6 +297,13 @@ def _ui_result(task, name):
     )
 
 
+def _widget():
+    return ResultActionsWidget(
+        lambda _value, _action: None,
+        show_values_without_actions=True,
+    )
+
+
 def test_result_selector_groups_by_formula_and_switches_displayed_result():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
@@ -303,10 +326,7 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         input_parameters=None,
         directory=None,
     )
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
-    )
+    widget = _widget()
     widget.set_workspace_state(structure_id, state_id)
     widget.set_results(store)
 
@@ -322,44 +342,115 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
     widget.close()
 
 
-def test_result_selector_shows_branch_nodes_only_after_real_fork():
+def test_result_selector_projects_scf_empty_spheres_and_dependent_results():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
-    structure_id, root_state = store.new_structure_state(Atoms("Fe"), potential_path="p0")
+    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
 
-    first = store.add_result(
-        _ui_result("scf", "a"),
+    first_scf = store.add_result(
+        _ui_result("scf", "scf1"),
         structure_id=structure_id,
-        input_state_id=root_state,
+        input_state_id=root,
         atoms=Atoms("Fe"),
-        input_parameters=None,
-        directory=None,
+        input_parameters=object(),
+        directory="run",
         output_atoms=Atoms("Fe"),
-        output_potential_path="pa",
+        output_potential_path="p1",
     )
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
+    first_state = first_scf.output_state_id
+    assert first_state is not None
+    store.add_result(
+        _ui_result("dos", "dos1"),
+        structure_id=structure_id,
+        input_state_id=first_state,
+        atoms=Atoms("Fe"),
+        input_parameters=object(),
+        directory="run",
     )
-    widget.set_results(store)
-    structure = widget._selector.topLevelItem(0)
-    assert structure.childCount() == 1
-    assert not structure.child(0).text(0).startswith("Branch")
+    empty_spheres = store.add_result(
+        EmptySpheresResult(found=2),
+        structure_id=structure_id,
+        input_state_id=first_state,
+        atoms=Atoms("Fe"),
+        input_parameters={},
+        directory="run",
+        output_atoms=Atoms("FeX2"),
+        output_potential_path=None,
+    )
+    spheres_state = empty_spheres.output_state_id
+    assert spheres_state is not None
+    second_scf = store.add_result(
+        _ui_result("scf", "scf2"),
+        structure_id=structure_id,
+        input_state_id=spheres_state,
+        atoms=Atoms("FeX2"),
+        input_parameters=object(),
+        directory="run",
+        output_atoms=Atoms("FeX2"),
+        output_potential_path="p2",
+    )
+    second_state = second_scf.output_state_id
+    assert second_state is not None
+    store.add_result(
+        _ui_result("bsf", "bsf2"),
+        structure_id=structure_id,
+        input_state_id=second_state,
+        atoms=Atoms("FeX2"),
+        input_parameters=object(),
+        directory="run",
+    )
 
-    second = store.add_result(
-        _ui_result("scf", "b"),
-        structure_id=structure_id,
-        input_state_id=root_state,
-        atoms=Atoms("Fe"),
-        input_parameters=None,
-        directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pb",
-    )
+    widget = _widget()
     widget.set_results(store)
+
     structure = widget._selector.topLevelItem(0)
-    labels = {structure.child(i).text(0) for i in range(structure.childCount())}
-    assert labels == {"Branch 1", "Branch 2"}
-    assert store.branch_path(first) == (1,)
-    assert store.branch_path(second) == (2,)
+    assert [structure.child(i).text(0).split(" — ", 1)[0] for i in range(3)] == [
+        "SCF",
+        "Empty spheres",
+        "SCF",
+    ]
+    first_scf_item = structure.child(0)
+    second_scf_item = structure.child(2)
+    assert first_scf_item.childCount() == 1
+    assert first_scf_item.child(0).text(0).startswith("DOS")
+    assert second_scf_item.childCount() == 1
+    assert second_scf_item.child(0).text(0).startswith("BSF")
+    widget.close()
+
+
+def test_imported_results_are_grouped_by_source_directory():
+    _application = QApplication.instance() or QApplication([])
+    store = ResultStore()
+    directory = "/work/Fe/run1"
+
+    first = store.add_external_result(
+        _ui_result("scf", "scf"),
+        atoms=Atoms("Fe"),
+        input_parameters=object(),
+        directory=directory,
+        output_path=Path(directory) / "scf.out",
+        potential_path=Path(directory) / "Fe.pot",
+        produces_state=True,
+    )
+    second = store.add_external_result(
+        _ui_result("dos", "dos"),
+        atoms=None,
+        input_parameters=object(),
+        directory=directory,
+        output_path=Path(directory) / "dos.out",
+        potential_path=None,
+        produces_state=False,
+    )
+
+    assert store.imported_results(directory) == (first, second)
+
+    widget = _widget()
+    widget.set_results(store)
+
+    assert widget._selector.topLevelItemCount() == 1
+    directory_item = widget._selector.topLevelItem(0)
+    assert directory_item.text(0) == directory
+    assert directory_item.childCount() == 2
+    assert directory_item.child(0).text(0).startswith("SCF")
+    assert directory_item.child(1).text(0).startswith("DOS")
     widget.close()

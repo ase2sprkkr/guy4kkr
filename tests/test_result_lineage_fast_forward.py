@@ -41,7 +41,7 @@ def test_scf_does_not_fast_forward_across_use_for_new_calculation():
         potential_error=None,
         directory="run",
     )
-    adoption = controller.adopt_calculation_result(loaded, request=request)
+    adoption = controller.record_finished_calculation(loaded, request=request)
 
     assert not adoption.workspace_updated
     assert controller.state_id == restart_state

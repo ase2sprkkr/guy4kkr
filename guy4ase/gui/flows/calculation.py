@@ -15,10 +15,7 @@ from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
     select_guided_input_parameters,
 )
-from guy4ase.gui.dialogs.profiles import (
-    ProfileSelectionDialog,
-    profile_description,
-)
+from guy4ase.gui.dialogs.profiles import ProfileSelectionDialog, profile_description
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
@@ -34,11 +31,7 @@ def choose_working_directory(
 ) -> bool:
     """Choose and publish the workspace calculation directory."""
     start_directory = controller.directory or str(Path.home())
-    directory = QFileDialog.getExistingDirectory(
-        parent,
-        title,
-        start_directory,
-    )
+    directory = QFileDialog.getExistingDirectory(parent, title, start_directory)
     if not directory:
         return False
     controller.change_directory(str(directory))
@@ -62,21 +55,12 @@ def _select_profile(
     *,
     position_like_window: str | None = None,
 ) -> tuple[bool, str | None]:
-    """Run the post-parameter execution step and preserve automatic profiles."""
+    """Run the execution-profile step and preserve automatic profiles."""
     dialog = ProfileSelectionDialog(parent)
     _position_like_window(dialog, position_like_window)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return False, None
     return True, dialog.profile_name()
-
-
-def _launch_parent_and_profile_policy(parent_or_runs, parent):
-    """Resolve old/new call shapes while the obsolete service is removed."""
-    if parent is None:
-        return parent_or_runs, True
-    return parent, bool(
-        getattr(parent_or_runs, "profile_selection_enabled", False)
-    )
 
 
 def _task_available_on_workspace(
@@ -94,33 +78,19 @@ def _task_available_on_workspace(
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
-    parent: QWidget | None = None,
+    parent: QWidget,
     *,
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Choose execution, run a task and record its immutable provenance.
-
-    ``parent_or_runs, parent`` temporarily accepts the former
-    ``active_runs, parent`` call shape. The legacy object has no execution
-    semantics; during migration it only tells application wiring to show the
-    new profile step, while older direct test callers remain non-interactive.
-
-    ``position_like_window`` optionally reuses another managed window's
-    top-left corner for the profile picker and the run window. Their own sizes
-    stay independent.
-    """
-    parent, interactive_profiles = _launch_parent_and_profile_policy(
-        parent_or_runs, parent
-    )
+    """Choose execution, run a task and record its immutable provenance."""
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
         return None
 
-    if select_profile and interactive_profiles:
+    if select_profile:
         accepted, profile_name = _select_profile(
             parent,
             position_like_window=position_like_window,
@@ -140,7 +110,7 @@ def run_calculation(
             )
 
     def finished(loaded) -> None:
-        adoption = controller.adopt_calculation_result(
+        adoption = controller.record_finished_calculation(
             loaded,
             request=request,
         )
@@ -166,18 +136,12 @@ def run_calculation(
 def configure_and_run_task(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
-    parent_or_task,
-    task: str | None = None,
+    parent: QWidget,
+    task: str,
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
-    if task is None:
-        parent = parent_or_runs
-        task = parent_or_task
-    else:
-        parent = parent_or_task
     try:
         if (
             not controller.directory
@@ -233,7 +197,6 @@ def configure_and_run_task(
 def recompute_result(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
     parent: QWidget,
     result_id: int,
 ) -> SprkkrRunWindow | None:
@@ -298,7 +261,6 @@ def recompute_result(
     return run_calculation(
         controller,
         recent_files,
-        parent_or_runs,
         parent,
         position_like_window="guided-input",
     )

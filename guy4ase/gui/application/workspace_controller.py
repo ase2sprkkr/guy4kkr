@@ -121,11 +121,6 @@ class WorkspaceController(QObject):
         return record.result if record is not None else None
 
     @property
-    def result_history(self) -> tuple[ResultRecord, ...]:
-        """Compatibility view; presentation should use ``result_store``."""
-        return self._results.results
-
-    @property
     def result_store(self) -> ResultStore:
         return self._results
 
@@ -328,40 +323,20 @@ class WorkspaceController(QObject):
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(loaded, record=record)
 
-    def adopt_calculation_result(
+    def record_finished_calculation(
         self,
         loaded: LoadedResult,
         *,
-        request: CalculationRequest | None = None,
+        request: CalculationRequest,
     ) -> ResultAdoption:
-        """Always record a result; fast-forward only the exact active SCF input.
+        """Record a completed launched calculation against its launch request.
 
-        A state selected by the user, including ``Use for New Calculation``, is
-        a write barrier. Results finishing from an older state remain in their
-        original branch and can become active only through an explicit action.
+        ``request`` is mandatory because it is the provenance captured when the
+        job was launched. A state selected by the user, including ``Use for New
+        Calculation``, is a write barrier: a result finishing from an older
+        state remains in that original lineage and can become active only
+        through an explicit action.
         """
-        if request is None:
-            if self.structure_id is None or self.state_id is None:
-                record = self._results.add_external_result(
-                    loaded.result,
-                    atoms=loaded.atoms,
-                    input_parameters=loaded.input_parameters,
-                    directory=loaded.directory,
-                    output_path=loaded.output_path,
-                    potential_path=loaded.potential_path,
-                    produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
-                )
-                self.resultChanged.emit(loaded.result)
-                return self._result_adoption(loaded, record=record)
-            request = CalculationRequest(
-                atoms=self.atoms,
-                input_parameters=loaded.input_parameters,
-                directory=loaded.directory or self.directory or "",
-                generation=self.generation,
-                structure_id=self.structure_id,
-                state_id=self.state_id,
-            )
-
         is_scf = _result_is_scf(loaded.result)
         output_atoms = loaded.atoms if is_scf and loaded.atoms is not None else None
         record = self._results.add_result(
@@ -447,7 +422,7 @@ class WorkspaceController(QObject):
             raise ValueError("No calculation state is active.")
         self._workspace.state_id = self._results.new_child_state(
             state_id,
-            new_branch=True,
+            new_lineage=True,
         )
         self._workspace.restarted = True
         self._changed()

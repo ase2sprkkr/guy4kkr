@@ -101,7 +101,7 @@ def test_active_scf_result_with_new_potential_clears_restart_override():
     request = controller.create_calculation_request()
     new_atoms = _scf_atoms()
 
-    adoption = controller.adopt_calculation_result(
+    adoption = controller.record_finished_calculation(
         _loaded_result("SCF", new_atoms),
         request=request,
     )
@@ -116,7 +116,7 @@ def test_scf_result_without_new_potential_keeps_restart_override():
     controller = _controller()
     request = controller.create_calculation_request()
 
-    adoption = controller.adopt_calculation_result(
+    adoption = controller.record_finished_calculation(
         _loaded_result("SCF", None),
         request=request,
     )
@@ -130,7 +130,7 @@ def test_non_scf_result_does_not_clear_restart_override():
     controller = _controller()
     request = controller.create_calculation_request()
 
-    adoption = controller.adopt_calculation_result(
+    adoption = controller.record_finished_calculation(
         _loaded_result("DOS", _scf_atoms()),
         request=request,
     )

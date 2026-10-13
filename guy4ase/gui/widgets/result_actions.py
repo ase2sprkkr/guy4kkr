@@ -40,6 +40,9 @@ _ACTION_LABELS = {
     "data": "View data",
     "open_directory": "Open containing directory",
 }
+_TASK_LABELS = {
+    "empty_spheres": "Empty spheres",
+}
 _RESULT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 
 
@@ -86,7 +89,7 @@ class ElidedValueLabel(QLabel):
 
 
 class ResultActionsWidget(QWidget):
-    """Browse the calculation tree grouped by formula and branch."""
+    """Browse a flat SCF-oriented projection of exact result provenance."""
 
     useStateRequested = pyqtSignal(int)
     recomputeRequested = pyqtSignal(int)
@@ -188,64 +191,69 @@ class ResultActionsWidget(QWidget):
         self._current_state_id = state_id
         self._refresh_record_actions(self._record_for_item(self._selector.currentItem()))
 
-    def set_results(self, results: Any) -> None:
-        """Render only from the authoritative ResultStore.
-
-        Older window refresh methods still pass ``result_history``. Once this
-        widget has been wired to a ResultStore those calls deliberately reuse
-        that store instead of reconstructing lineage from a flat sequence.
-        During top-level window construction, before wiring, they simply leave
-        the result view empty.
-        """
-        if isinstance(results, ResultStore):
-            self._store = results
-        elif self._store is None:
-            self._records = {}
-            self._selector.clear()
-            self._selector.hide()
-            self.set_result(None)
-            self._record_actions.hide()
-            return
-        store = self._store
-        assert store is not None
-
+    def set_results(self, store: ResultStore) -> None:
+        """Render native results by SCF potential and imports by source directory."""
+        self._store = store
         selected_id = self._selected_result_id()
-        records = store.results
-        self._records = {record.id: record for record in records}
+        records: list[ResultRecord] = []
 
         self._selector.blockSignals(True)
         try:
             self._selector.clear()
-            formula_counts: dict[str, int] = {}
+            result_items: dict[int, QTreeWidgetItem] = {}
+            directory_items: list[QTreeWidgetItem] = []
 
-            for structure in store.structures:
-                branch_ids = store.branch_ids(structure.id)
-                if not branch_ids:
+            # Imported outputs keep their directory as their top-level provenance.
+            # Build them first so native calculations may later attach to an
+            # imported SCF whose potential was explicitly activated.
+            for directory in store.import_directories:
+                imported = store.imported_results(directory)
+                if not imported:
                     continue
-                formula_counts[structure.formula] = formula_counts.get(structure.formula, 0) + 1
-                number = formula_counts[structure.formula]
-                title = structure.formula if number == 1 else f"{structure.formula} ({number})"
-                structure_item = QTreeWidgetItem([title])
+                directory_item = QTreeWidgetItem([directory or "(unknown directory)"])
+                directory_item.setFlags(
+                    directory_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                )
+                directory_items.append(directory_item)
+                records.extend(imported)
+                for record in imported:
+                    item = self._result_item(record)
+                    directory_item.addChild(item)
+                    result_items[record.id] = item
+
+            formula_counts: dict[str, int] = {}
+            for structure in store.structures:
+                structure_records = store.structure_results(structure.id)
+                if not structure_records:
+                    continue
+
+                structure_item = QTreeWidgetItem([structure.formula])
                 structure_item.setFlags(
                     structure_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
                 )
-                self._selector.addTopLevelItem(structure_item)
+                records.extend(structure_records)
 
-                show_branches = len(branch_ids) > 1
-                for branch_id in branch_ids:
-                    parent = structure_item
-                    if show_branches:
-                        branch_number = store.branch_number(structure.id, branch_id)
-                        branch_item = QTreeWidgetItem([f"Branch {branch_number}"])
-                        branch_item.setFlags(
-                            branch_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
-                        )
-                        structure_item.addChild(branch_item)
-                        parent = branch_item
-                    for record in store.results_in_branch(structure.id, branch_id):
-                        item = QTreeWidgetItem([self._result_label(record)])
-                        item.setData(0, _RESULT_ID_ROLE, record.id)
-                        parent.addChild(item)
+                for record in structure_records:
+                    item = self._result_item(record)
+                    result_items[record.id] = item
+
+                    if record.task_name in {"scf", "empty_spheres"}:
+                        structure_item.addChild(item)
+                        continue
+
+                    source = store.potential_source_result(record.input_state_id)
+                    parent = result_items.get(source.id) if source is not None else None
+                    (parent or structure_item).addChild(item)
+
+                if structure_item.childCount():
+                    number = formula_counts.get(structure.formula, 0) + 1
+                    formula_counts[structure.formula] = number
+                    if number > 1:
+                        structure_item.setText(0, f"{structure.formula} ({number})")
+                    self._selector.addTopLevelItem(structure_item)
+
+            for directory_item in directory_items:
+                self._selector.addTopLevelItem(directory_item)
 
             if store.unstructured_results:
                 unknown_item = QTreeWidgetItem(["Unknown structure"])
@@ -253,28 +261,47 @@ class ResultActionsWidget(QWidget):
                     unknown_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
                 )
                 self._selector.addTopLevelItem(unknown_item)
+                records.extend(store.unstructured_results)
                 for record in store.unstructured_results:
-                    item = QTreeWidgetItem([self._result_label(record)])
-                    item.setData(0, _RESULT_ID_ROLE, record.id)
+                    item = self._result_item(record)
                     unknown_item.addChild(item)
+                    result_items[record.id] = item
 
+            self._records = {record.id: record for record in records}
             self._selector.expandAll()
             target = self._find_result_item(selected_id)
             if target is None:
                 active = store.latest_result_for_state(self._current_state_id)
                 if active is not None:
                     target = self._find_result_item(active.id)
-            if target is None and records:
-                target = self._find_result_item(records[0].id)
+            if target is None:
+                target = self._first_result_item()
             if target is not None:
                 self._selector.setCurrentItem(target)
         finally:
             self._selector.blockSignals(False)
 
-        self._selector.setVisible(bool(records))
+        self._selector.setVisible(bool(store))
         selected_record = self._record_for_item(self._selector.currentItem())
         self.set_result(selected_record.result if selected_record is not None else None)
         self._refresh_record_actions(selected_record)
+
+    def _result_item(self, record: ResultRecord) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([self._result_label(record)])
+        item.setData(0, _RESULT_ID_ROLE, record.id)
+        return item
+
+    def _first_result_item(self) -> QTreeWidgetItem | None:
+        root = self._selector.invisibleRootItem()
+        stack = [root.child(i) for i in reversed(range(root.childCount()))]
+        while stack:
+            item = stack.pop()
+            if item.data(0, _RESULT_ID_ROLE) is not None:
+                return item
+            stack.extend(
+                item.child(i) for i in reversed(range(item.childCount()))
+            )
+        return None
 
     def _selected_result_id(self) -> int | None:
         item = self._selector.currentItem()
@@ -334,12 +361,10 @@ class ResultActionsWidget(QWidget):
                 else "Use this potential"
             )
 
-        try:
-            task = str(record.result.task_name).strip()
-        except (AttributeError, TypeError, ValueError):
-            task = ""
+        task = record.task_name
         can_recompute = (
             bool(task)
+            and task != "empty_spheres"
             and record.input_parameters is not None
             and self._current_structure_id is not None
         )
@@ -365,13 +390,9 @@ class ResultActionsWidget(QWidget):
 
     @staticmethod
     def _result_label(record: ResultRecord) -> str:
-        result = record.result
+        task = _TASK_LABELS.get(record.task_name, record.task_name.upper())
         try:
-            task = str(result.task_name).strip().upper()
-        except (AttributeError, TypeError, ValueError):
-            task = str(getattr(result, "display_name", type(result).__name__))
-        try:
-            output = getattr(result, "output_file", None)
+            output = getattr(record.result, "output_file", None)
             output_name = Path(str(output)).name if output else ""
         except Exception:  # noqa: BLE001 - optional presentation metadata
             output_name = ""

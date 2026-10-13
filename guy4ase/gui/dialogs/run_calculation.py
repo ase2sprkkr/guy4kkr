@@ -96,16 +96,11 @@ class _SprkkrRunWorker(QObject):
         cancellation: _RunCancellation | None = None,
         *,
         profile_name: str | None = None,
-        run_registry=None,
-        launch_lock=None,
     ):
         super().__init__()
         self._request = request
         self._profile_name = profile_name
         self._cancellation = cancellation or _RunCancellation()
-        # ``run_registry`` and ``launch_lock`` are accepted only while callers
-        # and tests migrate from the former GUI-owned execution registry.
-        del run_registry, launch_lock
 
     def _emit_cancelled(self) -> None:
         self.status.emit("Cancelled")

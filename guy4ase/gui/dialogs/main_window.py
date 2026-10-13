@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
@@ -60,7 +59,6 @@ class MainWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        active_runs: ActiveRunRegistry,
         settings: ApplicationSettings,
     ) -> None:
         super().__init__()
@@ -74,7 +72,6 @@ class MainWindow(QMainWindow):
 
         self.controller = controller
         self.recent_history = recent_files
-        self.active_runs = active_runs
         self.settings = settings
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
@@ -764,11 +761,17 @@ class MainWindow(QMainWindow):
     def _on_run_sprkkr_calculation(self) -> None:
         """Start the shared calculation workflow."""
         calculation_flow.run_calculation(
-            self.controller, self.recent_history, self.active_runs, self
+            self.controller,
+            self.recent_history,
+            self,
         )
 
     def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_results(self.controller.result_history)
+        self._result_actions_widget.set_workspace_state(
+            self.controller.structure_id,
+            self.controller.state_id,
+        )
+        self._result_actions_widget.set_results(self.controller.result_store)
 
     def _on_about(self) -> None:
         """Show about dialog."""

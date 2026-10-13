@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.application import result_loading as result_loading_module
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import load_result, load_result_file
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -160,16 +159,11 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
     assert not thread.is_alive()
 
 
-def test_preparation_exception_leaves_backend_registry_empty(monkeypatch, tmp_path):
-    registry = ActiveRunRegistry()
+def test_preparation_exception_is_reported(monkeypatch, tmp_path):
     request = CalculationRequest(
         Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
     )
-    worker = run_dialog._SprkkrRunWorker(
-        request,
-        run_registry=registry,
-        launch_lock=registry.launch_lock,
-    )
+    worker = run_dialog._SprkkrRunWorker(request)
     monkeypatch.setattr(
         worker,
         "_launch",
@@ -181,21 +175,15 @@ def test_preparation_exception_leaves_backend_registry_empty(monkeypatch, tmp_pa
     worker.run()
 
     assert errors == ["preparation failed"]
-    assert registry.active == ()
 
 
-def test_unstarted_worker_reserves_no_backend_run(tmp_path):
-    registry = ActiveRunRegistry()
+def test_constructing_worker_has_no_execution_side_effect(tmp_path):
     request = CalculationRequest(
         Atoms("Fe"), _Parameters(1), str(tmp_path), Generation()
     )
-    run_dialog._SprkkrRunWorker(
-        request,
-        run_registry=registry,
-        launch_lock=registry.launch_lock,
-    )
+    worker = run_dialog._SprkkrRunWorker(request)
 
-    assert registry.active == ()
+    assert worker._cancellation.runner is None
 
 
 def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
@@ -215,11 +203,12 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
 
     result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
     loaded = load_result(result, fallback_directory=tmp_path)
-    adoption = controller.adopt_calculation_result(loaded, request=request)
+    adoption = controller.record_finished_calculation(loaded, request=request)
     assert not adoption.workspace_updated
     assert controller.atoms is replacement
-    assert controller.result_history[0].result is result
-    assert controller.result_history[0].structure_id == request.structure_id
+    assert adoption.record is not None
+    assert adoption.record.result is result
+    assert adoption.record.structure_id == request.structure_id
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
@@ -283,7 +272,8 @@ def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp
 
     assert not adoption.workspace_updated
     assert controller.atoms is original_structure
-    assert controller.result_history[0].result is result
+    assert adoption.record is not None
+    assert adoption.record.result is result
 
 
 def test_directory_change_does_not_discard_completed_calculation_result(tmp_path):
@@ -303,10 +293,11 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
     loaded = load_result(result, fallback_directory=original_directory)
 
     controller.change_directory(str(next_directory))
-    adoption = controller.adopt_calculation_result(loaded, request=request)
+    adoption = controller.record_finished_calculation(loaded, request=request)
 
     assert not adoption.workspace_updated
-    assert controller.result_history[0].result is result
+    assert adoption.record is not None
+    assert adoption.record.result is result
     assert controller.directory == str(next_directory)
 
 

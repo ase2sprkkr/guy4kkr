@@ -18,7 +18,7 @@ def test_workflow_job_entry_is_available_without_workspace_results(tmp_path):
     )
     window = gui.create_workflow_window()
 
-    assert not gui.controller.result_store.results
+    assert not gui.controller.result_store
     assert not window._result_actions.isHidden()
     assert window._result_actions_widget._history_button is not None
     assert window._result_actions_widget._history_button.text() == (

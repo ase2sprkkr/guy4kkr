@@ -6,7 +6,6 @@ from pathlib import Path
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -29,7 +28,6 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
-        self.active_runs = ActiveRunRegistry(profile_selection_enabled=True)
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,
@@ -48,7 +46,6 @@ class GuiApplication(QObject):
             self._workflow_window = WorkflowWindow(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 open_expert=self.show_main_window,
                 settings=self.settings,
             )
@@ -61,39 +58,32 @@ class GuiApplication(QObject):
             self._main_window = MainWindow(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 self.settings,
             )
             self._wire_result_actions(self._main_window)
         return self._main_window
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
-        """Connect explicit result actions and one authoritative result store."""
+        """Connect explicit result actions owned by a top-level view."""
         widget = window._result_actions_widget
         if widget is None:
             return
-
-        def refresh_result_context(*_args) -> None:
-            widget.set_workspace_state(
-                self.controller.structure_id,
-                self.controller.state_id,
-            )
-            widget.set_results(self.controller.result_store)
 
         widget.useStateRequested.connect(self.controller.use_result_state)
         widget.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
                 self.recent_files,
-                self.active_runs,
                 target,
                 result_id,
             )
         )
-        self.controller.structureChanged.connect(refresh_result_context)
-        self.controller.resultChanged.connect(refresh_result_context)
-        self.recent_files.changed.connect(refresh_result_context)
-        refresh_result_context()
+        self.controller.structureChanged.connect(
+            lambda _atoms, target=widget: target.set_workspace_state(
+                self.controller.structure_id,
+                self.controller.state_id,
+            )
+        )
 
     def show_workflow_window(self) -> None:
         """Show and activate the workflow view."""
