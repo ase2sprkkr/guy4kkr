@@ -1,6 +1,8 @@
 """Calculation-result provenance independent of the mutable workspace draft."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -10,6 +12,33 @@ from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
 _KEEP_EMPTY_SPHERES = object()
+
+
+def _task_name(result: Any) -> str:
+    """Capture a stable normalized task identity from a result."""
+    try:
+        return str(result.task_name).strip().lower()
+    except (AttributeError, TypeError, ValueError):
+        return type(result).__name__.lower()
+
+
+def _snapshot_input_parameters(parameters: Any | None) -> Any | None:
+    """Detach small mutable input provenance from its live source object."""
+    if parameters is None:
+        return None
+
+    copier = getattr(parameters, "copy", None)
+    if callable(copier):
+        try:
+            return copier(copy_values=True)
+        except TypeError:
+            # Generic mappings/copyables do not support ASE2SPRKKR's
+            # ``copy_values`` contract; use a real deep snapshot below.
+            pass
+
+    if isinstance(parameters, Mapping):
+        return deepcopy(dict(parameters))
+    return deepcopy(parameters)
 
 
 @dataclass(frozen=True)
@@ -48,6 +77,7 @@ class ResultRecord:
 
     id: int
     result: Any
+    task_name: str
     structure_id: int | None
     input_state_id: int | None
     output_state_id: int | None
@@ -56,13 +86,6 @@ class ResultRecord:
     directory: str | None
     output_path: Path | None = None
     potential_path: Path | None = None
-
-    @property
-    def task_name(self) -> str:
-        try:
-            return str(self.result.task_name).strip().lower()
-        except (AttributeError, TypeError, ValueError):
-            return type(self.result).__name__.lower()
 
 
 class ResultStore:
@@ -320,11 +343,12 @@ class ResultStore:
         record = ResultRecord(
             id=result_id,
             result=result,
+            task_name=_task_name(result),
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
             atoms=atoms,
-            input_parameters=input_parameters,
+            input_parameters=_snapshot_input_parameters(input_parameters),
             directory=directory,
             output_path=output_path,
             potential_path=potential_path,
