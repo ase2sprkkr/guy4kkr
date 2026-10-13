@@ -9,7 +9,10 @@ from PyQt6.QtWidgets import QApplication
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    PotentialVersionChanged,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
@@ -69,7 +72,18 @@ class GuiApplication(QObject):
         if widget is None:
             return
 
-        widget.useStateRequested.connect(self.controller.use_result_state)
+        def use_state(result_id, expected_potential, *, target=widget):
+            try:
+                self.controller.use_result_state(result_id, expected_potential)
+            except PotentialVersionChanged:
+                # The action text was based on another file version. Re-render
+                # from the current filesystem state and require another click.
+                target.set_workspace_state(
+                    self.controller.structure_id,
+                    self.controller.state_id,
+                )
+
+        widget.useStateRequested.connect(use_state)
         widget.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
