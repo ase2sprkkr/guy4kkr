@@ -25,7 +25,7 @@ from guy4ase.gui.misc.structure_wait import document_change_applied
 
 def choose_working_directory(
     controller: WorkspaceController,
-    parent: QWidget,
+    parent: QWidget | None,
     *,
     title: str = "Select Calculation Directory",
 ) -> bool:
@@ -55,7 +55,7 @@ def _position_like_window(window: QWidget, window_id: str | None) -> None:
 
 
 def _select_profile(
-    parent: QWidget,
+    parent: QWidget | None,
     *,
     position_like_window: str | None = None,
 ) -> tuple[bool, str | None]:
@@ -67,20 +67,10 @@ def _select_profile(
     return True, dialog.profile_name()
 
 
-def _launch_parent_and_profile_policy(parent_or_runs, parent):
-    """Resolve old/new call shapes while the obsolete service is removed."""
-    if parent is None:
-        return parent_or_runs, True
-    return parent, bool(
-        getattr(parent_or_runs, "profile_selection_enabled", False)
-    )
-
-
 def run_calculation(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
-    parent: QWidget | None = None,
+    parent: QWidget | None,
     *,
     select_profile: bool = True,
     profile_name: str | None = None,
@@ -88,19 +78,10 @@ def run_calculation(
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
-    ``parent_or_runs, parent`` temporarily accepts the former
-    ``active_runs, parent`` call shape. The legacy object has no execution
-    semantics; during migration it only tells application wiring to show the
-    new profile step, while older direct test callers remain non-interactive.
-
     ``position_like_window`` optionally reuses another managed window's
     top-left corner for the profile picker and the run window. Their own sizes
     stay independent.
     """
-    parent, interactive_profiles = _launch_parent_and_profile_policy(
-        parent_or_runs, parent
-    )
-
     task = controller.current_task()
     if task is not None and not controller.can_run_task(task):
         QMessageBox.information(
@@ -115,7 +96,7 @@ def run_calculation(
     except CalculationNotReady:
         return None
 
-    if select_profile and interactive_profiles:
+    if select_profile:
         accepted, profile_name = _select_profile(
             parent,
             position_like_window=position_like_window,
@@ -161,24 +142,18 @@ def run_calculation(
 def configure_and_run_task(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
-    parent_or_task,
-    task: str | None = None,
+    parent: QWidget | None,
+    task: str,
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
-    if task is None:
-        parent = parent_or_runs
-        task = parent_or_task
-    else:
-        parent = parent_or_task
     try:
         if not controller.can_run_task(task):
             QMessageBox.information(
                 parent,
                 "Task Not Available",
-                f"{str(task).upper()} cannot be run with the current workspace state.",
+                f"{task.upper()} cannot be run with the current workspace state.",
             )
             return None
 
@@ -236,7 +211,6 @@ def configure_and_run_task(
 def recompute_result(
     controller: WorkspaceController,
     recent_files: RecentFiles,
-    parent_or_runs,
     parent: QWidget,
     result_id: int,
 ) -> SprkkrRunWindow | None:
@@ -298,7 +272,6 @@ def recompute_result(
     return run_calculation(
         controller,
         recent_files,
-        parent_or_runs,
         parent,
         position_like_window="guided-input",
     )
