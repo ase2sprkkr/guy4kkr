@@ -52,6 +52,10 @@ class WorkspaceState:
     Results deliberately do not live here. ``structure_id`` identifies the
     user-visible structure and ``state_id`` the exact structure/potential input
     from which the next task will start.
+
+    ``restarted`` is the pending execution intent historically used by the GUI.
+    It does not mutate the attached potential; ``restart_scf_requested`` is the
+    explicit name for the same state.
     """
 
     atoms: Any | None = None
@@ -63,6 +67,14 @@ class WorkspaceState:
     empty_spheres: EmptySpheresState | None = None
     restarted: bool = False
     generation: Generation = Generation()
+
+    @property
+    def restart_scf_requested(self) -> bool:
+        return self.restarted
+
+    @restart_scf_requested.setter
+    def restart_scf_requested(self, value: bool) -> None:
+        self.restarted = bool(value)
 
     @property
     def empty_spheres_added(self) -> int | None:
@@ -80,8 +92,8 @@ class WorkspaceState:
             and bool(self.directory)
         )
 
-    def scf_status(self) -> str | None:
-        """Return the normalized SCFSTATUS of the active workspace potential."""
+    def potential_scf_status(self) -> str | None:
+        """Return the physical SCFSTATUS stored in the attached potential."""
         atoms = self.atoms
         if not isinstance(atoms, SPRKKRAtoms):
             return None
@@ -93,9 +105,15 @@ class WorkspaceState:
         status = str(status).strip().upper()
         return status or None
 
+    def scf_status(self) -> str | None:
+        """Return the effective SCF state of the next workspace calculation."""
+        if self.restart_scf_requested:
+            return "START"
+        return self.potential_scf_status()
+
     def is_scf_converged(self) -> bool:
-        """Return whether the active potential is ready as a converged state."""
-        if self.scf_status() == "START":
+        """Return whether post-SCF tasks are valid for the active workspace."""
+        if self.restart_scf_requested:
             return False
         atoms = self.atoms
         if atoms is None:
