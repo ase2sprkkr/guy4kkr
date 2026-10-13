@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_artifacts import ArtifactState
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
@@ -89,7 +90,7 @@ class ElidedValueLabel(QLabel):
 class ResultActionsWidget(QWidget):
     """Browse the calculation tree grouped by formula and branch."""
 
-    useStateRequested = pyqtSignal(int)
+    useStateRequested = pyqtSignal(int, object)
     recomputeRequested = pyqtSignal(int)
 
     def __init__(
@@ -110,6 +111,7 @@ class ResultActionsWidget(QWidget):
         self._records: dict[int, ResultRecord] = {}
         self._current_structure_id: int | None = None
         self._current_state_id: int | None = None
+        self._use_state_potential_version: PotentialFileVersion | None = None
         self._history_dialog = None
 
         layout = QVBoxLayout(self)
@@ -321,23 +323,61 @@ class ResultActionsWidget(QWidget):
     def _refresh_record_actions(self, record: ResultRecord | None) -> None:
         store = self._store
         if record is None or store is None:
+            self._use_state_potential_version = None
             self._record_actions.hide()
             return
 
         state = store.state_for_result(record)
+        active_state = (
+            store.state(self._current_state_id)
+            if self._current_state_id is not None
+            else None
+        )
         different_state = state is not None and state.id != self._current_state_id
         different_structure = (
             record.structure_id is not None
             and record.structure_id != self._current_structure_id
         )
-        can_use = different_state
+        current_potential = (
+            state.potential_version.current()
+            if state is not None and state.potential_version is not None
+            else None
+        )
+        potential_changed = (
+            current_potential is not None
+            and current_potential.available
+            and current_potential != state.potential_version
+        )
+        active_has_current_potential = (
+            potential_changed
+            and active_state is not None
+            and state is not None
+            and active_state.structure_id == state.structure_id
+            and active_state.potential_version == current_potential
+        )
+        can_use = (
+            state is not None
+            and not active_has_current_potential
+            and (different_state or potential_changed)
+        )
+        self._use_state_potential_version = (
+            current_potential
+            if can_use and potential_changed
+            else state.potential_version
+            if can_use
+            else None
+        )
         self._use_state_button.setVisible(can_use)
-        if can_use and state is not None:
-            self._use_state_button.setText(
-                "Use this structure"
-                if different_structure or state.potential_path is None
-                else "Use this potential"
-            )
+        if can_use:
+            if potential_changed:
+                text = "Continue with current version of this potential"
+            else:
+                text = (
+                    "Use this structure"
+                    if different_structure or state.potential_path is None
+                    else "Use this potential"
+                )
+            self._use_state_button.setText(text)
 
         can_recompute = (
             bool(record.task_name)
@@ -356,8 +396,17 @@ class ResultActionsWidget(QWidget):
 
     def _use_selected_state(self) -> None:
         result_id = self._selected_result_id()
-        if result_id is not None:
-            self.useStateRequested.emit(result_id)
+        if result_id is None:
+            return
+        expected = self._use_state_potential_version
+        if expected is not None:
+            current = expected.current()
+            if not current.available or current != expected:
+                self._refresh_record_actions(
+                    self._record_for_item(self._selector.currentItem())
+                )
+                return
+        self.useStateRequested.emit(result_id, expected)
 
     def _recompute_selected(self) -> None:
         result_id = self._selected_result_id()
