@@ -101,10 +101,11 @@ class ResultRecord:
     restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
+    imported: bool = False
 
 
 class ResultStore:
-    """Own completed results as a structure -> branch -> state/result tree."""
+    """Own exact provenance independently of its user-facing tree projection."""
 
     def __init__(self) -> None:
         self._next_structure_id = 1
@@ -118,6 +119,7 @@ class ResultStore:
         self._result_ids_by_state: dict[int, list[int]] = {}
         self._unstructured_result_ids: list[int] = []
         self._structure_branches: dict[int, list[int]] = {}
+        self._imported_result_ids_by_directory: dict[str | None, list[int]] = {}
 
     def __len__(self) -> int:
         return len(self._results)
@@ -133,6 +135,7 @@ class ResultStore:
 
     @property
     def results(self) -> tuple[ResultRecord, ...]:
+        """Return results newest first."""
         return tuple(
             self._results[result_id]
             for result_id in sorted(self._results, reverse=True)
@@ -143,10 +146,30 @@ class ResultStore:
         return tuple(self._structures.values())
 
     @property
+    def import_directories(self) -> tuple[str | None, ...]:
+        """Return imported-result directories in first-import order."""
+        return tuple(self._imported_result_ids_by_directory)
+
+    @property
     def unstructured_results(self) -> tuple[ResultRecord, ...]:
         return tuple(
             self._results[result_id]
             for result_id in self._unstructured_result_ids
+        )
+
+    def imported_results(self, directory: str | None) -> tuple[ResultRecord, ...]:
+        """Return results explicitly imported from one source directory."""
+        return tuple(
+            self._results[result_id]
+            for result_id in self._imported_result_ids_by_directory.get(directory, ())
+        )
+
+    def structure_results(self, structure_id: int) -> tuple[ResultRecord, ...]:
+        """Return native results for one structure in recording order."""
+        return tuple(
+            record
+            for record in sorted(self._results.values(), key=lambda item: item.id)
+            if record.structure_id == structure_id and not record.imported
         )
 
     def structure(self, structure_id: int) -> StructureRecord:
@@ -207,11 +230,11 @@ class ResultStore:
         return state.branch_id if state is not None else None
 
     def branch_ids(self, structure_id: int) -> tuple[int, ...]:
-        """Return branches which currently contain at least one result."""
+        """Return branches which currently contain at least one native result."""
         used = {
             branch_id
             for record in self._results.values()
-            if record.structure_id == structure_id
+            if record.structure_id == structure_id and not record.imported
             for branch_id in (self.branch_id_for_result(record),)
             if branch_id is not None
         }
@@ -234,6 +257,7 @@ class ResultStore:
                     record
                     for record in self._results.values()
                     if record.structure_id == structure_id
+                    and not record.imported
                     and self.branch_id_for_result(record) == branch_id
                 ),
                 key=lambda record: record.id,
@@ -388,6 +412,7 @@ class ResultStore:
         output_atoms: Any | None = None,
         output_potential_path: str | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
+        imported: bool = False,
     ) -> ResultRecord:
         input_state = None
         if input_state_id is not None:
@@ -463,12 +488,17 @@ class ResultStore:
             output_path=output_path,
             potential_path=potential_path,
             artifacts=capture_result_artifacts(result),
+            imported=imported,
         )
         self._results[result_id] = record
         state_id = output_state_id or input_state_id
-        if state_id is None:
+        if imported:
+            self._imported_result_ids_by_directory.setdefault(directory, []).append(result_id)
+        elif state_id is None:
             self._unstructured_result_ids.append(result_id)
         else:
+            self._result_ids_by_state.setdefault(state_id, []).append(result_id)
+        if imported and state_id is not None:
             self._result_ids_by_state.setdefault(state_id, []).append(result_id)
         return record
 
@@ -492,6 +522,7 @@ class ResultStore:
                 directory=directory,
                 output_path=output_path,
                 potential_path=potential_path,
+                imported=True,
             )
 
         if produces_state:
@@ -505,6 +536,7 @@ class ResultStore:
                 potential_path=potential_path,
                 output_atoms=atoms,
                 output_potential_path=(str(potential_path) if potential_path else None),
+                imported=True,
             )
 
         structure_id, state_id = self.new_structure_state(
@@ -519,6 +551,7 @@ class ResultStore:
             directory=directory,
             output_path=output_path,
             potential_path=potential_path,
+            imported=True,
         )
 
     def branch_path(self, record: ResultRecord) -> tuple[int, ...]:

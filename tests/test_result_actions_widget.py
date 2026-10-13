@@ -182,12 +182,18 @@ def test_result_from_other_structure_offers_structure_reuse():
     widget.close()
 
 
-def test_result_from_other_state_of_same_structure_offers_potential_reuse():
+def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_path):
     _application = QApplication.instance() or QApplication([])
+    p0 = tmp_path / "p0"
+    p1 = tmp_path / "p1"
+    p2 = tmp_path / "p2"
+    for path in (p0, p1, p2):
+        path.write_text(path.name)
+
     store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-    historical_state = store.new_child_state(root, potential_path="p1")
-    current_state = store.new_child_state(historical_state, potential_path="p2")
+    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=str(p0))
+    historical_state = store.new_child_state(root, potential_path=str(p1))
+    current_state = store.new_child_state(historical_state, potential_path=str(p2))
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
         result,
