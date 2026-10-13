@@ -158,6 +158,7 @@ class _SprkkrRunWorker(QObject):
             loaded = load_result(
                 result,
                 fallback_directory=self._request.directory,
+                persistent_ref=runner.id,
             )
             self.status.emit("Finished")
             self.finished.emit(loaded)

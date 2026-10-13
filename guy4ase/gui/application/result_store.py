@@ -112,6 +112,7 @@ class ResultRecord:
     input_parameters: Any | None
     directory: str | None
     artifacts: Mapping[str, ResultArtifactVersion]
+    persistent_ref: str | None = None
     restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
@@ -416,6 +417,7 @@ class ResultStore:
         input_state_id: int | None,
         input_parameters: Any | None,
         directory: str | None,
+        persistent_ref: str | None = None,
         restart_scf: bool = False,
         output_path: Path | None = None,
         potential_path: Path | None = None,
@@ -494,10 +496,11 @@ class ResultStore:
             output_state_id=output_state_id,
             input_parameters=_snapshot_input_parameters(input_parameters),
             directory=directory,
+            artifacts=capture_result_artifacts(result),
+            persistent_ref=persistent_ref,
             restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
-            artifacts=capture_result_artifacts(result),
             imported=imported,
         )
         self._results[result_id] = record
@@ -522,6 +525,7 @@ class ResultStore:
         output_path: Path | None,
         potential_path: Path | None,
         produces_state: bool,
+        persistent_ref: str | None = None,
     ) -> ResultRecord:
         if atoms is None:
             return self.add_result(
@@ -530,6 +534,7 @@ class ResultStore:
                 input_state_id=None,
                 input_parameters=input_parameters,
                 directory=directory,
+                persistent_ref=persistent_ref,
                 output_path=output_path,
                 potential_path=potential_path,
                 imported=True,
@@ -542,6 +547,7 @@ class ResultStore:
                 input_state_id=None,
                 input_parameters=input_parameters,
                 directory=directory,
+                persistent_ref=persistent_ref,
                 output_path=output_path,
                 potential_path=potential_path,
                 output_atoms=atoms,
@@ -559,6 +565,7 @@ class ResultStore:
             input_state_id=state_id,
             input_parameters=input_parameters,
             directory=directory,
+            persistent_ref=persistent_ref,
             output_path=output_path,
             potential_path=potential_path,
             imported=True,

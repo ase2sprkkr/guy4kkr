@@ -18,6 +18,10 @@ class LoadedResult:
     The authoritative physical potential, when successfully loaded, is attached
     to ``atoms``. A missing referenced potential is different: reconstructing
     atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
+
+    ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
+    this result originated from a persistent execution.  It deliberately does
+    not duplicate the backend-specific run reference.
     """
 
     result: TaskResult
@@ -28,6 +32,7 @@ class LoadedResult:
     directory: str | None
     input_parameters: Any | None = None
     input_parameters_error: Exception | None = None
+    persistent_ref: str | None = None
 
 
 def _potential_file_fingerprint(path: Path) -> tuple[int, int, int, int, int, int]:
@@ -93,6 +98,7 @@ def load_result(
     *,
     fallback_directory: str | Path | None,
     output_fallback: str | Path | None = None,
+    persistent_ref: str | None = None,
 ) -> LoadedResult:
     """Resolve artifacts for an already constructed calculation result."""
     output, potential = _result_artifacts(result, fallback_directory)
@@ -112,6 +118,7 @@ def load_result(
         directory=directory,
         input_parameters=input_parameters,
         input_parameters_error=input_parameters_error,
+        persistent_ref=persistent_ref,
     )
 
 
