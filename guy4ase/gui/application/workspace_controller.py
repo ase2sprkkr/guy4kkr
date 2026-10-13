@@ -43,6 +43,12 @@ class CalculationRequest:
     Completed calculations are always recorded against ``structure_id`` and
     ``state_id``. An SCF output may advance the workspace only while that exact
     input state is still active.
+
+    ``atoms`` intentionally shares the workspace/result-store instance.  SPR-KKR
+    preparation may lazily promote or populate caches/site/potential bookkeeping
+    on that object; those mutations do not change the represented physical
+    structure and therefore do not constitute a provenance or generation change.
+    Structural edits must still go through controller transitions.
     """
 
     atoms: Any
