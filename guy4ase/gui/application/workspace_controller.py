@@ -461,6 +461,19 @@ class WorkspaceController(QObject):
         state_id = self._workspace.state_id
         if state_id is None:
             raise ValueError("No calculation state is active.")
+
+        atoms = self.atoms
+        if atoms is not None:
+            has_potential = getattr(atoms, "has_potential", None)
+            if callable(has_potential):
+                if not has_potential():
+                    raise ValueError("The active structure has no reusable potential.")
+                potential = atoms.potential
+            else:
+                potential = getattr(atoms, "potential", None)
+            if potential is not None:
+                potential.SCF_INFO.SCFSTATUS = "START"
+
         self._workspace.state_id = self._results.new_child_state(
             state_id,
             new_lineage=True,
