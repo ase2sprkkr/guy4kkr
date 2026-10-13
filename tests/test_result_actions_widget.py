@@ -173,7 +173,7 @@ def test_result_from_other_structure_offers_structure_reuse():
     widget.set_workspace_state(current_structure, current_state)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
+    assert widget.selected_result_id == record.id
     assert not widget._record_actions.isHidden()
     assert not widget._use_state_button.isHidden()
     assert widget._use_state_button.text() == "Use this structure"
@@ -226,7 +226,7 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
     widget.set_workspace_state(structure_id, state_id)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
+    assert widget.selected_result_id == record.id
     assert widget._selector.currentItem().text(0) == "Empty spheres"
     assert widget._recompute_button.isHidden()
     widget.close()

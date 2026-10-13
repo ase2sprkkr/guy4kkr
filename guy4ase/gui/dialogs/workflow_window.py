@@ -98,6 +98,11 @@ class WorkflowWindow(QMainWindow):
         self._refresh_working_directory()
         self._refresh()
 
+    @property
+    def result_actions_widget(self) -> ResultActionsWidget:
+        """Return the result browser owned by this window."""
+        return self._result_actions_widget
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)

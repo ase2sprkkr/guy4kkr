@@ -173,6 +173,23 @@ class ResultActionsWidget(QWidget):
     def has_rows(self) -> bool:
         return self._row_count > 0
 
+    @property
+    def selected_result_id(self) -> int | None:
+        """Return the selected provenance result, if any."""
+        item = self._selector.currentItem()
+        if item is None:
+            return None
+        value = item.data(0, _RESULT_ID_ROLE)
+        return int(value) if value is not None else None
+
+    def select_result(self, result_id: int) -> bool:
+        """Select a result by provenance id if it is present in this projection."""
+        item = self._find_result_item(result_id)
+        if item is None:
+            return False
+        self._selector.setCurrentItem(item)
+        return True
+
     def _open_calculation_history(self) -> None:
         if self._history_dialog is not None:
             self._history_dialog.show()
@@ -213,7 +230,7 @@ class ResultActionsWidget(QWidget):
         store = self._store
         assert store is not None
 
-        selected_id = self._selected_result_id()
+        selected_id = self.selected_result_id
         result_items: dict[int, QTreeWidgetItem] = {}
         records: dict[int, ResultRecord] = {}
 
@@ -308,13 +325,6 @@ class ResultActionsWidget(QWidget):
         item = QTreeWidgetItem([self._result_label(record)])
         item.setData(0, _RESULT_ID_ROLE, record.id)
         return item
-
-    def _selected_result_id(self) -> int | None:
-        item = self._selector.currentItem()
-        if item is None:
-            return None
-        value = item.data(0, _RESULT_ID_ROLE)
-        return int(value) if value is not None else None
 
     def _find_result_item(self, result_id: int | None) -> QTreeWidgetItem | None:
         if result_id is None:
@@ -434,7 +444,7 @@ class ResultActionsWidget(QWidget):
         self._record_actions.setVisible(can_use or can_recompute)
 
     def _use_selected_state(self) -> None:
-        result_id = self._selected_result_id()
+        result_id = self.selected_result_id
         if result_id is None:
             return
         expected = self._use_state_potential_version
@@ -448,7 +458,7 @@ class ResultActionsWidget(QWidget):
         self.useStateRequested.emit(result_id, expected)
 
     def _recompute_selected(self) -> None:
-        result_id = self._selected_result_id()
+        result_id = self.selected_result_id
         if result_id is not None:
             self.recomputeRequested.emit(result_id)
 
