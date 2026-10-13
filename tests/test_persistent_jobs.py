@@ -45,18 +45,60 @@ def test_persistent_job_maps_endpoint_metadata():
     assert job.target == "SSH · cluster.example · PSI/J slurm"
     assert job.artifact_state == "current"
     assert not job.is_final
+    assert not job.attachable
+
+
+def test_active_reconnectable_job_is_attachable():
+    record = _record(
+        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+        reference=SimpleNamespace(
+            executor="local",
+            native_id="1234567890abcdef",
+            computer=None,
+        ),
+    )
+
+    job = PersistentJob.from_run_record(record)
+
+    assert job.attachable
+
+
+def test_legacy_pid_only_local_job_is_not_attachable():
+    record = _record(
+        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+        reference=SimpleNamespace(
+            executor="local",
+            native_id="12345",
+            computer=None,
+        ),
+    )
+
+    assert not PersistentJob.from_run_record(record).attachable
+
+
+def test_active_legacy_job_without_endpoint_is_not_attachable_after_restart():
+    record = _record(
+        reference=SimpleNamespace(
+            executor="remote:local",
+            native_id="backend-id",
+            computer="cluster.example",
+        )
+    )
+
+    assert not PersistentJob.from_run_record(record).attachable
 
 
 def test_persistent_job_uses_legacy_reference_when_endpoint_is_missing():
     record = _record(
         state=_State.FINISHED,
-        reference=SimpleNamespace(executor="slurm", computer="login01"),
+        reference=SimpleNamespace(executor="slurm", computer="login01", native_id="42"),
     )
 
     job = PersistentJob.from_run_record(record)
 
     assert job.target == "slurm · login01"
     assert job.is_final
+    assert not job.attachable
 
 
 def test_source_lists_without_requiring_newest_keyword():
@@ -103,6 +145,36 @@ def test_source_refreshes_then_reloads_metadata():
 
     assert manager.refresh_calls == 1
     assert jobs[0].id == record.id
+
+
+def test_source_attach_forwards_output_listener_atomically():
+    record = _record()
+    replay = []
+    runner = object()
+
+    class Store:
+        @staticmethod
+        def runs():
+            return (record,)
+
+    class Manager:
+        store = Store()
+
+        @staticmethod
+        def attach(job_id, *, output_listener=None):
+            assert job_id == record.id
+            assert output_listener is not None
+            output_listener("already written\n", "out")
+            return runner
+
+    source = PersistentJobSource(Manager())
+
+    assert source.supports_attach
+    assert source.attach(
+        record.id,
+        output_listener=lambda text, kind: replay.append((text, kind)),
+    ) is runner
+    assert replay == [("already written\n", "out")]
 
 
 def test_incomplete_manager_becomes_empty_source():

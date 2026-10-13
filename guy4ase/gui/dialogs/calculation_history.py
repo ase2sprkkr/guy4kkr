@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.dialogs.persistent_run_monitor import PersistentRunMonitorWindow
 from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -82,6 +83,7 @@ class CalculationHistoryDialog(QDialog):
         self._jobs: tuple[PersistentJob, ...] = ()
         self._jobs_by_id: dict[str, PersistentJob] = {}
         self._selected_job_id: str | None = None
+        self._monitors: dict[str, PersistentRunMonitorWindow] = {}
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
@@ -157,6 +159,11 @@ class CalculationHistoryDialog(QDialog):
         self.message_value.setWordWrap(True)
         self.message_value.hide()
         details_layout.addWidget(self.message_value)
+
+        self.monitor_button = QPushButton("Monitor output", details)
+        self.monitor_button.clicked.connect(self._monitor_selected_job)
+        self.monitor_button.hide()
+        details_layout.addWidget(self.monitor_button)
 
         self.load_result_button = QPushButton("Load result", details)
         self.load_result_button.clicked.connect(self._load_selected_result)
@@ -286,6 +293,7 @@ class CalculationHistoryDialog(QDialog):
             ):
                 widget.setText("—")
             self.message_value.hide()
+            self.monitor_button.hide()
             self.load_result_button.hide()
             return
 
@@ -307,6 +315,9 @@ class CalculationHistoryDialog(QDialog):
         )
         self.message_value.setText(job.message or "")
         self.message_value.setVisible(bool(job.message))
+        self.monitor_button.setVisible(
+            job.attachable and bool(getattr(self._source, "supports_attach", False))
+        )
         self.load_result_button.setVisible(job.is_final and self._source.supports_results)
 
     def _refresh_statuses(self) -> None:
@@ -321,6 +332,43 @@ class CalculationHistoryDialog(QDialog):
             QMessageBox.warning(self, "Status Refresh Failed", str(exc))
             return
         self._set_jobs(jobs)
+
+    def _monitor_selected_job(self) -> None:
+        job_id = self._selected_job_id
+        if job_id is None:
+            return
+        job = self._jobs_by_id.get(job_id)
+        if job is None or not job.attachable:
+            return
+
+        existing = self._monitors.get(job_id)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        def finished(result) -> None:
+            # The manager finalizes the persistent record before wait() returns.
+            # Reload metadata first, then keep the completed result visible for
+            # the selected job without forcing a second artifact parse.
+            self._load_metadata()
+            if self._selected_job_id == job_id:
+                self.result_widget.set_result(result)
+
+        window = PersistentRunMonitorWindow(
+            job,
+            self._source,
+            parent=self,
+            on_finished=finished,
+        )
+        self._monitors[job_id] = window
+
+        def remove_monitor(*_args) -> None:
+            self._monitors.pop(job_id, None)
+
+        window.destroyed.connect(remove_monitor)
+        window.show()
 
     def _load_selected_result(self) -> None:
         job_id = self._selected_job_id
@@ -341,5 +389,9 @@ class CalculationHistoryDialog(QDialog):
 
     def _item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         job = self._job_for_item(item)
-        if job is not None and job.is_final and self._source.supports_results:
+        if job is None:
+            return
+        if job.is_final and self._source.supports_results:
             self._load_selected_result()
+        elif job.attachable and bool(getattr(self._source, "supports_attach", False)):
+            self._monitor_selected_job()

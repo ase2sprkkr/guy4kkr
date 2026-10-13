@@ -19,7 +19,10 @@ def _job(
     dataset: str,
     created_at: str,
     target: str = "SSH · cluster",
+    attachable: bool | None = None,
 ) -> PersistentJob:
+    if attachable is None:
+        attachable = state not in {"finished", "failed", "cancelled"}
     return PersistentJob(
         id=job_id,
         state=state,
@@ -32,6 +35,7 @@ def _job(
         return_code=0 if state == "finished" else None,
         message=None,
         artifact_state="current" if state == "finished" else None,
+        attachable=attachable,
     )
 
 
@@ -40,6 +44,7 @@ class _Source:
     unavailable_reason = None
     supports_refresh = True
     supports_results = True
+    supports_attach = True
 
     def __init__(self, jobs):
         self._jobs = tuple(jobs)
@@ -94,6 +99,7 @@ def test_history_groups_jobs_and_shows_selected_metadata():
     assert dialog.status_value.text() == "Running"
     assert dialog.started_value.text() == "2026-10-13 10:00:00"
     assert dialog.result_widget._history_button is None
+    assert not dialog.monitor_button.isHidden()
     assert dialog.load_result_button.isHidden()
 
     dialog.group_by.setCurrentText("Task")
@@ -113,10 +119,32 @@ def test_finished_job_can_load_historical_result():
     source = _Source((job,))
     dialog = CalculationHistoryDialog(source=source)
 
+    assert dialog.monitor_button.isHidden()
     assert not dialog.load_result_button.isHidden()
     dialog._load_selected_result()
 
     assert source.loaded == [job.id]
+    dialog.close()
+
+
+def test_nonattachable_active_job_does_not_offer_monitor():
+    _application = QApplication.instance() or QApplication([])
+    source = _Source(
+        (
+            _job(
+                "legacy-local",
+                state="running",
+                task="SCF",
+                dataset="Fe-SCF",
+                created_at="2026-10-13T08:00:00+00:00",
+                attachable=False,
+            ),
+        )
+    )
+
+    dialog = CalculationHistoryDialog(source=source)
+
+    assert dialog.monitor_button.isHidden()
     dialog.close()
 
 
@@ -140,6 +168,7 @@ def test_unavailable_backend_is_an_empty_nonfatal_history():
         unavailable_reason = "Persistent jobs are not available yet."
         supports_refresh = False
         supports_results = False
+        supports_attach = False
 
         @staticmethod
         def jobs():
