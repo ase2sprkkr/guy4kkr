@@ -18,14 +18,33 @@ class _Parameters:
         return _Parameters()
 
 
+class _Status:
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+
+class _ScfInfo:
+    def __init__(self, status):
+        self._status = _Status(status)
+
+    @property
+    def SCFSTATUS(self):
+        return self._status
+
+    @SCFSTATUS.setter
+    def SCFSTATUS(self, value):
+        self._status.value = value
+
+
 def _scf_atoms(status="CONVERGED"):
     atoms = SPRKKRAtoms.promote_ase_atoms(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
         symmetry=False,
     )
-    atoms._potential = SimpleNamespace(
-        SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
-    )
+    atoms._potential = SimpleNamespace(SCF_INFO=_ScfInfo(status))
     return atoms
 
 
@@ -43,7 +62,7 @@ def _loaded_result(task, atoms):
 def _controller(*, restarted=True):
     return WorkspaceController(
         WorkspaceState(
-            atoms=_scf_atoms(),
+            atoms=_scf_atoms("START" if restarted else "CONVERGED"),
             input_parameters=_Parameters(),
             directory="calculation",
             restarted=restarted,
@@ -51,7 +70,7 @@ def _controller(*, restarted=True):
     )
 
 
-def test_restarted_overrides_atoms_convergence_but_keeps_auto_detection_default():
+def test_restart_marker_does_not_override_real_scf_status():
     atoms = _scf_atoms()
     workspace = WorkspaceState(atoms=atoms)
 
@@ -59,6 +78,11 @@ def test_restarted_overrides_atoms_convergence_but_keeps_auto_detection_default(
     assert workspace.is_scf_converged()
 
     workspace.restarted = True
+
+    assert workspace.scf_status() == "CONVERGED"
+    assert workspace.is_scf_converged()
+
+    atoms.potential.SCF_INFO.SCFSTATUS = "START"
 
     assert workspace.scf_status() == "START"
     assert not workspace.is_scf_converged()
@@ -78,7 +102,7 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
     assert not controller.is_scf_converged()
 
 
-def test_use_for_new_calculation_marks_restart_without_touching_atoms():
+def test_use_for_new_calculation_restarts_attached_potential():
     atoms = _scf_atoms()
     controller = WorkspaceController(WorkspaceState(atoms=atoms))
     previous_state_id = controller.state_id
@@ -89,7 +113,7 @@ def test_use_for_new_calculation_marks_restart_without_touching_atoms():
 
     assert change is DocumentChange.APPLIED
     assert controller.atoms is atoms
-    assert atoms.sprkkr_is_scf_converged()
+    assert atoms.potential.SCF_INFO.SCFSTATUS() == "START"
     assert controller.restarted
     assert controller.scf_status() == "START"
     assert not controller.is_scf_converged()
@@ -123,6 +147,7 @@ def test_scf_result_without_new_potential_keeps_restart_override():
 
     assert not adoption.workspace_updated
     assert controller.restarted
+    assert controller.scf_status() == "START"
     assert not controller.is_scf_converged()
 
 
@@ -137,6 +162,7 @@ def test_non_scf_result_does_not_clear_restart_override():
 
     assert not adoption.workspace_updated
     assert controller.restarted
+    assert controller.scf_status() == "START"
 
 
 def test_external_result_does_not_clear_restart_override():
@@ -148,3 +174,4 @@ def test_external_result_does_not_clear_restart_override():
 
     assert not adoption.workspace_updated
     assert controller.restarted
+    assert controller.scf_status() == "START"
