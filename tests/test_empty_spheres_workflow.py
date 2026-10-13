@@ -143,7 +143,7 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
         potential=SimpleNamespace(
             SCF_INFO=SimpleNamespace(SCFSTATUS="CONVERGED")
         ),
-        sprkkr_is_scf_converged=lambda: True,
+        sprkkr_is_scf_converged=lambda: False,
     )
     empty_spheres = EmptySpheresState(
         3, {"min_radius": 0.8, "mesh": (20, 20, 20)}
@@ -164,7 +164,7 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
 
     assert change is DocumentChange.APPLIED
     assert workspace.atoms is atoms
-    assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
+    assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
     assert workspace.restarted
     assert not workspace.is_scf_converged()
     assert workspace.empty_spheres is empty_spheres
