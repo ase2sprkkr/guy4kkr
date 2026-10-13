@@ -228,36 +228,69 @@ def test_empty_spheres_is_result_transition_within_same_structure(tmp_path):
     controller.update_empty_spheres(
         add_one,
         expected_generation=controller.generation,
+        parameters={"radius": 1.25},
     )
 
     record = controller.result_history[0]
+    state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
     assert record.output_state_id == controller.state_id
-    assert controller.result_store.state(controller.state_id).parent_id == input_state_id
+    assert state.parent_id == input_state_id
+    assert state.empty_spheres == controller.empty_spheres
+    assert dict(state.empty_spheres.parameters) == {"radius": 1.25}
     assert controller.potential_path is None
 
 
-def test_empty_spheres_without_structure_change_does_not_change_workspace(tmp_path):
+def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_path):
     controller = _controller(tmp_path, potential_path="Fe.pot")
-    state_id = controller.state_id
+    input_state_id = controller.state_id
     generation = controller.generation
     atoms = controller.atoms
 
     controller.update_empty_spheres(
         lambda candidate, _previous: (candidate, 0, False),
         expected_generation=generation,
+        parameters={"method": "probe"},
     )
 
     record = controller.result_history[0]
+    state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=0)
-    assert record.input_state_id == state_id
-    assert record.output_state_id is None
-    assert controller.state_id == state_id
+    assert record.input_state_id == input_state_id
+    assert record.output_state_id == controller.state_id
+    assert controller.state_id != input_state_id
     assert controller.atoms is atoms
+    assert state.atoms is atoms
     assert controller.potential_path == "Fe.pot"
-    assert controller.generation == generation
+    assert state.potential_path == "Fe.pot"
+    assert controller.generation != generation
+    assert state.empty_spheres == controller.empty_spheres
+    assert dict(state.empty_spheres.parameters) == {"method": "probe"}
+
+
+def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
+    controller = _controller(tmp_path, potential_path="Fe.pot")
+
+    controller.update_empty_spheres(
+        lambda candidate, _previous: (candidate, 0, False),
+        expected_generation=controller.generation,
+        parameters={"radius": 1.5, "grid": 24},
+    )
+    empty_spheres_record = controller.result_history[0]
+    empty_spheres_state_id = controller.state_id
+
+    controller.replace_structure(Atoms("Ni"), potential_path="Ni.pot")
+    assert controller.empty_spheres is None
+
+    controller.use_result_state(empty_spheres_record.id)
+
+    assert controller.state_id == empty_spheres_state_id
+    assert controller.potential_path == "Fe.pot"
+    assert controller.empty_spheres is not None
+    assert controller.empty_spheres.count == 0
+    assert dict(controller.empty_spheres.parameters) == {"radius": 1.5, "grid": 24}
 
 
 class _Value:

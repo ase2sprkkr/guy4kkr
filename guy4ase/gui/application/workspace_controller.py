@@ -92,6 +92,7 @@ class WorkspaceController(QObject):
             structure_id, state_id = self._results.new_structure_state(
                 self._workspace.atoms,
                 potential_path=self._workspace.potential_path,
+                empty_spheres=self._workspace.empty_spheres,
             )
             self._workspace.structure_id = structure_id
             self._workspace.state_id = state_id
@@ -226,6 +227,7 @@ class WorkspaceController(QObject):
         structure_id, state_id = self._results.new_structure_state(
             atoms,
             potential_path=potential_path,
+            empty_spheres=self._workspace.empty_spheres,
         )
         self._workspace.structure_id = structure_id
         self._workspace.state_id = state_id
@@ -397,6 +399,7 @@ class WorkspaceController(QObject):
             state = self._results.state(record.output_state_id)
             self._workspace.atoms = state.atoms
             self._workspace.potential_path = state.potential_path
+            self._workspace.empty_spheres = state.empty_spheres
             self._workspace.state_id = state.id
             self._workspace.restarted = False
             self._changed()
@@ -421,7 +424,7 @@ class WorkspaceController(QObject):
         self._workspace.potential_path = state.potential_path
         self._workspace.structure_id = state.structure_id
         self._workspace.state_id = state.id
-        self._workspace.empty_spheres = None
+        self._workspace.empty_spheres = state.empty_spheres
         self._workspace.restarted = (
             state.potential_path is None and state.parent_id is not None
         )
@@ -483,7 +486,6 @@ class WorkspaceController(QObject):
 
         empty_spheres = EmptySpheresState(count=count, parameters=parameters or {})
         result = EmptySpheresResult(found=empty_spheres.count)
-        self._workspace.empty_spheres = empty_spheres
         record = self._results.add_result(
             result,
             structure_id=structure_id,
@@ -492,17 +494,21 @@ class WorkspaceController(QObject):
             input_parameters=empty_spheres.parameters,
             directory=self.directory,
             output_atoms=updated if structure_changed else None,
-            output_potential_path=None,
+            output_potential_path=(None if structure_changed else self.potential_path),
+            output_empty_spheres=empty_spheres,
         )
 
+        assert record.output_state_id is not None
+        state = self._results.state(record.output_state_id)
+        self._workspace.atoms = state.atoms
+        self._workspace.potential_path = state.potential_path
+        self._workspace.empty_spheres = state.empty_spheres
+        self._workspace.state_id = state.id
         if structure_changed:
-            assert record.output_state_id is not None
-            self._workspace.atoms = updated
-            self._workspace.potential_path = None
-            self._workspace.state_id = record.output_state_id
             self._workspace.restarted = True
-            self._changed()
-            self.structureChanged.emit(updated)
+        self._changed()
+        if structure_changed:
+            self.structureChanged.emit(state.atoms)
 
         self.resultChanged.emit(result)
         return DocumentChange.APPLIED

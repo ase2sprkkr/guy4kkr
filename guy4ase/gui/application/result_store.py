@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
+_KEEP_EMPTY_SPHERES = object()
 
 
 @dataclass(frozen=True)
@@ -20,11 +22,14 @@ class StructureRecord:
 
 @dataclass(frozen=True)
 class CalculationStateRecord:
-    """One concrete structure/potential state in a calculation lineage.
+    """One concrete restorable state in a calculation lineage.
 
     Identity is assigned, never inferred from contents. ``branch_id`` is stable
     provenance: sequential state-producing operations normally keep it, while
     an explicit restart or a sibling continuation starts another branch.
+
+    ``empty_spheres`` records metadata of the explicit empty-sphere search that
+    produced this state. The atoms remain authoritative for the actual structure.
     """
 
     id: int
@@ -33,6 +38,7 @@ class CalculationStateRecord:
     branch_id: int
     atoms: Any
     potential_path: str | None
+    empty_spheres: EmptySpheresState | None = None
     produced_by_result_id: int | None = None
 
 
@@ -177,6 +183,7 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        empty_spheres: EmptySpheresState | None = None,
     ) -> tuple[int, int]:
         """Create a new user-visible structure and its initial branch/state."""
         structure_id = self._next_structure_id
@@ -188,6 +195,7 @@ class ResultStore:
             structure_id,
             atoms,
             potential_path=potential_path,
+            empty_spheres=empty_spheres,
             parent_id=None,
             branch_id=branch_id,
             produced_by_result_id=None,
@@ -200,6 +208,7 @@ class ResultStore:
         *,
         atoms: Any | None = None,
         potential_path: str | None | object = _KEEP_POTENTIAL,
+        empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
         new_branch: bool = False,
     ) -> int:
@@ -207,13 +216,19 @@ class ResultStore:
 
         Sequential state changes keep the parent's branch. A second sibling
         continuation is an alternative and therefore starts another branch.
-        ``new_branch=True`` is used by an explicit "Use for New Calculation".
+        Potential and empty-sphere provenance are inherited unless explicitly
+        replaced. ``new_branch=True`` is used by an explicit continuation.
         """
         parent = self.state(parent_id)
         resolved_potential = (
             parent.potential_path
             if potential_path is _KEEP_POTENTIAL
             else potential_path
+        )
+        resolved_empty_spheres = (
+            parent.empty_spheres
+            if empty_spheres is _KEEP_EMPTY_SPHERES
+            else empty_spheres
         )
         same_branch_child_exists = any(
             self.state(child_id).branch_id == parent.branch_id
@@ -228,6 +243,7 @@ class ResultStore:
             parent.structure_id,
             parent.atoms if atoms is None else atoms,
             potential_path=resolved_potential,
+            empty_spheres=resolved_empty_spheres,
             parent_id=parent.id,
             branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
@@ -246,16 +262,29 @@ class ResultStore:
         potential_path: Path | None = None,
         output_atoms: Any | None = None,
         output_potential_path: str | None = None,
+        output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
     ) -> ResultRecord:
         result_id = self._next_result_id
         self._next_result_id += 1
 
         output_state_id = None
-        if output_atoms is not None:
+        produces_state = (
+            output_atoms is not None
+            or output_empty_spheres is not _KEEP_EMPTY_SPHERES
+        )
+        if produces_state:
             if structure_id is None:
+                root_empty_spheres = (
+                    None
+                    if output_empty_spheres is _KEEP_EMPTY_SPHERES
+                    else output_empty_spheres
+                )
+                if output_atoms is None:
+                    raise ValueError("A new structure state requires atoms.")
                 structure_id, output_state_id = self.new_structure_state(
                     output_atoms,
                     potential_path=output_potential_path,
+                    empty_spheres=root_empty_spheres,
                 )
                 root = self._states[output_state_id]
                 self._states[output_state_id] = CalculationStateRecord(
@@ -265,6 +294,7 @@ class ResultStore:
                     branch_id=root.branch_id,
                     atoms=root.atoms,
                     potential_path=root.potential_path,
+                    empty_spheres=root.empty_spheres,
                     produced_by_result_id=result_id,
                 )
             else:
@@ -274,6 +304,7 @@ class ResultStore:
                     input_state_id,
                     atoms=output_atoms,
                     potential_path=output_potential_path,
+                    empty_spheres=output_empty_spheres,
                     produced_by_result_id=result_id,
                 )
 
@@ -371,6 +402,7 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        empty_spheres: EmptySpheresState | None,
         parent_id: int | None,
         branch_id: int,
         produced_by_result_id: int | None,
@@ -384,6 +416,7 @@ class ResultStore:
             branch_id=branch_id,
             atoms=atoms,
             potential_path=potential_path,
+            empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
         )
         if parent_id is not None:
