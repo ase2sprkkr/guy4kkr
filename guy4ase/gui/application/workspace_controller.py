@@ -166,8 +166,20 @@ class WorkspaceController(QObject):
     def structure_kind(self):
         return self._workspace.structure_kind()
 
+    def current_task(self) -> str | None:
+        """Return the normalized task of the active input parameters, if known."""
+        parameters = self.input_parameters
+        try:
+            task = str(parameters.task_name).strip().lower()
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return task or None
+
     def can_calculate(self) -> bool:
-        return self._workspace.can_calculate()
+        if not self._workspace.can_calculate():
+            return False
+        task = self.current_task()
+        return task is None or self.can_run_task(task)
 
     def can_run_task(self, task: str) -> bool:
         """Return whether the active workspace satisfies ``task`` prerequisites."""
