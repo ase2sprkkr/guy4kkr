@@ -23,9 +23,6 @@ from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
-_POST_SCF_TASKS = {"xas", "arpes", "dos", "bsf", "jxc"}
-
-
 def choose_working_directory(
     controller: WorkspaceController,
     parent: QWidget,
@@ -77,18 +74,6 @@ def _launch_parent_and_profile_policy(parent_or_runs, parent):
     return parent, bool(
         getattr(parent_or_runs, "profile_selection_enabled", False)
     )
-
-
-def _task_available_on_workspace(
-    controller: WorkspaceController,
-    task: str,
-) -> bool:
-    """Return whether the active workspace state can run ``task`` now."""
-    if controller.atoms is None:
-        return False
-    if task.lower() in _POST_SCF_TASKS:
-        return controller.is_scf_converged()
-    return True
 
 
 def run_calculation(
@@ -179,6 +164,14 @@ def configure_and_run_task(
     else:
         parent = parent_or_task
     try:
+        if not controller.can_run_task(task):
+            QMessageBox.information(
+                parent,
+                "Task Not Available",
+                f"{str(task).upper()} cannot be run with the current workspace state.",
+            )
+            return None
+
         if (
             not controller.directory
             and not choose_working_directory(
@@ -251,7 +244,7 @@ def recompute_result(
     if not task or record.input_parameters is None:
         return None
 
-    if not _task_available_on_workspace(controller, task):
+    if not controller.can_run_task(task):
         QMessageBox.information(
             parent,
             "Task Not Available",

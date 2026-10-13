@@ -15,6 +15,7 @@ from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
+_POST_SCF_TASKS = frozenset({"xas", "arpes", "dos", "bsf", "jxc"})
 
 
 def _result_is_scf(result: Any) -> bool:
@@ -167,6 +168,17 @@ class WorkspaceController(QObject):
 
     def can_calculate(self) -> bool:
         return self._workspace.can_calculate()
+
+    def can_run_task(self, task: str) -> bool:
+        """Return whether the active workspace satisfies ``task`` prerequisites."""
+        if self.atoms is None:
+            return False
+        task = str(task).strip().lower()
+        if task == "scf":
+            return True
+        if task in _POST_SCF_TASKS:
+            return self.is_scf_converged()
+        return False
 
     def can_build_2d(self) -> bool:
         return self.structure_kind() == "3d"

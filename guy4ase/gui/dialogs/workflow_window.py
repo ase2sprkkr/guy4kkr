@@ -498,31 +498,33 @@ class WorkflowWindow(QMainWindow):
                     if structure_kind == "2d"
                     else "Prepare and run a self-consistent calculation"
                 )
-            self._add_action(
-                scf_label,
-                scf_description,
-                lambda: self._prepare_task("scf"),
-                group=self._GROUP_CALCULATE,
-                category='calculation',
-                icon='system-run.svg',
-            )
-
-        if converged:
-            for task, label, description in (
-                ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
-                ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
-                ("dos", "Calculate DOS", "Electronic density of states"),
-                ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
-                ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
-            ):
+            if self.controller.can_run_task("scf"):
                 self._add_action(
-                    label,
-                    description,
-                    lambda _checked=False, name=task: self._prepare_task(name),
+                    scf_label,
+                    scf_description,
+                    lambda: self._prepare_task("scf"),
                     group=self._GROUP_CALCULATE,
                     category='calculation',
                     icon='system-run.svg',
                 )
+
+        for task, label, description in (
+            ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
+            ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
+            ("dos", "Calculate DOS", "Electronic density of states"),
+            ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
+            ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
+        ):
+            if not self.controller.can_run_task(task):
+                continue
+            self._add_action(
+                label,
+                description,
+                lambda _checked=False, name=task: self._prepare_task(name),
+                group=self._GROUP_CALCULATE,
+                category='calculation',
+                icon='system-run.svg',
+            )
 
         if converged or (status is not None and status != "START"):
             self._add_action(
