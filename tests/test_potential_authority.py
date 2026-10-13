@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
@@ -37,6 +38,29 @@ def test_potential_loader_attaches_exact_parsed_potential(tmp_path, monkeypatch)
     assert atoms.has_potential()
     assert atoms.potential is potential
     assert potential.atoms is atoms
+
+
+def test_potential_loader_rejects_file_changed_during_parse(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("old")
+    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    potential = SimpleNamespace(atoms=atoms)
+
+    def parse(value):
+        assert value == str(path.resolve())
+        path.write_text("replacement is deliberately longer")
+        return potential
+
+    monkeypatch.setattr(
+        result_loading.Potential,
+        "from_file",
+        staticmethod(parse),
+    )
+
+    with pytest.raises(RuntimeError, match="changed while it was being read"):
+        result_loading.load_potential_atoms(path)
+
+    assert not atoms.has_potential()
 
 
 def test_potential_structure_flow_uses_authoritative_potential_loader(
@@ -109,4 +133,50 @@ def test_result_state_restart_decision_uses_atoms_not_path(tmp_path):
 
     assert controller.atoms is atoms
     assert controller.potential_path is None
+    assert not controller.restarted
+
+
+def test_use_result_state_never_reloads_historical_potential(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("historical potential")
+    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    potential = SimpleNamespace(atoms=atoms)
+    atoms._potential = potential
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=atoms,
+            input_parameters=_Parameters(),
+            directory=str(tmp_path),
+            potential_path=str(path),
+        )
+    )
+    state_id = controller.state_id
+    assert state_id is not None
+    result = controller.result_store.add_result(
+        SimpleNamespace(task_name="dos"),
+        structure_id=controller.structure_id,
+        input_state_id=state_id,
+        atoms=atoms,
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+        potential_path=path,
+    )
+
+    controller.replace_structure(Atoms("Cu"))
+    path.unlink()
+    monkeypatch.setattr(
+        result_loading.Potential,
+        "from_file",
+        staticmethod(
+            lambda *_args, **_kwargs: pytest.fail(
+                "use_result_state() must not reload a historical potential"
+            )
+        ),
+    )
+
+    controller.use_result_state(result.id)
+
+    assert controller.atoms is atoms
+    assert controller.atoms.potential is potential
+    assert controller.potential_path == str(path)
     assert not controller.restarted
