@@ -12,7 +12,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_store import (
+    PotentialFileVersion,
+    ResultRecord,
+    ResultStore,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
@@ -389,10 +393,11 @@ class WorkspaceController(QObject):
     def use_result_state(self, result_id: int) -> None:
         """Activate a result's potential if its file can still reconstruct it.
 
-        If the path now contains a different potential version, the current file
-        is loaded and becomes a fresh structure/state instead of pretending that
-        the historical state is still available. ResultStore therefore never
-        needs to retain historical ``Atoms``.
+        A regular file is fingerprinted immediately before and after parsing.
+        If it changes during that read window, activation is rejected without
+        mutating the workspace or ResultStore. If the stable current version is
+        newer than the historical one, it becomes a fresh structure/state whose
+        provenance is the already verified fingerprint, with no third stat.
         """
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
@@ -403,17 +408,25 @@ class WorkspaceController(QObject):
         if potential is None:
             raise ValueError("The selected result has no reusable potential.")
 
-        current = potential.current()
-        if current.available:
-            atoms = Potential.from_file(str(current.path)).atoms
-            if current == potential:
+        before = potential.current()
+        if before.available:
+            atoms = Potential.from_file(str(before.path)).atoms
+            after = PotentialFileVersion.capture(before.path)
+            if not after.available or after != before:
+                raise RuntimeError(
+                    f"Potential file changed while it was being read: {before.path}"
+                )
+
+            if after == potential:
                 structure_id = state.structure_id
                 target_state_id = state.id
             else:
                 structure_id, target_state_id = self._results.new_structure_state(
                     atoms,
-                    potential_path=str(current.path),
+                    potential_path=str(after.path),
+                    potential_version=after,
                 )
+            active_path = str(after.path)
         elif (
             not potential.available
             and state.structure_id == self._workspace.structure_id
@@ -424,13 +437,14 @@ class WorkspaceController(QObject):
             atoms = self.atoms
             structure_id = state.structure_id
             target_state_id = state.id
+            active_path = str(potential.path)
         else:
             raise FileNotFoundError(
                 f"The potential used by this result is no longer available: {potential.path}"
             )
 
         self._workspace.atoms = atoms
-        self._workspace.potential_path = str(current.path)
+        self._workspace.potential_path = active_path
         self._workspace.structure_id = structure_id
         self._workspace.state_id = target_state_id
         self._workspace.empty_spheres = None

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
@@ -161,3 +163,93 @@ def test_using_changed_potential_creates_fresh_state_from_current_file(
     assert controller.result is None
     active = controller.result_store.state(controller.state_id)
     assert active.potential == PotentialFileVersion.capture(potential)
+
+
+def test_use_result_state_rejects_potential_changed_during_parse(
+    monkeypatch,
+    tmp_path,
+):
+    potential = tmp_path / "Fe.pot"
+    potential.write_text("old", encoding="utf-8")
+    controller = WorkspaceController(
+        WorkspaceState(atoms=Atoms("Fe"), potential_path=str(potential))
+    )
+    record = controller.result_store.add_result(
+        _ui_result(),
+        structure_id=controller.structure_id,
+        input_state_id=controller.state_id,
+        atoms=controller.atoms,
+        input_parameters=None,
+        directory=str(tmp_path),
+    )
+    original_atoms = controller.atoms
+    original_structure_id = controller.structure_id
+    original_state_id = controller.state_id
+    original_generation = controller.generation
+    original_structures = controller.result_store.structures
+
+    def parse_while_rewritten(_path):
+        potential.write_text(
+            "rewritten while the potential is being parsed",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(atoms=Atoms("Ni"))
+
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        parse_while_rewritten,
+    )
+
+    with pytest.raises(RuntimeError, match="changed while it was being read"):
+        controller.use_result_state(record.id)
+
+    assert controller.atoms is original_atoms
+    assert controller.structure_id == original_structure_id
+    assert controller.state_id == original_state_id
+    assert controller.generation == original_generation
+    assert controller.result_store.structures == original_structures
+
+
+def test_use_result_state_reuses_verified_fingerprint_without_third_stat(
+    monkeypatch,
+    tmp_path,
+):
+    potential = tmp_path / "Fe.pot"
+    potential.write_text("old", encoding="utf-8")
+    controller = WorkspaceController(
+        WorkspaceState(atoms=Atoms("Fe"), potential_path=str(potential))
+    )
+    record = controller.result_store.add_result(
+        _ui_result(),
+        structure_id=controller.structure_id,
+        input_state_id=controller.state_id,
+        atoms=controller.atoms,
+        input_parameters=None,
+        directory=str(tmp_path),
+    )
+
+    potential.write_text("stable current version", encoding="utf-8")
+    verified = PotentialFileVersion.capture(potential)
+    current_atoms = Atoms("Ni")
+    monkeypatch.setattr(
+        controller_module.Potential,
+        "from_file",
+        lambda _path: SimpleNamespace(atoms=current_atoms),
+    )
+    captures = []
+
+    def capture(cls, path):
+        captures.append(Path(path))
+        if len(captures) > 2:
+            raise AssertionError("unexpected third potential fingerprint")
+        return verified
+
+    monkeypatch.setattr(PotentialFileVersion, "capture", classmethod(capture))
+
+    controller.use_result_state(record.id)
+
+    assert len(captures) == 2
+    active = controller.result_store.state(controller.state_id)
+    assert active.potential == verified
+    assert controller.atoms is current_atoms

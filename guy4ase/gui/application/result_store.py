@@ -255,10 +255,31 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        potential_version: PotentialFileVersion | None = None,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> tuple[int, int]:
-        """Create a new physical-structure group and its initial state."""
+        """Create a new physical-structure group and its initial state.
+
+        ``potential_version`` is used when the caller has already read and
+        verified that exact file version.  In that case the store must not stat
+        the path again and accidentally associate different provenance with the
+        parsed structure.
+        """
+        if potential_version is not None:
+            if potential_path is None:
+                raise AssertionError(
+                    "A captured potential version requires its potential path."
+                )
+            resolved_path = Path(potential_path).expanduser().absolute()
+            if potential_version.path != resolved_path:
+                raise AssertionError(
+                    "Captured potential version does not match potential path."
+                )
+            resolved_potential = potential_version
+        else:
+            resolved_potential = self._potential_version(potential_path)
+
         structure_id = self._next_structure_id
         self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
@@ -266,7 +287,7 @@ class ResultStore:
         lineage_id = self._allocate_lineage(structure_id)
         state_id = self._new_state(
             structure_id,
-            potential=self._potential_version(potential_path),
+            potential=resolved_potential,
             parent_id=None,
             lineage_id=lineage_id,
             produced_by_result_id=produced_by_result_id,
