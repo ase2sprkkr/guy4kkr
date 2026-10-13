@@ -1,4 +1,4 @@
-"""Interpret calculation results and artifacts without changing a workspace."""
+"""Interpret calculation results and result files without changing a workspace."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ from guy4ase.gui.application.file_version import FileFingerprint
 class LoadedResult:
     """A result whose filesystem references have already been interpreted.
 
-    ``output_path`` and ``potential_path`` are provenance/artifact locations.
+    ``output_path`` and ``potential_path`` are provenance file locations.
     The authoritative physical potential, when successfully loaded, is attached
     to ``atoms``. A missing referenced potential is different: reconstructing
     atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
@@ -38,18 +38,7 @@ class LoadedResult:
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
-    """Load a stable POT file and attach that exact parsed potential to its atoms.
-
-    ASE2SPRKKR reconstructs the atomic/site state while parsing a potential, but
-    ``Potential.from_file(...).atoms`` does not currently attach the parsed
-    ``Potential`` back to the returned ``SPRKKRAtoms``. Guy4ASE calculations
-    launch from atoms, so doing the attachment here makes atoms the single
-    physical authority instead of relying on a parallel filename.
-
-    POTFIL may be rewritten by a running SCF calculation. Fingerprinting the
-    file immediately before and after parsing prevents publishing a structure
-    reconstructed from a file that changed while it was being read.
-    """
+    """Load a stable POT file and attach that exact parsed potential to its atoms."""
     path = Path(file_path).resolve()
     before = FileFingerprint.capture(path)
     potential = Potential.from_file(str(path))
@@ -72,7 +61,7 @@ def load_potential_atoms(file_path: str | Path) -> Any:
 
 
 def load_result_file(file_path: str | Path) -> LoadedResult:
-    """Parse an external result and all usable referenced artifacts."""
+    """Parse an external result and all usable referenced result files."""
     path = Path(file_path).resolve()
     result = TaskResult.from_file(path)
     return load_result(
@@ -89,8 +78,8 @@ def load_result(
     output_fallback: str | Path | None = None,
     persistent_ref: str | None = None,
 ) -> LoadedResult:
-    """Resolve artifacts for an already constructed calculation result."""
-    output, potential = _result_artifacts(result, fallback_directory)
+    """Resolve result files for an already constructed calculation result."""
+    output, potential = _result_files(result, fallback_directory)
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
     atoms, potential_error = _load_potential(potential)
@@ -139,7 +128,7 @@ def _resolve_path(
     return resolved.resolve()
 
 
-def _result_artifacts(
+def _result_files(
     result: Any,
     fallback_directory: str | Path | None,
 ) -> tuple[Path | None, Path | None]:

@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.file_version import FileState
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_artifacts import ArtifactState
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
 
@@ -147,10 +147,10 @@ class ResultActionsWidget(QWidget):
         self._record_actions.hide()
         layout.addWidget(self._record_actions)
 
-        self._artifact_warning = QLabel("", self)
-        self._artifact_warning.setWordWrap(True)
-        self._artifact_warning.hide()
-        layout.addWidget(self._artifact_warning)
+        self._result_file_warning = QLabel("", self)
+        self._result_file_warning.setWordWrap(True)
+        self._result_file_warning.hide()
+        layout.addWidget(self._result_file_warning)
 
         self._empty_label = QLabel(empty_text, self)
         self._empty_label.setWordWrap(True)
@@ -467,14 +467,14 @@ class ResultActionsWidget(QWidget):
         self._render_result(record.result if record is not None else None, record)
 
     def set_result(self, result: Any | None) -> None:
-        """Render a live result without historical artifact provenance."""
+        """Render a live result without historical result-file provenance."""
         self._render_result(result, None)
 
     def _render_result(
         self, result: Any | None, record: ResultRecord | None
     ) -> None:
         self._clear()
-        self._artifact_warning.hide()
+        self._result_file_warning.hide()
         if result is None:
             self._show_empty(self._empty_text)
             return
@@ -487,8 +487,8 @@ class ResultActionsWidget(QWidget):
             self._add_error_row("Output values could not be loaded", exc)
             items = ()
 
-        has_replaced_artifact = False
-        has_unavailable_artifact = False
+        has_replaced_result_file = False
+        has_unavailable_result_file = False
         for key, value in items:
             try:
                 name = str(key)
@@ -499,35 +499,35 @@ class ResultActionsWidget(QWidget):
             shown_value = value
             warning = None
             disable_actions = False
-            artifact = record.artifacts.get(name) if record is not None else None
-            if artifact is not None:
-                state = artifact.state()
-                if state is ArtifactState.OVERWRITTEN:
-                    has_replaced_artifact = True
+            result_file = record.result_files.get(name) if record is not None else None
+            if result_file is not None:
+                state = result_file.state()
+                if state is FileState.OVERWRITTEN:
+                    has_replaced_result_file = True
                     current_value = (
-                        self._store.current_value_for_artifact(artifact)
+                        self._store.current_value_for_result_file(result_file)
                         if self._store is not None
                         else None
                     )
                     if current_value is not None:
                         shown_value = current_value
                     warning = (
-                        "The historical artifact was overwritten. Showing the current "
-                        f"contents of {artifact.path.name}; these are not the original "
+                        "The historical result file was overwritten. Showing the current "
+                        f"contents of {result_file.path.name}; these are not the original "
                         "data from the selected calculation."
                     )
-                elif state is ArtifactState.MISSING:
-                    has_unavailable_artifact = True
+                elif state is FileState.MISSING:
+                    has_unavailable_result_file = True
                     disable_actions = True
                     warning = (
-                        "The historical artifact no longer exists, so its original "
+                        "The historical result file no longer exists, so its original "
                         "contents are unavailable."
                     )
-                elif state is ArtifactState.UNAVAILABLE:
-                    has_unavailable_artifact = True
+                elif state is FileState.UNAVAILABLE:
+                    has_unavailable_result_file = True
                     disable_actions = True
                     warning = (
-                        "The historical artifact cannot currently be inspected, so "
+                        "The historical result file cannot currently be inspected, so "
                         "its contents are unavailable."
                     )
 
@@ -538,18 +538,18 @@ class ResultActionsWidget(QWidget):
                 disable_actions=disable_actions,
             )
 
-        if has_replaced_artifact:
-            self._artifact_warning.setText(
+        if has_replaced_result_file:
+            self._result_file_warning.setText(
                 "⚠ Historical result files were overwritten. Showing current contents "
                 "where available; these are not the original data from the selected "
                 "calculation."
             )
-            self._artifact_warning.show()
-        elif has_unavailable_artifact:
-            self._artifact_warning.setText(
+            self._result_file_warning.show()
+        elif has_unavailable_result_file:
+            self._result_file_warning.setText(
                 "⚠ Some historical result files are no longer available."
             )
-            self._artifact_warning.show()
+            self._result_file_warning.show()
 
         if self._row_count:
             self._empty_label.hide()

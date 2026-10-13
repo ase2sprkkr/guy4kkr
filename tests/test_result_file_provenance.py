@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication, QToolButton
 
-from guy4ase.gui.application.result_artifacts import ArtifactState
+from guy4ase.gui.application.file_version import FileState
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -73,15 +73,15 @@ def test_result_store_remembers_file_version_after_overwrite(tmp_path):
     path.write_text("historical")
     _store, record, _value = _result_store(path)
 
-    artifact = record.artifacts["dos"]
-    assert artifact.path == path.resolve()
-    assert artifact.state() is ArtifactState.CURRENT
+    result_file = record.result_files["dos"]
+    assert result_file.path == path.resolve()
+    assert result_file.state() is FileState.CURRENT
 
     path.write_text("new current contents")
-    assert artifact.state() is ArtifactState.OVERWRITTEN
+    assert result_file.state() is FileState.OVERWRITTEN
 
     path.unlink()
-    assert artifact.state() is ArtifactState.MISSING
+    assert result_file.state() is FileState.MISSING
 
 
 def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path):
@@ -97,19 +97,19 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     )
     widget.set_results(store)
     assert widget._selected_result_id() == old_record.id
-    assert widget._artifact_warning.isHidden()
+    assert widget._result_file_warning.isHidden()
 
     path.write_text("new current contents")
     new_record, new_value = _add_result(store, path, "new")
-    assert new_record.artifacts["dos"].state() is ArtifactState.CURRENT
-    assert store.current_value_for_artifact(old_record.artifacts["dos"]) is new_value
+    assert new_record.result_files["dos"].state() is FileState.CURRENT
+    assert store.current_value_for_result_file(old_record.result_files["dos"]) is new_value
     assert new_value is not old_value
 
     widget.set_results(store)
     assert widget._selected_result_id() == old_record.id
 
-    assert not widget._artifact_warning.isHidden()
-    warning = widget._artifact_warning.text().lower()
+    assert not widget._result_file_warning.isHidden()
+    warning = widget._result_file_warning.text().lower()
     assert "historical result" in warning
     assert "current contents" in warning
     assert "not the original data" in warning
