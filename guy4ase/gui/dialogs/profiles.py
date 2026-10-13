@@ -220,22 +220,6 @@ class _MpiEditor(QWidget):
             return self.processes.value()
         return shlex.split(self.command.text())
 
-    def setText(self, text: str) -> None:
-        """Compatibility helper for older callers/tests using the former QLineEdit."""
-        text = text.strip()
-        lowered = text.lower()
-        if lowered in {"", "auto"}:
-            self.set_value("auto")
-        elif lowered in {"false", "off", "no"}:
-            self.set_value(False)
-        elif lowered in {"true", "on", "yes"}:
-            self.set_value(True)
-        else:
-            try:
-                self.set_value(int(text))
-            except ValueError:
-                self.set_value(shlex.split(text))
-
 
 class _ProfileForm(QWidget):
     """Edit one mutable profile; backend-specific sections follow its type."""

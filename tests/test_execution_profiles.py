@@ -59,7 +59,7 @@ def test_profile_form_parses_mpi_and_backend_specific_values():
     _application = _app()
     form = profiles_module._ProfileForm()
     form.kind.setCurrentIndex(form.kind.findData("ssh-psij"))
-    form.mpi.setText("8")
+    form.mpi.set_value(8)
     form.host.setText("user@cluster")
     form.ssh_options.setText("-p 2222")
     form.psij_backend.setText("slurm")
@@ -131,7 +131,7 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
         if item.data(profiles_module.Qt.ItemDataRole.UserRole) == "local":
             dialog.list.setCurrentRow(row)
             break
-    dialog.form.mpi.setText("12")
+    dialog.form.mpi.set_value(12)
     dialog.accept()
 
     assert config.profiles.saved == {

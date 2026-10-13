@@ -107,6 +107,8 @@ def test_mpi_editor_supports_all_modes():
     _application = _app()
     editor = profiles_module._MpiEditor()
 
+    assert not hasattr(editor, "setText")
+
     for mode, value in (
         ("auto", "auto"),
         ("enabled", True),
