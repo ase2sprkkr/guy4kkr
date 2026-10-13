@@ -29,8 +29,8 @@
 - `application`: shared observable state, kept separate from windows and
   reusable widgets. `application.workspace.WorkspaceState` is the
   Qt-independent draft for the next calculation. `WorkspaceController` is the
-  single mutation/signalling boundary for that draft and owns the transitions
-  between the draft and explicitly selected historical calculation states.
+  single mutation/signalling boundary for that draft and owns explicit
+  activation of reusable historical potentials.
   `application.result_store.ResultStore` independently owns completed-result
   provenance as a structure/lineage/state tree. Concrete file actions call
   public ASE/ASE2SPRKKR APIs directly in their owning flow;
@@ -58,45 +58,57 @@ module paths and `calculation_setup` package have no compatibility wrappers.
 
 ### Workspace and result lifecycle
 
-The workspace and completed results have deliberately different ownership.
-`WorkspaceState` contains only the structure, potential, input parameters and
+The workspace and completed results deliberately have different ownership.
+`WorkspaceState` owns the mutable structure, potential, input parameters and
 working directory that would be used for the next calculation. Editing those
-values never deletes or marks historical results stale. A concrete calculable
-state is identified by a result-store state and contains the matching atoms and
-potential together; switching to a different historical structure therefore
-also switches to the potential belonging to that state.
+values never deletes or marks historical results stale. `ResultStore` does not
+archive historical `Atoms` or potential contents; completed-result provenance
+therefore stays small and cannot accidentally keep a second mutable structure
+authority alive.
 
 `ResultStore` is not a chronological history list. It stores physical-structure
-groups, internal calculation lineages, concrete structure/potential states and
-the results attached to those states. IDs are assigned identities and are never
+groups, internal calculation lineages, calculation-state identities and the
+results attached to those states. IDs are assigned identities and are never
 inferred from file contents. The exact state graph is provenance, not the GUI
-hierarchy. Native results are projected as a deliberately flatter tree:
-SCF and Empty Spheres operations are siblings below the physical structure,
-while DOS, BSF and other potential-dependent results are children of the SCF
-result that produced the potential they actually used. There are no user-facing
-lineage or `Potential N` nodes.
+hierarchy. Native results are projected as a deliberately flatter tree: SCF and
+Empty Spheres operations are siblings below the physical structure, while DOS,
+BSF and other potential-dependent results are children of the SCF result that
+produced the potential they actually used. There are no user-facing lineage or
+`Potential N` nodes.
 
-Potential provenance is explicit on calculation states. An operation that keeps
-a potential keeps its SCF source; an operation such as Empty Spheres that
-invalidates the potential clears that source. Views therefore never infer a
-potential source merely by walking state ancestors.
+Potential provenance is represented by a cheap versioned file reference: path
+plus filesystem metadata such as nanosecond modification time, size and file
+identity. The potential is deliberately not hashed or copied. This is enough to
+distinguish an ordinary overwrite while retaining the path at which a usable
+current version may still exist. A calculation state also explicitly records
+the SCF result that produced its potential; an operation such as Empty Spheres
+that invalidates the potential clears that source.
 
-A launched calculation captures a `CalculationRequest`. When it finishes,
-`WorkspaceController.record_finished_calculation()` requires that exact request
-and always records the result against its launch structure/state. An SCF result
-may fast-forward the workspace to its output potential only if the request's
-input state is still the active workspace state. A later result from an older
-state is recorded in its original lineage but never reactivates itself.
-`Use for New Calculation` creates a new lineage and is therefore a write
-barrier for already running calculations.
+Historical reuse is best-effort rather than archival. If the exact recorded
+potential version still exists, selecting it reloads that file and reactivates
+the corresponding state. If the same path now contains another version, the UI
+offers to continue with the current version instead; accepting it creates a new
+state from the file that exists now rather than pretending that the historical
+version survived. If no usable file exists, the historical result remains in
+the provenance tree but cannot reconstruct a calculation input by itself.
+
+A launched calculation captures a `CalculationRequest`. Its atoms are the
+active workspace structure; ASE2SPRKKR is run with `empty_spheres=False`, so
+backend preparation may lazily initialize SPR-KKR data but does not change the
+physical structure. Input parameter values are copied. When a calculation
+finishes, `WorkspaceController.record_finished_calculation()` requires that
+exact request and always records the result against its launch structure/state.
+An SCF result may fast-forward the workspace to its output potential only if the
+request's input state is still the active workspace state. A later result from
+an older state is recorded in its original lineage but never reactivates itself.
+`Use for New Calculation` creates a new lineage and is therefore a write barrier
+for already running calculations.
 
 Outputs opened from disk take the separate `adopt_external_result()` path. An
 imported output is recorded without implicitly replacing the workspace and is
 grouped under its source directory in the result view. Imported files do not
-have an invented SCF lineage. If an imported SCF state is explicitly activated
-and a later Guy4ASE calculation uses that potential, the dependent result stays
-nested below that imported SCF in the directory branch. Views may explicitly
-activate a historical state afterwards.
+have an invented SCF lineage. A reusable imported SCF potential follows the same
+file-version rules as a native result.
 
 File flows load or parse each document once, then use Qt waiting only around a
 short revision-sensitive draft transition. Structure and input-file loading

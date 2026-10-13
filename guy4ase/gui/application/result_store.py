@@ -1,6 +1,7 @@
 """Calculation-result provenance independent of the mutable workspace draft."""
 from __future__ import annotations
 
+import stat as stat_module
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,55 @@ def _task_name(result: Any) -> str:
 
 
 @dataclass(frozen=True)
+class PotentialFileVersion:
+    """Cheap identity of one concrete version of a potential file.
+
+    The file contents are deliberately not retained or hashed.  Provenance only
+    needs to distinguish ordinary replacement/modification of a file while still
+    remembering the path whose current version may later be reused.
+    """
+
+    path: Path
+    is_file: bool
+    mtime_ns: int | None
+    ctime_ns: int | None
+    size: int | None
+    device: int | None
+    inode: int | None
+
+    @classmethod
+    def capture(cls, path: str | Path) -> "PotentialFileVersion":
+        resolved = Path(path).expanduser().absolute()
+        try:
+            info = resolved.stat()
+        except OSError:
+            return cls(resolved, False, None, None, None, None, None)
+        return cls(
+            resolved,
+            stat_module.S_ISREG(info.st_mode),
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_size,
+            info.st_dev,
+            info.st_ino,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Whether this captured version represented a regular file."""
+        return self.is_file and self.mtime_ns is not None
+
+    def current(self) -> "PotentialFileVersion":
+        """Capture the file currently present at the same path."""
+        return type(self).capture(self.path)
+
+    def is_current(self) -> bool:
+        """Whether this exact captured version is still present on disk."""
+        current = self.current()
+        return current.available and current == self
+
+
+@dataclass(frozen=True)
 class StructureGroup:
     """Identity and display metadata for one physical structure."""
 
@@ -28,36 +78,45 @@ class StructureGroup:
 
 @dataclass(frozen=True)
 class CalculationStateRecord:
-    """One concrete structure/potential state in a calculation lineage.
+    """One structure/potential state in a calculation lineage.
 
-    Identity is assigned, never inferred from contents. ``potential_source_result_id``
-    identifies the SCF result that produced the state's current potential. It is
-    preserved across states that deliberately reuse the same potential and cleared
-    when an operation invalidates it.
+    The state deliberately does not retain ``Atoms``.  Structure data lives in
+    the mutable workspace while completed-result provenance keeps only assigned
+    identities and the cheap identity of the potential file version.  Historical
+    states are therefore reusable only while their potential can be reconstructed
+    from the filesystem.
+
+    ``potential_source_result_id`` identifies the SCF result that produced the
+    state's potential.  It is preserved across states that deliberately reuse the
+    same potential and cleared when an operation invalidates it.
     """
 
     id: int
     structure_id: int
     parent_id: int | None
     lineage_id: int
-    atoms: Any
-    potential_path: str | None
+    potential: PotentialFileVersion | None
     produced_by_result_id: int | None = None
     potential_source_result_id: int | None = None
+
+    @property
+    def potential_path(self) -> str | None:
+        return str(self.potential.path) if self.potential is not None else None
 
 
 @dataclass(frozen=True)
 class ResultRecord:
-    """Immutable provenance captured for one completed calculation/operation."""
+    """Lightweight provenance captured for one completed calculation/operation."""
 
     id: int
     result: Any
     structure_id: int | None
     input_state_id: int | None
     output_state_id: int | None
-    atoms: Any | None
     input_parameters: Any | None
     directory: str | None
+    input_potential: PotentialFileVersion | None = None
+    output_potential: PotentialFileVersion | None = None
     output_path: Path | None = None
     potential_path: Path | None = None
     imported: bool = False
@@ -137,11 +196,7 @@ class ResultStore:
         return self._states.get(state_id) if state_id is not None else None
 
     def potential_source_result(self, state_id: int | None) -> ResultRecord | None:
-        """Return the SCF result that produced the potential used by ``state_id``.
-
-        This is explicit state provenance, not an ancestry heuristic. A state with
-        no valid potential therefore never falls back to an older ancestor SCF.
-        """
+        """Return the SCF result that produced the potential used by ``state_id``."""
         if state_id is None:
             return None
         source_id = self.state(state_id).potential_source_result_id
@@ -211,8 +266,7 @@ class ResultStore:
         lineage_id = self._allocate_lineage(structure_id)
         state_id = self._new_state(
             structure_id,
-            atoms,
-            potential_path=potential_path,
+            potential=self._potential_version(potential_path),
             parent_id=None,
             lineage_id=lineage_id,
             produced_by_result_id=produced_by_result_id,
@@ -230,10 +284,15 @@ class ResultStore:
         potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
         new_lineage: bool = False,
     ) -> int:
-        """Create a state below ``parent_id`` and assign its internal lineage."""
+        """Create a state below ``parent_id`` without retaining ``atoms``."""
+        del atoms  # accepted for compatibility; ResultStore does not own structures
         parent = self.state(parent_id)
         reuses_potential = potential_path is _KEEP_POTENTIAL
-        resolved_potential = parent.potential_path if reuses_potential else potential_path
+        resolved_potential = (
+            parent.potential
+            if reuses_potential
+            else self._potential_version(potential_path)
+        )
         resolved_source = (
             parent.potential_source_result_id
             if potential_source_result_id is _KEEP_POTENTIAL_SOURCE and reuses_potential
@@ -255,8 +314,7 @@ class ResultStore:
         )
         return self._new_state(
             parent.structure_id,
-            parent.atoms if atoms is None else atoms,
-            potential_path=resolved_potential,
+            potential=resolved_potential,
             parent_id=parent.id,
             lineage_id=lineage_id,
             produced_by_result_id=produced_by_result_id,
@@ -278,6 +336,7 @@ class ResultStore:
         output_potential_path: str | None = None,
         imported: bool = False,
     ) -> ResultRecord:
+        del atoms  # provenance intentionally does not retain the mutable structure
         result_id = self._next_result_id
         self._next_result_id += 1
         task_name = _task_name(result)
@@ -287,6 +346,11 @@ class ResultStore:
             else None
         )
 
+        input_potential = (
+            self.state(input_state_id).potential
+            if input_state_id is not None
+            else None
+        )
         output_state_id = None
         if output_atoms is not None:
             if structure_id is None:
@@ -307,15 +371,21 @@ class ResultStore:
                     potential_source_result_id=potential_source_result_id,
                 )
 
+        output_potential = (
+            self.state(output_state_id).potential
+            if output_state_id is not None
+            else None
+        )
         record = ResultRecord(
             id=result_id,
             result=result,
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
-            atoms=atoms,
             input_parameters=input_parameters,
             directory=directory,
+            input_potential=input_potential,
+            output_potential=output_potential,
             output_path=output_path,
             potential_path=potential_path,
             imported=imported,
@@ -391,6 +461,14 @@ class ResultStore:
             imported=True,
         )
 
+    @staticmethod
+    def _potential_version(path: str | Path | None | object) -> PotentialFileVersion | None:
+        if path is None:
+            return None
+        if path is _KEEP_POTENTIAL:
+            raise ValueError("_KEEP_POTENTIAL must be resolved before capture.")
+        return PotentialFileVersion.capture(path)
+
     def _allocate_lineage(self, structure_id: int) -> int:
         lineage_id = self._next_lineage_id
         self._next_lineage_id += 1
@@ -404,9 +482,8 @@ class ResultStore:
     def _new_state(
         self,
         structure_id: int,
-        atoms: Any,
         *,
-        potential_path: str | None,
+        potential: PotentialFileVersion | None,
         parent_id: int | None,
         lineage_id: int,
         produced_by_result_id: int | None,
@@ -419,8 +496,7 @@ class ResultStore:
             structure_id=structure_id,
             parent_id=parent_id,
             lineage_id=lineage_id,
-            atoms=atoms,
-            potential_path=potential_path,
+            potential=potential,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=potential_source_result_id,
         )

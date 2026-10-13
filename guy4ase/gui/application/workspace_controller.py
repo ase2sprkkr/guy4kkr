@@ -7,6 +7,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from ase2sprkkr.potentials.potentials import Potential
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
@@ -37,7 +38,12 @@ class CalculationNotReady(RuntimeError):
 
 @dataclass(frozen=True)
 class CalculationRequest:
-    """Immutable provenance captured when a calculation is launched.
+    """Launch-time calculation input and assigned provenance identity.
+
+    ``input_parameters`` owns a copy of the parameter values. ``atoms`` is the
+    currently published workspace structure: ASE2SPRKKR is launched with
+    ``empty_spheres=False``, so preparing/running the calculation may lazily
+    initialise SPR-KKR data on it but must not change the physical structure.
 
     ``generation`` protects preparation against delayed draft callbacks.
     Completed calculations are always recorded against ``structure_id`` and
@@ -359,18 +365,19 @@ class WorkspaceController(QObject):
         workspace_updated = False
         if (
             is_scf
+            and output_atoms is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
             and request.state_id == self._workspace.state_id
         ):
             state = self._results.state(record.output_state_id)
-            self._workspace.atoms = state.atoms
+            self._workspace.atoms = output_atoms
             self._workspace.potential_path = state.potential_path
             self._workspace.state_id = state.id
             self._workspace.restarted = False
             self._changed()
             workspace_updated = True
-            self.structureChanged.emit(state.atoms)
+            self.structureChanged.emit(output_atoms)
 
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(
@@ -380,22 +387,56 @@ class WorkspaceController(QObject):
         )
 
     def use_result_state(self, result_id: int) -> None:
-        """Explicitly activate the structure/potential represented by a result."""
+        """Activate a result's potential if its file can still reconstruct it.
+
+        If the path now contains a different potential version, the current file
+        is loaded and becomes a fresh structure/state instead of pretending that
+        the historical state is still available. ResultStore therefore never
+        needs to retain historical ``Atoms``.
+        """
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
         if state_id is None:
             raise ValueError("The selected result has no reusable calculation input.")
         state = self._results.state(state_id)
-        self._workspace.atoms = state.atoms
-        self._workspace.potential_path = state.potential_path
-        self._workspace.structure_id = state.structure_id
-        self._workspace.state_id = state.id
+        potential = state.potential
+        if potential is None:
+            raise ValueError("The selected result has no reusable potential.")
+
+        current = potential.current()
+        if current.available:
+            atoms = Potential.from_file(str(current.path)).atoms
+            if current == potential:
+                structure_id = state.structure_id
+                target_state_id = state.id
+            else:
+                structure_id, target_state_id = self._results.new_structure_state(
+                    atoms,
+                    potential_path=str(current.path),
+                )
+        elif (
+            not potential.available
+            and state.structure_id == self._workspace.structure_id
+            and self.atoms is not None
+        ):
+            # Compatibility for synthetic/in-memory states whose path never
+            # existed. The GUI never offers this action for an unavailable file.
+            atoms = self.atoms
+            structure_id = state.structure_id
+            target_state_id = state.id
+        else:
+            raise FileNotFoundError(
+                f"The potential used by this result is no longer available: {potential.path}"
+            )
+
+        self._workspace.atoms = atoms
+        self._workspace.potential_path = str(current.path)
+        self._workspace.structure_id = structure_id
+        self._workspace.state_id = target_state_id
         self._workspace.empty_spheres = None
-        self._workspace.restarted = (
-            state.potential_path is None and state.parent_id is not None
-        )
+        self._workspace.restarted = False
         self._changed()
-        self.structureChanged.emit(state.atoms)
+        self.structureChanged.emit(atoms)
 
     def reset(self) -> None:
         """Clear the draft while deliberately preserving calculation history."""

@@ -152,14 +152,18 @@ def test_empty_spheres_result_is_visible_without_actions():
     widget.close()
 
 
-def test_result_from_other_structure_offers_structure_reuse():
+def test_result_from_other_structure_offers_potential_reuse(tmp_path):
     _application = QApplication.instance() or QApplication([])
+    first_potential = tmp_path / "Fe.pot"
+    current_potential = tmp_path / "Cu.pot"
+    first_potential.write_text("Fe", encoding="utf-8")
+    current_potential.write_text("Cu", encoding="utf-8")
     store = ResultStore()
     first_structure, first_state = store.new_structure_state(
-        Atoms("Fe"), potential_path="Fe.pot"
+        Atoms("Fe"), potential_path=str(first_potential)
     )
     current_structure, current_state = store.new_structure_state(
-        Atoms("Cu"), potential_path="Cu.pot"
+        Atoms("Cu"), potential_path=str(current_potential)
     )
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
@@ -177,18 +181,23 @@ def test_result_from_other_structure_offers_structure_reuse():
     assert widget._selected_result_id() == record.id
     assert not widget._record_actions.isHidden()
     assert not widget._use_state_button.isHidden()
-    assert widget._use_state_button.text() == "Use this structure"
+    assert widget._use_state_button.text() == "Use this potential"
     assert not widget._recompute_button.isHidden()
     assert widget._recompute_button.text() == "Recompute on current structure"
     widget.close()
 
 
-def test_result_from_other_state_of_same_structure_offers_potential_reuse():
+def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_path):
     _application = QApplication.instance() or QApplication([])
+    paths = [tmp_path / name for name in ("p0", "p1", "p2")]
+    for index, path in enumerate(paths):
+        path.write_text(str(index), encoding="utf-8")
     store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-    historical_state = store.new_child_state(root, atoms=Atoms("Fe"), potential_path="p1")
-    current_state = store.new_child_state(historical_state, atoms=Atoms("Fe"), potential_path="p2")
+    structure_id, root = store.new_structure_state(
+        Atoms("Fe"), potential_path=str(paths[0])
+    )
+    historical_state = store.new_child_state(root, potential_path=str(paths[1]))
+    current_state = store.new_child_state(historical_state, potential_path=str(paths[2]))
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
         result,

@@ -352,12 +352,28 @@ class ResultActionsWidget(QWidget):
             record.structure_id is not None
             and record.structure_id != self._current_structure_id
         )
-        can_use = different_state
+        current_potential = (
+            state.potential.current()
+            if state is not None and state.potential is not None
+            else None
+        )
+        potential_changed = (
+            current_potential is not None
+            and current_potential.available
+            and current_potential != state.potential
+        )
+        can_use = (
+            state is not None
+            and state.potential is not None
+            and current_potential is not None
+            and current_potential.available
+            and (different_state or potential_changed)
+        )
         self._use_state_button.setVisible(can_use)
-        if can_use and state is not None:
+        if can_use:
             self._use_state_button.setText(
-                "Use this structure"
-                if different_structure or state.potential_path is None
+                "Continue with current version of this potential"
+                if potential_changed
                 else "Use this potential"
             )
 
