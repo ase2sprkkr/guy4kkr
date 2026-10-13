@@ -53,7 +53,7 @@ def _job():
         target="Local",
         return_code=None,
         message=None,
-        artifact_state=None,
+        result_files_state=None,
         attachable=True,
     )
 
