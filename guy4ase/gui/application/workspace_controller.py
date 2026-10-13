@@ -405,6 +405,32 @@ class WorkspaceController(QObject):
             workspace_updated=workspace_updated,
         )
 
+    def _known_state_for_potential(
+        self,
+        potential: PotentialFileVersion,
+    ):
+        """Return the newest known output state for one exact potential version."""
+        best_record = None
+        for structure in self._results.structures:
+            for candidate in self._results.structure_results(structure.id):
+                if (
+                    candidate.output_state_id is not None
+                    and candidate.output_potential == potential
+                    and (best_record is None or candidate.id > best_record.id)
+                ):
+                    best_record = candidate
+        for directory in self._results.import_directories:
+            for candidate in self._results.imported_results(directory):
+                if (
+                    candidate.output_state_id is not None
+                    and candidate.output_potential == potential
+                    and (best_record is None or candidate.id > best_record.id)
+                ):
+                    best_record = candidate
+        if best_record is None:
+            return None
+        return self._results.state(best_record.output_state_id)
+
     def use_result_state(
         self,
         result_id: int,
@@ -415,8 +441,8 @@ class WorkspaceController(QObject):
         ``expected_potential`` is the fingerprint used when the UI decided which
         action text to show. If the path changes before or during parsing, the
         activation is rejected without mutating the workspace or ResultStore.
-        A newer version can therefore be used only after the UI has rendered and
-        the user has explicitly approved that newer version.
+        If that exact version is already represented by a known output state,
+        the existing state is reused so its result provenance is preserved.
         """
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
@@ -435,6 +461,11 @@ class WorkspaceController(QObject):
                 f"Potential file changed after it was presented: {expected_potential.path}"
             )
 
+        if self.state_id is not None:
+            active_state = self._results.state(self.state_id)
+            if active_state.potential == expected_potential:
+                return
+
         atoms = Potential.from_file(str(expected_potential.path)).atoms
         after = PotentialFileVersion.capture(expected_potential.path)
         if not after.available or after != expected_potential:
@@ -446,11 +477,16 @@ class WorkspaceController(QObject):
             structure_id = state.structure_id
             target_state_id = state.id
         else:
-            structure_id, target_state_id = self._results.new_structure_state(
-                atoms,
-                potential_path=str(expected_potential.path),
-                potential_version=expected_potential,
-            )
+            known_state = self._known_state_for_potential(expected_potential)
+            if known_state is not None:
+                structure_id = known_state.structure_id
+                target_state_id = known_state.id
+            else:
+                structure_id, target_state_id = self._results.new_structure_state(
+                    atoms,
+                    potential_path=str(expected_potential.path),
+                    potential_version=expected_potential,
+                )
 
         self._workspace.atoms = atoms
         self._workspace.potential_path = str(expected_potential.path)

@@ -353,6 +353,11 @@ class ResultActionsWidget(QWidget):
             return
 
         state = store.state_for_result(record)
+        active_state = (
+            store.state(self._current_state_id)
+            if self._current_state_id is not None
+            else None
+        )
         different_state = state is not None and state.id != self._current_state_id
         different_structure = (
             record.structure_id is not None
@@ -368,11 +373,17 @@ class ResultActionsWidget(QWidget):
             and current_potential.available
             and current_potential != state.potential
         )
+        active_has_current_potential = (
+            potential_changed
+            and active_state is not None
+            and active_state.potential == current_potential
+        )
         can_use = (
             state is not None
             and state.potential is not None
             and current_potential is not None
             and current_potential.available
+            and not active_has_current_potential
             and (different_state or potential_changed)
         )
         self._use_state_potential_version = current_potential if can_use else None
