@@ -59,10 +59,14 @@ def _resolve_potential_version(
     if version is None:
         return _capture_potential(path)
     if path is None:
-        raise AssertionError("A captured potential version requires its potential path.")
+        raise AssertionError(
+            "A captured potential version requires its potential path."
+        )
     resolved_path = Path(path).expanduser().absolute()
     if version.path != resolved_path:
-        raise AssertionError("Captured potential version does not match potential path.")
+        raise AssertionError(
+            "Captured potential version does not match potential path."
+        )
     return version
 
 
@@ -116,6 +120,15 @@ class ResultRecord:
     output_path: Path | None = None
     potential_path: Path | None = None
     imported: bool = False
+
+
+@dataclass(frozen=True)
+class _PreparedState:
+    """A fully materialized state transition that has not mutated the store yet."""
+
+    state: CalculationStateRecord
+    structure: StructureRecord | None = None
+    creates_branch: bool = False
 
 
 class ResultStore:
@@ -292,7 +305,7 @@ class ResultStore:
             return None
         return self._results[result_ids[-1]]
 
-    def new_structure_state(
+    def _prepare_structure_state(
         self,
         atoms: Any,
         *,
@@ -301,14 +314,13 @@ class ResultStore:
         empty_spheres: EmptySpheresState | None = None,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
-    ) -> tuple[int, int]:
-        resolved_version = _resolve_potential_version(potential_path, potential_version)
+    ) -> _PreparedState:
+        resolved_version = _resolve_potential_version(
+            potential_path,
+            potential_version,
+        )
 
-        structure_id = self._next_structure_id
-        self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
-        self._structures[structure_id] = StructureRecord(structure_id, formula)
-        branch_id = self._allocate_branch(structure_id)
         snapshot = (
             StructureSnapshot.capture(atoms)
             if _snapshot_needed(resolved_version)
@@ -319,20 +331,22 @@ class ResultStore:
             if resolved_version is not None and resolved_version.available
             else None
         )
-        state_id = self._new_state(
-            structure_id,
+        structure = StructureRecord(self._next_structure_id, formula)
+        state = CalculationStateRecord(
+            id=self._next_state_id,
+            structure_id=structure.id,
+            parent_id=None,
+            branch_id=self._next_branch_id,
             potential_path=potential_path,
             potential_version=resolved_version,
             structure_snapshot=snapshot,
             empty_spheres=empty_spheres,
-            parent_id=None,
-            branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=source_result_id,
         )
-        return structure_id, state_id
+        return _PreparedState(state=state, structure=structure, creates_branch=True)
 
-    def new_child_state(
+    def _prepare_child_state(
         self,
         parent_id: int,
         *,
@@ -343,7 +357,7 @@ class ResultStore:
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
         new_branch: bool = False,
-    ) -> int:
+    ) -> _PreparedState:
         parent = self.state(parent_id)
         reuses_potential = potential_path is _KEEP_POTENTIAL
         if reuses_potential:
@@ -391,22 +405,144 @@ class ResultStore:
             self.state(child_id).branch_id == parent.branch_id
             for child_id in self._state_children.get(parent_id, ())
         )
-        branch_id = (
-            self._allocate_branch(parent.structure_id)
-            if new_branch or same_branch_child_exists
-            else parent.branch_id
-        )
-        return self._new_state(
-            parent.structure_id,
+        creates_branch = new_branch or same_branch_child_exists
+        branch_id = self._next_branch_id if creates_branch else parent.branch_id
+        state = CalculationStateRecord(
+            id=self._next_state_id,
+            structure_id=parent.structure_id,
+            parent_id=parent.id,
+            branch_id=branch_id,
             potential_path=resolved_path,
             potential_version=resolved_version,
             structure_snapshot=resolved_snapshot,
             empty_spheres=resolved_empty_spheres,
-            parent_id=parent.id,
-            branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=resolved_source,
         )
+        return _PreparedState(state=state, creates_branch=creates_branch)
+
+    def _validate_prepared_state(self, prepared: _PreparedState) -> None:
+        state = prepared.state
+        if state.id != self._next_state_id:
+            raise AssertionError(
+                "Prepared state no longer matches the store state counter."
+            )
+        if prepared.structure is not None:
+            if prepared.structure.id != self._next_structure_id:
+                raise AssertionError(
+                    "Prepared structure no longer matches the store structure counter."
+                )
+            if state.structure_id != prepared.structure.id:
+                raise AssertionError("Prepared state belongs to the wrong structure.")
+        elif state.structure_id not in self._structures:
+            raise AssertionError("Prepared state belongs to an unknown structure.")
+        if prepared.creates_branch and state.branch_id != self._next_branch_id:
+            raise AssertionError(
+                "Prepared state no longer matches the store branch counter."
+            )
+
+    def _commit_prepared_state(self, prepared: _PreparedState) -> None:
+        self._validate_prepared_state(prepared)
+        state = prepared.state
+        structure = prepared.structure
+
+        if structure is not None:
+            self._structures[structure.id] = structure
+            self._next_structure_id += 1
+        if prepared.creates_branch:
+            self._structure_branches.setdefault(state.structure_id, []).append(
+                state.branch_id
+            )
+            self._next_branch_id += 1
+        self._states[state.id] = state
+        self._next_state_id += 1
+        if state.parent_id is not None:
+            self._state_children.setdefault(state.parent_id, []).append(state.id)
+
+    def new_structure_state(
+        self,
+        atoms: Any,
+        *,
+        potential_path: str | None,
+        potential_version: PotentialFileVersion | None = None,
+        empty_spheres: EmptySpheresState | None = None,
+        produced_by_result_id: int | None = None,
+        potential_source_result_id: int | None = None,
+    ) -> tuple[int, int]:
+        prepared = self._prepare_structure_state(
+            atoms,
+            potential_path=potential_path,
+            potential_version=potential_version,
+            empty_spheres=empty_spheres,
+            produced_by_result_id=produced_by_result_id,
+            potential_source_result_id=potential_source_result_id,
+        )
+        self._commit_prepared_state(prepared)
+        assert prepared.structure is not None
+        return prepared.structure.id, prepared.state.id
+
+    def new_child_state(
+        self,
+        parent_id: int,
+        *,
+        potential_path: str | None | object = _KEEP_POTENTIAL,
+        potential_version: PotentialFileVersion | None = None,
+        structure_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE,
+        empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
+        produced_by_result_id: int | None = None,
+        potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
+        new_branch: bool = False,
+    ) -> int:
+        prepared = self._prepare_child_state(
+            parent_id,
+            potential_path=potential_path,
+            potential_version=potential_version,
+            structure_snapshot=structure_snapshot,
+            empty_spheres=empty_spheres,
+            produced_by_result_id=produced_by_result_id,
+            potential_source_result_id=potential_source_result_id,
+            new_branch=new_branch,
+        )
+        self._commit_prepared_state(prepared)
+        return prepared.state.id
+
+    def _commit_result(
+        self,
+        record: ResultRecord,
+        *,
+        prepared_state: _PreparedState | None = None,
+    ) -> None:
+        if record.id != self._next_result_id:
+            raise AssertionError(
+                "Prepared result no longer matches the store result counter."
+            )
+        if prepared_state is not None:
+            self._validate_prepared_state(prepared_state)
+            if prepared_state.state.id not in (
+                record.input_state_id,
+                record.output_state_id,
+            ):
+                raise AssertionError(
+                    "Prepared result does not reference its prepared state."
+                )
+
+        if prepared_state is not None:
+            self._commit_prepared_state(prepared_state)
+        self._results[record.id] = record
+        self._next_result_id += 1
+
+        state_id = record.output_state_id or record.input_state_id
+        if record.imported:
+            imported_ids = self._imported_result_ids_by_directory.setdefault(
+                record.directory, []
+            )
+            imported_ids.append(record.id)
+        elif state_id is None:
+            self._unstructured_result_ids.append(record.id)
+        else:
+            self._result_ids_by_state.setdefault(state_id, []).append(record.id)
+        if record.imported and state_id is not None:
+            self._result_ids_by_state.setdefault(state_id, []).append(record.id)
 
     def add_result(
         self,
@@ -434,15 +570,19 @@ class ResultStore:
                     f"{input_state.structure_id}, not {structure_id}."
                 )
 
-        result_id = self._next_result_id
-        self._next_result_id += 1
+        # Everything below that can call user/backend code or inspect mutable files is
+        # completed before the store commits any counters, states or result indexes.
         task_name = _task_name(result)
+        parameter_snapshot = _snapshot_input_parameters(input_parameters)
+        artifacts = capture_result_artifacts(result)
+        result_id = self._next_result_id
         potential_source_result_id = (
             result_id
             if task_name == "scf" and output_potential_path is not None
             else None
         )
 
+        prepared_state = None
         output_state_id = None
         produces_state = (
             output_atoms is not None
@@ -457,13 +597,15 @@ class ResultStore:
                 )
                 if output_atoms is None:
                     raise ValueError("A new structure state requires atoms.")
-                structure_id, output_state_id = self.new_structure_state(
+                prepared_state = self._prepare_structure_state(
                     output_atoms,
                     potential_path=output_potential_path,
                     empty_spheres=root_empty_spheres,
                     produced_by_result_id=result_id,
                     potential_source_result_id=potential_source_result_id,
                 )
+                assert prepared_state.structure is not None
+                structure_id = prepared_state.structure.id
             else:
                 if input_state is None:
                     raise ValueError("A derived result requires an input state.")
@@ -476,7 +618,7 @@ class ResultStore:
                 child_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE
                 if output_atoms is not None:
                     child_snapshot = StructureSnapshot.capture(output_atoms)
-                output_state_id = self.new_child_state(
+                prepared_state = self._prepare_child_state(
                     input_state_id,
                     potential_path=child_potential,
                     structure_snapshot=child_snapshot,
@@ -484,6 +626,7 @@ class ResultStore:
                     produced_by_result_id=result_id,
                     potential_source_result_id=potential_source_result_id,
                 )
+            output_state_id = prepared_state.state.id
 
         record = ResultRecord(
             id=result_id,
@@ -492,24 +635,15 @@ class ResultStore:
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
-            input_parameters=_snapshot_input_parameters(input_parameters),
+            input_parameters=parameter_snapshot,
             directory=directory,
             restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
-            artifacts=capture_result_artifacts(result),
+            artifacts=artifacts,
             imported=imported,
         )
-        self._results[result_id] = record
-        state_id = output_state_id or input_state_id
-        if imported:
-            self._imported_result_ids_by_directory.setdefault(directory, []).append(result_id)
-        elif state_id is None:
-            self._unstructured_result_ids.append(result_id)
-        else:
-            self._result_ids_by_state.setdefault(state_id, []).append(result_id)
-        if imported and state_id is not None:
-            self._result_ids_by_state.setdefault(state_id, []).append(result_id)
+        self._commit_result(record, prepared_state=prepared_state)
         return record
 
     def add_external_result(
@@ -549,20 +683,30 @@ class ResultStore:
                 imported=True,
             )
 
-        structure_id, state_id = self.new_structure_state(
+        task_name = _task_name(result)
+        parameter_snapshot = _snapshot_input_parameters(input_parameters)
+        artifacts = capture_result_artifacts(result)
+        prepared_state = self._prepare_structure_state(
             atoms,
             potential_path=(str(potential_path) if potential_path else None),
         )
-        return self.add_result(
-            result,
-            structure_id=structure_id,
-            input_state_id=state_id,
-            input_parameters=input_parameters,
+        assert prepared_state.structure is not None
+        record = ResultRecord(
+            id=self._next_result_id,
+            result=result,
+            task_name=task_name,
+            structure_id=prepared_state.structure.id,
+            input_state_id=prepared_state.state.id,
+            output_state_id=None,
+            input_parameters=parameter_snapshot,
             directory=directory,
             output_path=output_path,
             potential_path=potential_path,
+            artifacts=artifacts,
             imported=True,
         )
+        self._commit_result(record, prepared_state=prepared_state)
+        return record
 
     def branch_path(self, record: ResultRecord) -> tuple[int, ...]:
         if record.structure_id is None:
@@ -572,40 +716,3 @@ class ResultStore:
         if branch_id is None or len(branches) <= 1:
             return ()
         return (self.branch_number(record.structure_id, branch_id),)
-
-    def _allocate_branch(self, structure_id: int) -> int:
-        branch_id = self._next_branch_id
-        self._next_branch_id += 1
-        self._structure_branches.setdefault(structure_id, []).append(branch_id)
-        return branch_id
-
-    def _new_state(
-        self,
-        structure_id: int,
-        *,
-        potential_path: str | None,
-        potential_version: PotentialFileVersion | None,
-        structure_snapshot: StructureSnapshot | None,
-        empty_spheres: EmptySpheresState | None,
-        parent_id: int | None,
-        branch_id: int,
-        produced_by_result_id: int | None,
-        potential_source_result_id: int | None,
-    ) -> int:
-        state_id = self._next_state_id
-        self._next_state_id += 1
-        self._states[state_id] = CalculationStateRecord(
-            id=state_id,
-            structure_id=structure_id,
-            parent_id=parent_id,
-            branch_id=branch_id,
-            potential_path=potential_path,
-            potential_version=potential_version,
-            structure_snapshot=structure_snapshot,
-            empty_spheres=empty_spheres,
-            produced_by_result_id=produced_by_result_id,
-            potential_source_result_id=potential_source_result_id,
-        )
-        if parent_id is not None:
-            self._state_children.setdefault(parent_id, []).append(state_id)
-        return state_id

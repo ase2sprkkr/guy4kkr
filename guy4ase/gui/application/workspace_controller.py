@@ -267,20 +267,6 @@ class WorkspaceController(QObject):
         self._workspace.directory = directory
         return True
 
-    def _install_new_structure_state(
-        self,
-        atoms: Any,
-        *,
-        potential_path: str | None,
-    ) -> None:
-        structure_id, state_id = self._results.new_structure_state(
-            atoms,
-            potential_path=potential_path,
-            empty_spheres=self._workspace.empty_spheres,
-        )
-        self._workspace.structure_id = structure_id
-        self._workspace.state_id = state_id
-
     def replace_structure(
         self,
         atoms: Any,
@@ -292,11 +278,17 @@ class WorkspaceController(QObject):
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
+        structure_id, state_id = self._results.new_structure_state(
+            atoms,
+            potential_path=potential_path,
+            empty_spheres=None,
+        )
         self._workspace.atoms = atoms
         self._workspace.potential_path = potential_path
+        self._workspace.structure_id = structure_id
+        self._workspace.state_id = state_id
         self._workspace.empty_spheres = None
         self._workspace.restarted = restarted
-        self._install_new_structure_state(atoms, potential_path=potential_path)
         directory_changed = self._set_directory(directory)
         self._changed()
         if directory_changed:
@@ -322,11 +314,17 @@ class WorkspaceController(QObject):
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
 
+        structure_id, state_id = self._results.new_structure_state(
+            atoms,
+            potential_path=None,
+            empty_spheres=None,
+        )
         self._workspace.atoms = atoms
-        self._workspace.restarted = True
         self._workspace.potential_path = None
+        self._workspace.structure_id = structure_id
+        self._workspace.state_id = state_id
         self._workspace.empty_spheres = None
-        self._install_new_structure_state(atoms, potential_path=None)
+        self._workspace.restarted = True
         self._changed()
         self.structureChanged.emit(atoms)
         return DocumentChange.APPLIED
