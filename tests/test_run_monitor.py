@@ -73,16 +73,15 @@ def test_attached_worker_receives_replayed_output_before_wait():
     assert finished == [result]
 
 
-def test_generic_monitor_close_hides_without_cancelling(monkeypatch):
+def test_generic_monitor_close_hides_without_cancelling():
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(RunMonitorWindow, "_start_worker", lambda self: None)
 
     class RunningThread:
         @staticmethod
         def isRunning():
             return True
 
-    window = RunMonitorWindow(lambda cancellation: object())
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
     window._cancellation = RunCancellation()
     window._thread = RunningThread()
     window.show()

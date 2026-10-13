@@ -7,6 +7,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from ase import Atoms
 from ase2sprkkr.potentials.potentials import PotentialFileChanged
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -63,17 +64,17 @@ class CalculationRequest:
 
     ``atoms`` identifies the authoritative launch input and is the sole physical
     authority for its potential; potential paths are provenance/artifact metadata
-    only. The request may still reference the workspace object, but the run worker
-    copies it at the GUI-thread execution boundary before ASE2SPRKKR sees it.
-    Lazy promotion, site initialization and backend bookkeeping therefore affect
-    only the execution copy. Structural edits remain controller transitions.
+    only. The request may still reference the workspace object, but the execution
+    service copies it before ASE2SPRKKR sees it. Lazy promotion, site
+    initialization and backend bookkeeping therefore affect only the execution
+    copy. Structural edits remain controller transitions.
 
     ``restart_scf`` snapshots the pending workspace execution intent. It asks
     ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
     authoritative workspace potential.
     """
 
-    atoms: Any
+    atoms: Atoms
     input_parameters: Any
     directory: str
     generation: Generation
@@ -151,11 +152,6 @@ class WorkspaceController(QObject):
         """Return the latest result attached to the active workspace state."""
         record = self._results.latest_result_for_state(self.state_id)
         return record.result if record is not None else None
-
-    @property
-    def result_history(self) -> tuple[ResultRecord, ...]:
-        """Compatibility view; presentation should use ``result_store``."""
-        return self._results.results
 
     @property
     def result_store(self) -> ResultStore:
@@ -400,38 +396,14 @@ class WorkspaceController(QObject):
         self,
         loaded: LoadedResult,
         *,
-        request: CalculationRequest | None = None,
+        request: CalculationRequest,
     ) -> ResultAdoption:
-        """Always record a result; fast-forward only the exact active SCF input.
+        """Record a launched result against its exact captured provenance.
 
         A state selected by the user, including ``Use for New Calculation``, is
         a write barrier. Results finishing from an older state remain in their
         original branch and can become active only through an explicit action.
         """
-        if request is None:
-            if self.structure_id is None or self.state_id is None:
-                record = self._results.add_external_result(
-                    loaded.result,
-                    atoms=loaded.atoms,
-                    input_parameters=loaded.input_parameters,
-                    directory=loaded.directory,
-                    output_path=loaded.output_path,
-                    potential_path=loaded.potential_path,
-                    produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
-                    persistent_ref=loaded.persistent_ref,
-                )
-                self.resultChanged.emit(loaded.result)
-                return self._result_adoption(loaded, record=record)
-            request = CalculationRequest(
-                atoms=self.atoms,
-                input_parameters=loaded.input_parameters,
-                directory=loaded.directory or self.directory or "",
-                generation=self.generation,
-                structure_id=self.structure_id,
-                state_id=self.state_id,
-                restart_scf=self.restarted,
-            )
-
         is_scf = _result_is_scf(loaded.result)
         output_atoms = loaded.atoms if is_scf and loaded.atoms is not None else None
         record = self._results.add_result(

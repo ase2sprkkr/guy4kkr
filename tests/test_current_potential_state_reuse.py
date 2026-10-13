@@ -128,10 +128,9 @@ def test_current_version_action_hides_when_scf2_state_is_active(tmp_path):
     )
     widget.set_workspace_state(scf2_state.structure_id, scf2_state.id)
     widget.set_results(store)
-    item = widget._find_result_item(scf1.id)
-    assert item is not None
-    widget._selector.setCurrentItem(item)
+    assert widget.select_result(scf1.id)
 
+    assert widget.selected_result_id == scf1.id
     assert widget._use_state_button.isHidden()
     widget.close()
 
@@ -149,15 +148,13 @@ def test_current_version_action_emits_approved_version(tmp_path):
     )
     widget.set_workspace_state(controller.structure_id, controller.state_id)
     widget.set_results(store)
-    item = widget._find_result_item(scf1.id)
-    assert item is not None
-    widget._selector.setCurrentItem(item)
+    assert widget.select_result(scf1.id)
 
     captured = []
     widget.useStateRequested.connect(
         lambda result_id, version: captured.append((result_id, version))
     )
-    widget._use_selected_state()
+    widget._use_state_button.click()
 
     assert captured == [(scf1.id, PotentialFileVersion.capture(potential))]
     widget.close()

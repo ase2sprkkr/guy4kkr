@@ -2,19 +2,27 @@ from types import SimpleNamespace
 
 from ase import Atoms
 
+from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.result_loading import LoadedResult
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace import Generation, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     WorkspaceController,
 )
-from guy4ase.gui.dialogs.run_calculation import _SprkkrRunWorker
 
 
 class _Parameters:
     def copy(self, *, copy_values: bool):
         assert copy_values
         return _Parameters()
+
+
+class _Cancellation:
+    requested = False
+
+    def register(self, _runner):
+        return True
 
 
 def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
@@ -47,7 +55,7 @@ def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
     assert controller.restarted
 
 
-def test_worker_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
+def test_execution_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
     request = CalculationRequest(
         atoms=Atoms("Fe"),
         input_parameters=object(),
@@ -57,19 +65,20 @@ def test_worker_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
         state_id=1,
         restart_scf=True,
     )
-    worker = _SprkkrRunWorker(request)
-    monkeypatch.setattr(
-        worker,
-        "_file_names",
-        lambda: ("Fe.inp", "Fe.pot", "Fe.out"),
-    )
+    execution = SprkkrExecution(request, _Cancellation())
 
     submitted = []
     seen = {}
 
     class Runner:
+        reference = None
+        id = "test-run"
+
         def submit(self):
             submitted.append(True)
+
+        def wait(self):
+            return object()
 
         def cancel(self):  # pragma: no cover - cancellation is not expected
             raise AssertionError("runner must not be cancelled")
@@ -79,10 +88,17 @@ def test_worker_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
             seen.update(kwargs)
             return Runner()
 
-    runner = worker._launch(Calculator())
+    monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
+    monkeypatch.setattr(
+        execution_module,
+        "load_result",
+        lambda _result, **_kwargs: object(),
+    )
 
-    assert runner is not None
+    execution.run()
+
     assert seen["restart_scf"] is True
-    assert seen["atoms"] is request.atoms
+    assert seen["atoms"] is execution.request.atoms
+    assert seen["atoms"] is not request.atoms
     assert seen["input_parameters"] is request.input_parameters
     assert submitted == [True]

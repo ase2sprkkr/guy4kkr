@@ -6,6 +6,7 @@ from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
+    CalculationRequest,
     DocumentChange,
     WorkspaceController,
 )
@@ -27,9 +28,10 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert workspace.empty_spheres == EmptySpheresState(count=0)
     assert workspace.empty_spheres_added == 0
     assert workspace.empty_spheres_action() == "recalculate"
-    assert controller.result_history[0].result == EmptySpheresResult(found=0)
-    assert controller.result_history[0].input_state_id == state_id
-    assert controller.result_history[0].output_state_id is None
+    record = controller.result_store.results[0]
+    assert record.result == EmptySpheresResult(found=0)
+    assert record.input_state_id == state_id
+    assert record.output_state_id is None
     assert controller.state_id == state_id
     assert controller.generation == generation
 
@@ -59,7 +61,7 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     assert len(original) == 1
     assert len(workspace.atoms) == 2
     assert workspace.empty_spheres == EmptySpheresState(count=1)
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
@@ -83,8 +85,18 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     state = workspace.empty_spheres
     assert state is not None
     assert dict(state.parameters) == search_parameters
-    assert controller.result_history[0].result == EmptySpheresResult(found=0)
+    assert controller.result_store.results[0].result == EmptySpheresResult(found=0)
 
+    assert controller.structure_id is not None
+    assert controller.state_id is not None
+    request = CalculationRequest(
+        atoms=workspace.atoms,
+        input_parameters=object(),
+        directory="",
+        generation=controller.generation,
+        structure_id=controller.structure_id,
+        state_id=controller.state_id,
+    )
     controller.replace_input_parameters(object())
     assert workspace.empty_spheres is state
 
@@ -97,11 +109,12 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
             atoms=None,
             potential_error=None,
             directory=None,
-        )
+        ),
+        request=request,
     )
 
-    assert controller.result_history[0].result is result
-    assert controller.result_history[1].result == EmptySpheresResult(found=0)
+    assert controller.result_store.results[0].result is result
+    assert controller.result_store.results[1].result == EmptySpheresResult(found=0)
     assert workspace.empty_spheres is state
     assert dict(workspace.empty_spheres.parameters) == search_parameters
 

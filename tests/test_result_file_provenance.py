@@ -96,7 +96,7 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
         show_values_without_actions=True,
     )
     widget.set_results(store)
-    assert widget._selected_result_id() == old_record.id
+    assert widget.selected_result_id == old_record.id
     assert widget._result_file_warning.isHidden()
 
     path.write_text("new current contents")
@@ -106,7 +106,7 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     assert new_value is not old_value
 
     widget.set_results(store)
-    assert widget._selected_result_id() == old_record.id
+    assert widget.selected_result_id == old_record.id
 
     assert not widget._result_file_warning.isHidden()
     warning = widget._result_file_warning.text().lower()

@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
+from guy4ase.gui.widgets.input_parameters.expert_tree_renderer import ExpertTreeRole
 from guy4ase.gui.widgets.input_parameters.scalar import IntegerEditor, RealEditor, TextEditor
 
 
@@ -27,6 +28,12 @@ def _row(tree, name, column=0):
     )[0]
 
 
+def _option(dialog, path):
+    item = dialog.tree_editor.option_item(path)
+    assert item is not None
+    return item
+
+
 def test_table_cells_render_through_shared_scalar_editors(application, monkeypatch):
     parameters = InputParameters.create("scf")
     option = parameters.SCF.NITER
@@ -36,7 +43,7 @@ def test_table_cells_render_through_shared_scalar_editors(application, monkeypat
     option.set(table_type.convert([(1, 2.5), (3, 4.5)]))
     dialog = InputParametersDialog(parameters)
     tree = dialog.tree_editor.tree
-    item = dialog.tree_editor._option_rows[("SCF", "NITER")]
+    item = _option(dialog, ("SCF", "NITER"))
 
     assert item.text(2) == "<Table>"
     assert item.childCount() == 2
@@ -59,7 +66,7 @@ def test_table_structured_2d_imported_shape_keeps_existing_rendering(application
     monkeypatch.setattr(option._definition, "grammar_type", table_type)
     option._value = table_type.convert([[1, 2.5], [3, 4.5]])
     dialog = InputParametersDialog(parameters)
-    item = dialog.tree_editor._option_rows[("SCF", "NITER")]
+    item = _option(dialog, ("SCF", "NITER"))
 
     assert item.text(2) == "<Table>"
     assert item.childCount() == 2
@@ -104,7 +111,7 @@ def test_removing_invalid_repeated_editor_clears_validation_state(application):
     dialog = InputParametersDialog(parameters)
     tree_editor = dialog.tree_editor
     tree = tree_editor.tree
-    item = tree_editor._option_rows[("MODE", "MDIR")]
+    item = _option(dialog, ("MODE", "MDIR"))
     occurrence = item.child(1)
     editor = tree.itemWidget(occurrence, 2)
     editor.setText("{not valid")
@@ -128,10 +135,10 @@ def test_tree_array_append_commits_numpy_backed_array_once(application, monkeypa
     monkeypatch.setattr(option._definition, "grammar_type", array_type)
     option.set(np.array([1.5, 2.5]))
     dialog = InputParametersDialog(parameters)
-    item = dialog.tree_editor._option_rows[("TAU", "CLURAD")]
+    item = _option(dialog, ("TAU", "CLURAD"))
     tree = dialog.tree_editor.tree
     append_item = item.child(2)
-    assert append_item.data(0, dialog.tree_editor._APPEND_ROLE)
+    assert append_item.data(0, ExpertTreeRole.APPEND)
     append_editor = tree.itemWidget(append_item, 2)
     append_editor.setValue(3.5)
     application.processEvents()
@@ -139,8 +146,8 @@ def test_tree_array_append_commits_numpy_backed_array_once(application, monkeypa
     result = dialog.session.value(("TAU", "CLURAD"))
     assert isinstance(result, np.ndarray)
     np.testing.assert_array_equal(result, [1.5, 2.5, 3.5])
-    item = dialog.tree_editor._option_rows[("TAU", "CLURAD")]
-    assert item.child(3).data(0, dialog.tree_editor._APPEND_ROLE)
+    item = _option(dialog, ("TAU", "CLURAD"))
+    assert item.child(3).data(0, ExpertTreeRole.APPEND)
     assert dialog.session.undo_stack.count() == 1
     dialog.close()
 
@@ -152,7 +159,7 @@ def test_repeated_dict_array_append_can_be_edited_by_components(application):
     tree_editor = dialog.tree_editor
     tree = tree_editor.tree
     path = ("MODE", "MDIR")
-    root = tree_editor._option_rows[path]
+    root = _option(dialog, path)
 
     append_item = root.child(root.childCount() - 1)
     assert append_item.text(0) == "[1]"
@@ -168,7 +175,7 @@ def test_repeated_dict_array_append_can_be_edited_by_components(application):
     np.testing.assert_array_equal(value[1], [0.25, 0.0, 1.0])
     assert dialog.session.undo_stack.count() == 1
 
-    root = tree_editor._option_rows[path]
+    root = _option(dialog, path)
     assert root.child(root.childCount() - 1).text(0) == "[2]"
     dialog.close()
 
@@ -192,7 +199,7 @@ def test_nested_fixed_array_draft_inside_defaultdict_is_atomic(application, monk
     session = InputParametersSession(parameters, plugins=(RejectDraftPlugin(),))
     dialog = InputParametersDialog(session)
     tree = dialog.tree_editor.tree
-    item = dialog.tree_editor._option_rows[("MODE", "MDIR")]
+    item = _option(dialog, ("MODE", "MDIR"))
     occurrence = item.child(1)
     components = [tree.itemWidget(occurrence.child(i), 2) for i in range(3)]
     initial = np.array(session.value(("MODE", "MDIR"))[2], copy=True)
@@ -235,7 +242,7 @@ def test_sequence_nested_array_append_updates_rows_and_one_transaction(applicati
     dialog.activateWindow()
     application.processEvents()
     path = ("SCF", "NITER")
-    item = dialog.tree_editor._option_rows[path]
+    item = _option(dialog, path)
     array_item = item.child(1)
     existing_editor = dialog.tree_editor.tree.itemWidget(array_item.child(0), 2)
     assert isinstance(existing_editor, RealEditor)
@@ -253,7 +260,7 @@ def test_sequence_nested_array_append_updates_rows_and_one_transaction(applicati
     assert isinstance(result, sequence_type.value_type)
     assert result.count == 1
     np.testing.assert_array_equal(result.values, [2.0, 3.0])
-    item = dialog.tree_editor._option_rows[path]
+    item = _option(dialog, path)
     array_item = item.child(1)
     assert array_item.childCount() == 3
     new_append_editor = dialog.tree_editor.tree.itemWidget(array_item.child(2), 2)
@@ -272,7 +279,7 @@ def test_invalid_complete_sequence_uses_whole_value_editor(application, monkeypa
     option._value = sequence_type.value_type(3, "not-a-real")
 
     dialog = InputParametersDialog(parameters)
-    item = dialog.tree_editor._option_rows[("SCF", "NITER")]
+    item = _option(dialog, ("SCF", "NITER"))
 
     assert isinstance(dialog.tree_editor.tree.itemWidget(item, 2), TextEditor)
     assert item.childCount() == 0
@@ -290,7 +297,7 @@ def test_missing_sequence_uses_whole_value_editor_until_complete(application, mo
     dialog = InputParametersDialog(parameters)
     path = ("SCF", "NITER")
     tree = dialog.tree_editor.tree
-    item = dialog.tree_editor._option_rows[path]
+    item = _option(dialog, path)
     editor = tree.itemWidget(item, 2)
 
     assert isinstance(editor, TextEditor)
@@ -300,7 +307,7 @@ def test_missing_sequence_uses_whole_value_editor_until_complete(application, mo
     assert editor.commit()
     application.processEvents()
 
-    item = dialog.tree_editor._option_rows[path]
+    item = _option(dialog, path)
     assert item.childCount() == 2
     assert isinstance(tree.itemWidget(item.child(0), 2), IntegerEditor)
     assert isinstance(tree.itemWidget(item.child(1), 2), RealEditor)
@@ -316,7 +323,7 @@ def test_nested_scalar_change_preserves_existing_editor_widget(application, monk
     _inner, sequence_type = _install_sequence_array(option, monkeypatch)
     option.set(sequence_type.convert([1, np.array([2.0])]))
     dialog = InputParametersDialog(parameters)
-    item = dialog.tree_editor._option_rows[("SCF", "NITER")]
+    item = _option(dialog, ("SCF", "NITER"))
     array_item = item.child(1)
     leaf = dialog.tree_editor.tree.itemWidget(array_item.child(0), 2)
 
@@ -338,7 +345,7 @@ def test_repeated_sequence_nested_array_append_refreshes_occurrence(application,
     })
     dialog = InputParametersDialog(parameters)
     path = ("MODE", "MDIR")
-    root = dialog.tree_editor._option_rows[path]
+    root = _option(dialog, path)
     occurrence = root.child(2)
     array_row = occurrence.child(1)
     append_editor = dialog.tree_editor.tree.itemWidget(array_row.child(1), 2)
@@ -349,7 +356,7 @@ def test_repeated_sequence_nested_array_append_refreshes_occurrence(application,
     value = dialog.session.value(path)[2]
     assert isinstance(value, sequence_type.value_type)
     np.testing.assert_array_equal(value.values, [2.0, 3.0])
-    root = dialog.tree_editor._option_rows[path]
+    root = _option(dialog, path)
     occurrence = root.child(2)
     array_row = occurrence.child(1)
     assert array_row.childCount() == 3
@@ -366,7 +373,7 @@ def test_composite_fixed_array_draft_components_are_leaf_editors(application, mo
     monkeypatch.setattr(option._definition, "grammar_type", outer_type)
     dialog = InputParametersDialog(parameters)
     path = ("TAU", "CLURAD")
-    item = dialog.tree_editor._option_rows[path]
+    item = _option(dialog, path)
     tree = dialog.tree_editor.tree
     components = [tree.itemWidget(item.child(index), 2) for index in range(2)]
 

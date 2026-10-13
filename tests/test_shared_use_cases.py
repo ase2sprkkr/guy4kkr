@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -14,7 +10,6 @@ from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
-from guy4ase.gui.dialogs import run_calculation as run_dialog
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
@@ -27,6 +22,19 @@ class _Parameters:
     def copy(self, *, copy_values: bool):
         assert copy_values
         return _Parameters(f"{self.name}-copy")
+
+
+class _RunWindow:
+    """Flow-level test double for the public run-window constructor contract."""
+
+    def __init__(self, request, parent=None, *, on_finished=None, **_kwargs):
+        self.request = request
+        self.parent = parent
+        self.on_finished = on_finished
+        self.shown = False
+
+    def show(self):
+        self.shown = True
 
 
 def test_workspace_can_calculate_requires_all_inputs():
@@ -68,15 +76,14 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         calculation_flow.run_calculation(
             controller,
             RecentFiles(),
-            ActiveRunRegistry(),
             None,
+            select_profile=False,
         )
 
 
 def test_run_calculation_does_not_hide_result_adoption_errors(
     tmp_path, monkeypatch
 ):
-    _application = QApplication.instance() or QApplication([])
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
@@ -84,11 +91,7 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
             directory=str(tmp_path),
         )
     )
-    monkeypatch.setattr(
-        calculation_flow.SprkkrRunWindow,
-        "_start",
-        lambda _window, _request: None,
-    )
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", _RunWindow)
 
     def broken_adoption(_loaded, *, request):
         assert request.structure_id == controller.structure_id
@@ -104,21 +107,17 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     window = calculation_flow.run_calculation(
         controller,
         RecentFiles(),
-        ActiveRunRegistry(),
         None,
+        select_profile=False,
     )
     assert window is not None
+    assert window.shown
 
     with pytest.raises(RuntimeError, match="broken adoption invariant"):
-        window._finished_callback(object())
-
-    window.close()
+        window.on_finished(object())
 
 
-def test_run_result_handoff_loads_once_and_preserves_backend_result(
-    tmp_path, monkeypatch
-):
-    _application = QApplication.instance() or QApplication([])
+def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
     backend_result = object()
     output_path = tmp_path / "Fe.out"
     loaded = LoadedResult(
@@ -137,52 +136,24 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = ActiveRunRegistry()
-
-    def capture_start(window, request):
-        window._test_request = request
-
-    monkeypatch.setattr(
-        calculation_flow.SprkkrRunWindow,
-        "_start",
-        capture_start,
-    )
-
-    load_calls = []
-
-    def fake_load_result(result, *, fallback_directory):
-        load_calls.append((result, fallback_directory))
-        assert result is backend_result
-        return loaded
-
-    monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
-
-    class Runner:
-        def wait(self):
-            return backend_result
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", _RunWindow)
 
     window = calculation_flow.run_calculation(
         controller,
         history,
-        active_runs,
         None,
+        select_profile=False,
     )
     assert window is not None
 
-    worker = run_dialog._SprkkrRunWorker(window._test_request)
-    monkeypatch.setattr(worker, "_launch", lambda _calculator: Runner())
-    worker.finished.connect(window._on_finished)
-    worker.run()
+    window.on_finished(loaded)
 
-    assert load_calls == [(backend_result, str(tmp_path))]
     assert controller.result is backend_result
-    assert len(controller.result_history) == 1
-    record = controller.result_history[0]
+    assert len(controller.result_store.results) == 1
+    record = controller.result_store.results[0]
     assert record.result is backend_result
-    assert record.input_state_id == window._test_request.state_id
+    assert record.input_state_id == window.request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)
-
-    window.close()
 
 
 def test_edit_current_structure_reads_published_structure_and_commits_replacement():

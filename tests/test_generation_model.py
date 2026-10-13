@@ -70,7 +70,7 @@ def test_result_publication_does_not_advance_workspace_generation(tmp_path):
 
     assert not adoption.workspace_updated
     assert controller.generation == generation
-    assert controller.result_history[0].result is result
+    assert controller.result_store.results[0].result is result
 
 
 def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_path):
@@ -85,7 +85,7 @@ def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_p
     controller.adopt_calculation_result(_loaded(second), request=request_b)
 
     assert controller.generation == generation
-    assert tuple(record.result for record in controller.result_history[:2]) == (
+    assert tuple(record.result for record in controller.result_store.results[:2]) == (
         second,
         first,
     )
@@ -131,6 +131,6 @@ def test_structure_change_does_not_reject_completed_job_from_history(tmp_path):
     adoption = controller.adopt_calculation_result(_loaded(result), request=request)
 
     assert not adoption.workspace_updated
-    assert controller.result_history[0].result is result
-    assert controller.result_history[0].structure_id == old_structure_id
+    assert controller.result_store.results[0].result is result
+    assert controller.result_store.results[0].structure_id == old_structure_id
     assert controller.atoms.get_chemical_symbols() == ["Cu"]

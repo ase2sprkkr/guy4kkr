@@ -1,10 +1,9 @@
 # GUI organization
 
 This document describes the **canonical GUI architecture**. It is an
-architectural contract for new code and refactors, not a promise that every
-legacy compatibility surface has already been removed. Narrow compatibility
-shims may remain while the refactor is in progress; they are migration details,
-not architectural entry points, and new code must not depend on them.
+architectural contract for new code and refactors. Internal migration shims are
+not part of that contract and should be removed rather than preserved as
+alternate APIs.
 
 ## Packages
 
@@ -16,17 +15,18 @@ not architectural entry points, and new code must not depend on them.
   structure-specific controls live in `widgets.structures`.
 - `input_parameters`: parameter-editing state and Qt-independent model helpers.
   It contains the editing session, field bindings, task semantics, validation,
-  tooltips, and declarative task specifications. It does not own finished
-  application windows.
+  DATASET naming, tooltips, and declarative task specifications. It does not own
+  finished application windows.
 - `input_parameters.specs`: declarative guided-layout definitions. `schema`
   defines fields/groups/pages, individual task modules build their layouts, and
   `registry.task_dialog_spec` selects a task specification.
-- `application`: application/document state and provenance. `WorkspaceState`
-  represents the mutable draft prepared for the next calculation;
-  `ResultStore` owns calculation history independently of that draft;
-  `WorkspaceController` is the mutation/signalling boundary between them and
-  the GUI. Persistent application state such as recent files and settings also
-  lives here.
+- `application`: application/document state, calculation execution, and
+  provenance. `WorkspaceState` represents the mutable draft prepared for the
+  next calculation; `ResultStore` owns calculation history independently of
+  that draft; `WorkspaceController` is the mutation/signalling boundary between
+  them and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
+  immutable calculation request. Persistent application state such as recent
+  files and settings also lives here.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. They may show modal UI and call public controller transitions,
   but they do not own application state or top-level windows.
@@ -39,18 +39,23 @@ not architectural entry points, and new code must not depend on them.
   component that owns their meaning.
 
 `guy4ase.main.GuiApplication` is the composition root. It owns one
-`WorkspaceController`, one `ActiveRunRegistry`, one `RecentFiles`, and one
-`ApplicationSettings`, and injects the same shared objects into the workflow
-and expert top-level windows. The windows do not construct another application
-state or another top-level window. Result selection is presentation state; the
-composition root wires explicit result-selection intent separately from result
-history updates.
+`WorkspaceController`, one `RecentFiles`, and one `ApplicationSettings`, and
+injects the same shared objects into the workflow and expert top-level windows.
+The windows do not construct another application state or another top-level
+window. Result selection is presentation state; the composition root wires
+explicit result-selection intent separately from result history updates.
+
+Calculation execution is deliberately not owned by a GUI run registry. A
+`CalculationRequest` captures exact launch provenance, `SprkkrExecution` owns
+runner creation/submission/cancellation/result loading, and `RunMonitorWindow`
+is only the generic Qt monitor. Persistent execution identity and collision
+policy belong to ASE2SPRKKR's runner/persistence layer.
 
 Package `__init__.py` files should stay lightweight and should not become
 alternate import APIs for dialog/widget internals. Canonical imports use the
-concrete modules documented by the current package layout. Some legacy
-compatibility surfaces may still exist elsewhere; their presence is temporary
-and must not be used as precedent for new wrappers or dependencies.
+concrete modules documented by the current package layout. Internal
+compatibility wrappers are not architectural extension points and should not be
+added to accommodate tests or obsolete call shapes.
 
 ## Workspace, results, and provenance
 
@@ -80,11 +85,12 @@ result-adoption semantics are:
   The imported result's atoms, potential, and input parameters belong to that
   result's provenance, not to the active draft. `select_result=True` expresses
   only explicit presentation intent to select that result in the UI.
-- `adopt_calculation_result()` records a result produced from a calculation
-  request. Only an SCF result finishing from the exact currently active input
-  state may fast-forward the workspace to its produced state. A result from an
-  older branch is recorded in that branch and cannot silently overwrite a
-  newer user choice.
+- `adopt_calculation_result()` records a result produced from its mandatory
+  captured `CalculationRequest`. It never reconstructs launch provenance from
+  whatever happens to be active when the result finishes. Only an SCF result
+  finishing from the exact currently active input state may fast-forward the
+  workspace to its produced state. A result from an older branch is recorded in
+  that branch and cannot silently overwrite a newer user choice.
 - `use_result_state()` is the explicit operation for activating a reusable
   historical state (or an explicitly approved current version of its POTFIL).
 - `use_for_new_calculation()` creates a new calculation branch from the active
@@ -93,6 +99,8 @@ result-adoption semantics are:
 The distinction between **recording a result**, **selecting a result for
 presentation**, and **activating a result state for a future calculation** is
 intentional. Do not collapse these operations into one implicit transition.
+Presentation code reads history through `result_store`; controllers do not
+expose duplicate compatibility views of the same history.
 
 ## Parameter editing
 
@@ -166,7 +174,9 @@ session. The accepted result is returned as the fork/current parameter copy.
 presentation and pending editor commits, while the dialog owns modal workflow,
 validation, loading/editing input files, and acceptance. The expert tree and
 guided form share the same session model; neither owns a second authoritative
-parameter object.
+parameter object. Tests and neighboring components use its narrow query API
+such as `option_item(path)` rather than depending on internal row registries or
+Qt role aliases.
 
 Implicit backend defaults are presentation placeholders, not GUI-created
 presets. Focusing or refreshing a control must not turn an implicit default into
@@ -195,7 +205,8 @@ an explicit stored value.
 The checks in `tests/test_gui_architecture.py` protect the broad layer
 directions, acyclic GUI imports, and lightweight import boundaries. Tests should
 protect invariants and public contracts, not freeze incidental implementation
-layout.
+layout. Backend execution behavior is tested through `SprkkrExecution`; only Qt
+signal/thread adaptation belongs in worker-level tests.
 
 ## Common canonical imports
 
@@ -203,10 +214,12 @@ layout.
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.application.result_store import ResultStore
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
+from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor

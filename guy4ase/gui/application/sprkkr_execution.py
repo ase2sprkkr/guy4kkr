@@ -1,0 +1,143 @@
+"""Backend execution service for one SPR-KKR calculation request."""
+from __future__ import annotations
+
+import asyncio
+import warnings
+from dataclasses import replace
+from typing import Any, Callable, Protocol
+
+from ase2sprkkr.execution import MpiNotFoundWarning
+from ase2sprkkr.sprkkr.calculator import SPRKKR
+
+from guy4ase.gui.application.result_loading import LoadedResult, load_result
+from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
+
+
+class Cancellation(Protocol):
+    """Cancellation state required by :class:`SprkkrExecution`."""
+
+    @property
+    def requested(self) -> bool: ...
+
+    def register(self, runner: Any) -> bool: ...
+
+
+class ExecutionCancelled(Exception):
+    """The calculation was cancelled before a result could be adopted."""
+
+
+class SprkkrExecution:
+    """Run one immutable calculation request without any Qt dependency."""
+
+    def __init__(
+        self,
+        request: CalculationRequest,
+        cancellation: Cancellation,
+        *,
+        profile_name: str | None = None,
+        output: Callable[[str, str], None] | None = None,
+        status: Callable[[str], None] | None = None,
+        warning: Callable[[str], None] | None = None,
+    ) -> None:
+        self.request = replace(request, atoms=request.atoms.copy())
+        self.cancellation = cancellation
+        self.profile_name = profile_name
+        self._output = output or (lambda _text, _kind: None)
+        self._status = status or (lambda _text: None)
+        self._warning = warning or (lambda _text: None)
+
+    def file_names(self) -> tuple[str, str, str]:
+        """Return input, potential and output filename templates for the request."""
+        dataset = dataset_value(self.request.input_parameters)
+        if dataset is None:
+            return "%a_%T.inp", "%a.pot", "%a_%T.out"
+        base = filename_component(dataset)
+        if not base:
+            return "%a_%T.inp", "%a.pot", "%a_%T.out"
+        return f"{base}_%T.inp", f"{base}.pot", f"{base}_%T.out"
+
+    def _with_mpi_warnings(self, operation):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", MpiNotFoundWarning)
+            result = operation()
+
+        for item in caught:
+            if issubclass(item.category, MpiNotFoundWarning):
+                self._warning(str(item.message))
+            else:
+                warnings.showwarning(
+                    item.message,
+                    item.category,
+                    item.filename,
+                    item.lineno,
+                    file=item.file,
+                    line=item.line,
+                )
+        return result
+
+    def _calculator(self) -> SPRKKR:
+        return SPRKKR() if self.profile_name is None else SPRKKR(profile=self.profile_name)
+
+    def _create_runner(self, calculator: SPRKKR):
+        input_file, potential_file, output_file = self.file_names()
+        return self._with_mpi_warnings(
+            lambda: calculator.create_run(
+                atoms=self.request.atoms,
+                input_parameters=self.request.input_parameters,
+                directory=self.request.directory,
+                input_file=input_file,
+                potential_file=potential_file,
+                output_file=output_file,
+                empty_spheres=False,
+                read_callback=self._output,
+                print_output=False,
+                persistent=True,
+                restart_scf=self.request.restart_scf,
+            )
+        )
+
+    def _submit(self, calculator: SPRKKR):
+        runner = self._create_runner(calculator)
+        if not self.cancellation.register(runner):
+            runner.cancel()
+            raise ExecutionCancelled
+
+        self._with_mpi_warnings(runner.submit)
+        if self.cancellation.requested:
+            runner.cancel()
+            raise ExecutionCancelled
+        return runner
+
+    def run(self) -> LoadedResult:
+        """Execute the request and return its loaded persistent result."""
+        self._status("Preparing calculation…")
+        runner = self._submit(self._calculator())
+
+        reference = runner.reference
+        if reference is not None:
+            target = reference.computer or reference.executor
+            self._status(f"Running on {target}…")
+        else:
+            self._status("Running…")
+
+        try:
+            result = runner.wait()
+        except asyncio.CancelledError as exc:
+            raise ExecutionCancelled from exc
+        except Exception as exc:
+            if self.cancellation.requested:
+                raise ExecutionCancelled from exc
+            raise
+
+        if self.cancellation.requested:
+            raise ExecutionCancelled
+
+        self._status("Loading result…")
+        loaded = load_result(
+            result,
+            fallback_directory=self.request.directory,
+            persistent_ref=runner.id,
+        )
+        self._status("Finished")
+        return loaded
