@@ -108,6 +108,11 @@ class MainWindow(QMainWindow):
         self._workspace_directory_changed()
         self._refresh_result_panel()
 
+    @property
+    def result_actions_widget(self) -> Optional[ResultActionsWidget]:
+        """Return the result browser owned by this window."""
+        return self._result_actions_widget
+
     def _connect_workspace(self) -> None:
         """Render controller changes without moving view logic into the model."""
         self.controller.structureChanged.connect(
