@@ -87,8 +87,6 @@ class WorkspaceState:
             return None
         if not atoms.has_potential():
             return None
-        if self.restarted:
-            return "START"
         status = atoms.potential.SCF_INFO.SCFSTATUS()
         if status is None:
             return None
@@ -96,8 +94,8 @@ class WorkspaceState:
         return status or None
 
     def is_scf_converged(self) -> bool:
-        """Return convergence of the active workspace potential only."""
-        if self.restarted:
+        """Return whether the active potential is ready as a converged state."""
+        if self.scf_status() == "START":
             return False
         atoms = self.atoms
         if atoms is None:
