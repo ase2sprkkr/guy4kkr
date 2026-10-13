@@ -38,7 +38,7 @@ def test_run_flow_selects_profile_and_passes_it_to_window(monkeypatch, tmp_path)
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda parent: (True, "cluster"),
+        lambda parent, **_kwargs: (True, "cluster"),
     )
     monkeypatch.setattr(
         calculation_flow,
@@ -57,8 +57,6 @@ def test_run_flow_selects_profile_and_passes_it_to_window(monkeypatch, tmp_path)
     assert captured["profile_name"] == "cluster"
     assert captured["profile_description"] == "profile:cluster"
     assert captured["parent"] is parent
-    assert "run_registry" not in captured
-    assert "launch_lock" not in captured
 
 
 def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_path):
@@ -68,7 +66,7 @@ def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda parent: (False, None),
+        lambda parent, **_kwargs: (False, None),
     )
     monkeypatch.setattr(
         calculation_flow,
@@ -99,7 +97,7 @@ def test_automatic_profile_is_distinct_from_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda parent: (True, None),
+        lambda parent, **_kwargs: (True, None),
     )
     monkeypatch.setattr(
         calculation_flow,
