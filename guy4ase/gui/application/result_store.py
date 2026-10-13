@@ -115,6 +115,7 @@ class ResultRecord:
     output_state_id: int | None
     input_parameters: Any | None
     directory: str | None
+    restart_scf: bool = False
     input_potential: PotentialFileVersion | None = None
     output_potential: PotentialFileVersion | None = None
     output_path: Path | None = None
@@ -351,6 +352,7 @@ class ResultStore:
         atoms: Any | None,
         input_parameters: Any | None,
         directory: str | None,
+        restart_scf: bool = False,
         output_path: Path | None = None,
         potential_path: Path | None = None,
         output_atoms: Any | None = None,
@@ -405,6 +407,7 @@ class ResultStore:
             output_state_id=output_state_id,
             input_parameters=input_parameters,
             directory=directory,
+            restart_scf=bool(restart_scf),
             input_potential=input_potential,
             output_potential=output_potential,
             output_path=output_path,
