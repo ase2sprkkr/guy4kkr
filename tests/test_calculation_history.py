@@ -83,14 +83,16 @@ def test_history_groups_jobs_and_shows_selected_metadata():
 
     assert dialog.windowTitle() == "Calculation Jobs"
     assert [dialog.group_by.itemText(i) for i in range(dialog.group_by.count())] == [
-        "Created date",
+        "Started date",
         "Status",
         "Task",
         "Execution target",
     ]
+    assert dialog.tree.headerItem().text(2) == "Started"
     assert dialog.tree.topLevelItem(0).text(0) == "2026-10-13"
     assert dialog.detail_title.text() == "Fe-SCF"
     assert dialog.status_value.text() == "Running"
+    assert dialog.started_value.text() == "2026-10-13 10:00:00"
     assert dialog.result_widget._history_button is None
     assert dialog.load_result_button.isHidden()
 

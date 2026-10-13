@@ -45,8 +45,8 @@ def _timestamp_label(value: str) -> str:
     return parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed is not None else value
 
 
-def _created_date(job: PersistentJob) -> str:
-    parsed = _local_datetime(job.created_at)
+def _started_date(job: PersistentJob) -> str:
+    parsed = _local_datetime(job.started_at)
     return parsed.strftime("%Y-%m-%d") if parsed is not None else "Unknown date"
 
 
@@ -55,7 +55,7 @@ def _status_label(state: str) -> str:
 
 
 _GROUPS: tuple[tuple[str, Callable[[PersistentJob], str]], ...] = (
-    ("Created date", _created_date),
+    ("Started date", _started_date),
     ("Status", lambda job: _status_label(job.state)),
     ("Task", lambda job: job.task or "Unknown task"),
     ("Execution target", lambda job: job.target),
@@ -109,7 +109,7 @@ class CalculationHistoryDialog(QDialog):
 
         self.tree = QTreeWidget(splitter)
         self.tree.setColumnCount(5)
-        self.tree.setHeaderLabels(("Job", "Status", "Created", "Task", "Target"))
+        self.tree.setHeaderLabels(("Job", "Status", "Started", "Task", "Target"))
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         header = self.tree.header()
@@ -135,7 +135,7 @@ class CalculationHistoryDialog(QDialog):
         self.directory_value = QLabel("—", details)
         self.directory_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.dataset_value = QLabel("—", details)
-        self.created_value = QLabel("—", details)
+        self.started_value = QLabel("—", details)
         self.updated_value = QLabel("—", details)
         self.return_code_value = QLabel("—", details)
         self.artifacts_value = QLabel("—", details)
@@ -145,7 +145,7 @@ class CalculationHistoryDialog(QDialog):
             ("Execution target", self.target_value),
             ("Directory", self.directory_value),
             ("Dataset", self.dataset_value),
-            ("Created", self.created_value),
+            ("Started", self.started_value),
             ("Last update", self.updated_value),
             ("Return code", self.return_code_value),
             ("Artifacts", self.artifacts_value),
@@ -187,7 +187,7 @@ class CalculationHistoryDialog(QDialog):
         self._set_jobs(jobs)
 
     def _set_jobs(self, jobs: tuple[PersistentJob, ...]) -> None:
-        self._jobs = tuple(sorted(jobs, key=lambda job: job.created_at, reverse=True))
+        self._jobs = tuple(sorted(jobs, key=lambda job: job.started_at, reverse=True))
         self._jobs_by_id = {job.id: job for job in self._jobs}
         if not self._source.available:
             self.backend_notice.setText(
@@ -226,7 +226,7 @@ class CalculationHistoryDialog(QDialog):
                     [
                         title,
                         _status_label(job.state),
-                        _timestamp_label(job.created_at),
+                        _timestamp_label(job.started_at),
                         job.task,
                         job.target,
                     ]
@@ -279,7 +279,7 @@ class CalculationHistoryDialog(QDialog):
                 self.target_value,
                 self.directory_value,
                 self.dataset_value,
-                self.created_value,
+                self.started_value,
                 self.updated_value,
                 self.return_code_value,
                 self.artifacts_value,
@@ -297,7 +297,7 @@ class CalculationHistoryDialog(QDialog):
         self.directory_value.setText(job.directory or "—")
         self.directory_value.setToolTip(job.directory or "")
         self.dataset_value.setText(job.dataset or "—")
-        self.created_value.setText(_timestamp_label(job.created_at))
+        self.started_value.setText(_timestamp_label(job.started_at))
         self.updated_value.setText(_timestamp_label(job.updated_at))
         self.return_code_value.setText(
             "—" if job.return_code is None else str(job.return_code)

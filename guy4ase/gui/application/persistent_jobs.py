@@ -56,6 +56,11 @@ class PersistentJob:
     artifact_state: str | None
 
     @property
+    def started_at(self) -> str:
+        """Run start time as represented by ASE2SPRKKR's ``created_at`` field."""
+        return self.created_at
+
+    @property
     def is_final(self) -> bool:
         return self.state in _FINAL_STATES
 
