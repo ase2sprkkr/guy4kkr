@@ -125,6 +125,12 @@ class _SprkkrRunWorker(QObject):
             runner.cancel()
             return None
         self._with_mpi_warnings(runner.submit)
+        if self._cancellation.requested:
+            # This second cancel is intentional. Stop may race with the submission
+            # boundary, and a pre-submit cancel can be ineffective for a runner
+            # that cannot cancel until its backend reference exists. cancel() is
+            # idempotent, so repeating it after submit closes that hand-off safely.
+            runner.cancel()
         return runner
 
     @pyqtSlot()
