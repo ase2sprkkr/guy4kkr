@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
@@ -37,6 +38,29 @@ def test_potential_loader_attaches_exact_parsed_potential(tmp_path, monkeypatch)
     assert atoms.has_potential()
     assert atoms.potential is potential
     assert potential.atoms is atoms
+
+
+def test_potential_loader_rejects_file_changed_during_parse(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("old")
+    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    potential = SimpleNamespace(atoms=atoms)
+
+    def parse(value):
+        assert value == str(path.resolve())
+        path.write_text("replacement is deliberately longer")
+        return potential
+
+    monkeypatch.setattr(
+        result_loading.Potential,
+        "from_file",
+        staticmethod(parse),
+    )
+
+    with pytest.raises(RuntimeError, match="changed while it was being read"):
+        result_loading.load_potential_atoms(path)
+
+    assert not atoms.has_potential()
 
 
 def test_potential_structure_flow_uses_authoritative_potential_loader(
