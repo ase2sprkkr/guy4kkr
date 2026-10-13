@@ -4,43 +4,37 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QGroupBox, QPushButton, QVBoxLayout, QWidget
 
-from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
+from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 
 
 class BrowserPanel(QGroupBox):
-    """Host browsers that are broader than the current workspace results.
-
-    Calculation-job history belongs here because it is backed by ASE2SPRKKR's
-    persistent execution store, not by the current ``ResultStore``. Project
-    browsing can be added alongside it without coupling either browser to the
-    result presentation widget.
-    """
+    """Host browsers backed by durable data rather than the current session."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Browse", parent)
-        self._calculation_history: CalculationHistoryDialog | None = None
+        self._project_browser: ProjectBrowserDialog | None = None
 
         layout = QVBoxLayout(self)
-        self.calculation_jobs_button = QPushButton("Calculation Jobs…", self)
-        self.calculation_jobs_button.clicked.connect(self.open_calculation_jobs)
-        layout.addWidget(self.calculation_jobs_button)
+        self.project_browser_button = QPushButton("Project Browser…", self)
+        self.project_browser_button.clicked.connect(self.open_project_browser)
+        layout.addWidget(self.project_browser_button)
 
-    def open_calculation_jobs(self) -> None:
-        """Show the persistent ASE2SPRKKR calculation-job browser."""
-        dialog = self._calculation_history
+    def open_project_browser(self) -> None:
+        """Show persistent projects, their calculation jobs, and results."""
+        dialog = self._project_browser
         if dialog is not None:
             dialog.show()
             dialog.raise_()
             dialog.activateWindow()
             return
 
-        dialog = CalculationHistoryDialog(self)
+        dialog = ProjectBrowserDialog(self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.destroyed.connect(self._calculation_history_closed)
-        self._calculation_history = dialog
+        dialog.destroyed.connect(self._project_browser_closed)
+        self._project_browser = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
 
-    def _calculation_history_closed(self, *_args) -> None:
-        self._calculation_history = None
+    def _project_browser_closed(self, *_args) -> None:
+        self._project_browser = None
