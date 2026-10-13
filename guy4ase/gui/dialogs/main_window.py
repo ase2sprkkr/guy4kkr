@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
@@ -60,7 +59,6 @@ class MainWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        active_runs: ActiveRunRegistry,
         settings: ApplicationSettings,
     ) -> None:
         super().__init__()
@@ -74,7 +72,6 @@ class MainWindow(QMainWindow):
 
         self.controller = controller
         self.recent_history = recent_files
-        self.active_runs = active_runs
         self.settings = settings
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
@@ -282,10 +279,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([1000, 350])
 
     def _build_menu_bar(self) -> None:
-        # Menu bar
         menubar = self.menuBar()
-
-        # Structure menu
         structure_menu = menubar.addMenu("&Structure")
 
         create_action = QAction("&Create New...", self)
@@ -386,7 +380,6 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         structure_menu.addAction(exit_action)
 
-        # Help menu
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
@@ -427,8 +420,6 @@ class MainWindow(QMainWindow):
         welcome_layout.addWidget(subtitle)
 
         welcome_layout.addSpacing(30)
-
-        # Action buttons
         btn_width = 300
 
         create_btn = QPushButton("Create New Structure")
@@ -483,7 +474,6 @@ class MainWindow(QMainWindow):
         load_output_btn.clicked.connect(self.load_sprkkr_output)
         welcome_layout.addWidget(load_output_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
-        # Recent start button (shown only when there are recent files)
         self._recent_start_button = QToolButton(self.welcome_widget)
         self._recent_start_button.setMinimumWidth(btn_width)
         self._recent_start_button.setMinimumHeight(45)
@@ -499,7 +489,6 @@ class MainWindow(QMainWindow):
         self._left_content_widget = QWidget(self._left_stack)
         content_layout = QVBoxLayout(self._left_content_widget)
 
-        # Visualization row: visualization on left, quick actions on right
         top_row = QWidget(self._left_content_widget)
         top_row_l = QHBoxLayout(top_row)
         top_row_l.setContentsMargins(0, 0, 0, 0)
@@ -536,7 +525,6 @@ class MainWindow(QMainWindow):
 
         content_layout.addWidget(top_row, 2)
 
-        # Lattice parameters
         lattice_group = QGroupBox("Lattice Parameters")
         lattice_layout = QGridLayout(lattice_group)
 
@@ -561,7 +549,6 @@ class MainWindow(QMainWindow):
                 row_labels.append(lbl)
             self.lattice_matrix_labels.append(row_labels)
 
-        # Structure information (moved beside lattice parameters)
         info_group = QGroupBox("Structure Information")
         info_layout = QVBoxLayout(info_group)
         self.converged_label = QLabel("")
@@ -581,7 +568,6 @@ class MainWindow(QMainWindow):
 
         content_layout.addWidget(params_row, 0)
 
-        # Atomic positions table
         positions_group = QGroupBox("Atomic Positions")
         positions_layout = QVBoxLayout(positions_group)
         self.positions_table = QTableWidget(0, 9)
@@ -725,7 +711,6 @@ class MainWindow(QMainWindow):
         )
 
     def _on_create_sprkkr_input(self, task: str = "scf") -> None:
-        # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
         if not isinstance(task, str):
             task = "scf"
         input_editing_flow.create_input_parameters(
@@ -769,11 +754,13 @@ class MainWindow(QMainWindow):
     def _on_run_sprkkr_calculation(self) -> None:
         """Start the shared calculation workflow."""
         calculation_flow.run_calculation(
-            self.controller, self.recent_history, self.active_runs, self
+            self.controller,
+            self.recent_history,
+            self,
         )
 
     def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_results(self.controller.result_history)
+        self._result_actions_widget.set_results(self.controller.result_store)
 
     def _on_about(self) -> None:
         """Show about dialog."""
@@ -901,7 +888,6 @@ class MainWindow(QMainWindow):
         self.lattice_labels['β'].setText(f"{angles[1]:.2f}°")
         self.lattice_labels['γ'].setText(f"{angles[2]:.2f}°")
 
-        # Update matrix
         for i in range(3):
             for j in range(3):
                 self.lattice_matrix_labels[i][j].setText(f"{cell[i, j]:8.4f}")
@@ -940,10 +926,6 @@ class MainWindow(QMainWindow):
             item_color = QTableWidgetItem("")
             qcolor = QColor(color_hex)
             item_color.setBackground(qcolor)
-            #r, g, b, _ = qcolor.getRgb()
-            #luminance = 0.299 * r + 0.587 * g + 0.114 * b
-            #if luminance < 140:
-            #    item_color.setForeground(QColor("white"))
 
             self.positions_table.setItem(i, 0, item_site)
             self.positions_table.setItem(i, 1, item_comp)

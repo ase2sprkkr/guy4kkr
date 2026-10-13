@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
@@ -73,7 +72,6 @@ class WorkflowWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
         settings: ApplicationSettings,
@@ -85,7 +83,6 @@ class WorkflowWindow(QMainWindow):
         )
         self.controller = controller
         self.recent_history = recent_files
-        self.active_runs = active_runs
         self.settings = settings
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
@@ -617,7 +614,6 @@ class WorkflowWindow(QMainWindow):
         calculation_flow.configure_and_run_task(
             self.controller,
             self.recent_history,
-            self.active_runs,
             self,
             task,
             dataset_default_mode=self.settings.dataset_default_mode,

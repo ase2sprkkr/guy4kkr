@@ -35,12 +35,6 @@ class ExpertInputTreeEditor(QWidget):
 
     validationChanged = pyqtSignal(bool)
 
-    # Compatibility aliases for existing behavioral tests and tree helpers.
-    _CHANGED_ROLE = ExpertTreeRole.CHANGED
-    _RELATED_PATHS_ROLE = ExpertTreeRole.RELATED_PATHS
-    _COLLAPSE_ROLE = ExpertTreeRole.COLLAPSE
-    _APPEND_ROLE = ExpertTreeRole.APPEND
-
     def __init__(
         self,
         session: InputParametersSession,
@@ -113,11 +107,6 @@ class ExpertInputTreeEditor(QWidget):
         return self.session.working_parameters
 
     @property
-    def _option_rows(self):
-        """Read-only compatibility view; row ownership lives in ``_runtime``."""
-        return self._runtime.option_rows
-
-    @property
     def has_errors(self) -> bool:
         return self._runtime.has_errors
 
@@ -138,7 +127,7 @@ class ExpertInputTreeEditor(QWidget):
 
         def visit(item: QTreeWidgetItem) -> bool:
             matches = not needle or needle in (item.text(0) or "").lower()
-            changed = bool(item.data(0, self._CHANGED_ROLE))
+            changed = bool(item.data(0, ExpertTreeRole.CHANGED))
             child_visible = any(visit(item.child(i)) for i in range(item.childCount()))
             visible = (matches and (not changed_only or changed or child_visible)) or child_visible
             item.setHidden(not visible)
@@ -174,7 +163,7 @@ class ExpertInputTreeEditor(QWidget):
         )
         self.tree.clear()
         self._renderer.build(self._field_specs, self._suppressed_paths)
-        for path, item in self._runtime.option_rows.items():
+        for path, item in self._runtime.option_items():
             self._update_changed_style(
                 resolve_option(self.parameters, path),
                 item,
@@ -265,7 +254,7 @@ class ExpertInputTreeEditor(QWidget):
                 continue
             current = item
             while current is not None and current is not option_item:
-                if current.data(0, self._APPEND_ROLE):
+                if current.data(0, ExpertTreeRole.APPEND):
                     container = current.parent()
                     path = []
                     while container is not None and container is not option_item:
@@ -293,7 +282,7 @@ class ExpertInputTreeEditor(QWidget):
             (
                 container.child(index)
                 for index in range(container.childCount())
-                if container.child(index).data(0, self._APPEND_ROLE)
+                if container.child(index).data(0, ExpertTreeRole.APPEND)
             ),
             None,
         )
@@ -328,7 +317,7 @@ class ExpertInputTreeEditor(QWidget):
         root = root or self.tree.invisibleRootItem()
 
         def visit(item):
-            if item.data(0, self._COLLAPSE_ROLE):
+            if item.data(0, ExpertTreeRole.COLLAPSE):
                 item.setExpanded(False)
             for index in range(item.childCount()):
                 visit(item.child(index))
@@ -343,11 +332,11 @@ class ExpertInputTreeEditor(QWidget):
         refresh_filter: bool = True,
     ) -> None:
         changed = bool(option.is_changed())
-        related = item.data(0, self._RELATED_PATHS_ROLE) or ()
+        related = item.data(0, ExpertTreeRole.RELATED_PATHS) or ()
         changed = changed or any(
             resolve_option(self.parameters, path).is_changed() for path in related
         )
-        item.setData(0, self._CHANGED_ROLE, changed)
+        item.setData(0, ExpertTreeRole.CHANGED, changed)
         font = item.font(0)
         font.setBold(changed)
         item.setFont(0, font)

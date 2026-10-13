@@ -27,9 +27,9 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert workspace.empty_spheres == EmptySpheresState(count=0)
     assert workspace.empty_spheres_added == 0
     assert workspace.empty_spheres_action() == "recalculate"
-    assert controller.result_history[0].result == EmptySpheresResult(found=0)
-    assert controller.result_history[0].input_state_id == state_id
-    assert controller.result_history[0].output_state_id is None
+    assert controller.result_store.results[0].result == EmptySpheresResult(found=0)
+    assert controller.result_store.results[0].input_state_id == state_id
+    assert controller.result_store.results[0].output_state_id is None
     assert controller.state_id == state_id
     assert controller.generation == generation
 
@@ -59,7 +59,7 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     assert len(original) == 1
     assert len(workspace.atoms) == 2
     assert workspace.empty_spheres == EmptySpheresState(count=1)
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
@@ -83,7 +83,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     state = workspace.empty_spheres
     assert state is not None
     assert dict(state.parameters) == search_parameters
-    assert controller.result_history[0].result == EmptySpheresResult(found=0)
+    assert controller.result_store.results[0].result == EmptySpheresResult(found=0)
 
     controller.replace_input_parameters(object())
     assert workspace.empty_spheres is state
@@ -100,8 +100,8 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
         )
     )
 
-    assert controller.result_history[0].result is result
-    assert controller.result_history[1].result == EmptySpheresResult(found=0)
+    assert controller.result_store.results[0].result is result
+    assert controller.result_store.results[1].result == EmptySpheresResult(found=0)
     assert workspace.empty_spheres is state
     assert dict(workspace.empty_spheres.parameters) == search_parameters
 
