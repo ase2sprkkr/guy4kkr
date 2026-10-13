@@ -10,6 +10,7 @@ from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt
 from PyQt6.QtGui import QGuiApplication, QScreen
 from PyQt6.QtWidgets import QWidget
 
+from guy4ase.gui.application.atomic_io import atomic_write_json
 from guy4ase.gui.application.config import config_home
 
 _WINDOW_ID_PROPERTY = "_guy4ase_window_geometry_id"
@@ -132,8 +133,7 @@ class WindowGeometryStore(QObject):
             }
         }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            atomic_write_json(self.path, data)
         except OSError:
             return False
         return True
