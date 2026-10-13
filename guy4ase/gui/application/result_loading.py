@@ -7,7 +7,6 @@ from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 
 @dataclass(frozen=True)
@@ -35,50 +34,18 @@ class LoadedResult:
     persistent_ref: str | None = None
 
 
-def _potential_file_fingerprint(path: Path) -> tuple[int, int, int, int, int, int]:
-    """Return metadata that changes when a potential file is replaced/rewritten."""
-    info = path.stat()
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_mode,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
-
-
 def load_potential_atoms(file_path: str | Path) -> Any:
-    """Load a stable POT file and attach that exact parsed potential to its atoms.
+    """Load one stable POT file and return the atoms owned by that potential.
 
-    ASE2SPRKKR reconstructs the atomic/site state while parsing a potential, but
-    ``Potential.from_file(...).atoms`` does not currently attach the parsed
-    ``Potential`` back to the returned ``SPRKKRAtoms``. Guy4ASE calculations
-    launch from atoms, so doing the attachment here makes atoms the single
-    physical authority instead of relying on a parallel filename.
-
-    POTFIL may be rewritten by a running SCF calculation.  Fingerprinting the
-    file immediately before and after parsing prevents publishing a structure
-    reconstructed from a file that changed while it was being read.
+    ASE2SPRKKR owns reconstruction of SPR-KKR atoms, the potential/atoms
+    relationship and the stable-file check. Guy4ASE only opts into that check
+    because POTFIL may be rewritten by a running SCF calculation.
     """
     path = Path(file_path).resolve()
-    before = _potential_file_fingerprint(path)
-    potential = Potential.from_file(str(path))
-    try:
-        after = _potential_file_fingerprint(path)
-    except OSError as exc:
-        raise RuntimeError(
-            f"Potential file changed while it was being read: {path}"
-        ) from exc
-    if after != before:
-        raise RuntimeError(f"Potential file changed while it was being read: {path}")
-
+    potential = Potential.from_file(str(path), check_file_unchanged=True)
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
-    atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
-    atoms._potential = potential
-    potential.atoms = atoms
     return atoms
 
 

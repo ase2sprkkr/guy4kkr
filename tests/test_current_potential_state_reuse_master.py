@@ -81,9 +81,9 @@ def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
 
     loaded_atoms = Atoms("Fe")
     monkeypatch.setattr(
-        controller_module.Potential,
-        "from_file",
-        staticmethod(lambda path: SimpleNamespace(atoms=loaded_atoms)),
+        controller_module,
+        "load_potential_atoms",
+        lambda path: loaded_atoms,
     )
 
     structures_before = store.structures

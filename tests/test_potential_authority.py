@@ -23,37 +23,15 @@ class _Parameters:
         return self
 
 
-def test_potential_loader_attaches_exact_parsed_potential(tmp_path, monkeypatch):
+def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypatch):
     path = tmp_path / "Fe.pot"
     path.touch()
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
     potential = SimpleNamespace(atoms=atoms)
     calls = []
 
-    monkeypatch.setattr(
-        result_loading.Potential,
-        "from_file",
-        staticmethod(lambda value: calls.append(value) or potential),
-    )
-
-    loaded_atoms = result_loading.load_potential_atoms(path)
-
-    assert calls == [str(path.resolve())]
-    assert loaded_atoms is atoms
-    assert atoms.has_potential()
-    assert atoms.potential is potential
-    assert potential.atoms is atoms
-
-
-def test_potential_loader_rejects_file_changed_during_parse(tmp_path, monkeypatch):
-    path = tmp_path / "Fe.pot"
-    path.write_text("old")
-    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
-    potential = SimpleNamespace(atoms=atoms)
-
-    def parse(value):
-        assert value == str(path.resolve())
-        path.write_text("replacement is deliberately longer")
+    def parse(value, *, check_file_unchanged=False):
+        calls.append((value, check_file_unchanged))
         return potential
 
     monkeypatch.setattr(
@@ -62,10 +40,11 @@ def test_potential_loader_rejects_file_changed_during_parse(tmp_path, monkeypatc
         staticmethod(parse),
     )
 
-    with pytest.raises(RuntimeError, match="changed while it was being read"):
-        result_loading.load_potential_atoms(path)
+    loaded_atoms = result_loading.load_potential_atoms(path)
 
-    assert not atoms.has_potential()
+    assert calls == [(str(path.resolve()), True)]
+    assert loaded_atoms is atoms
+    assert potential.atoms is atoms
 
 
 def test_potential_structure_flow_uses_authoritative_potential_loader(
@@ -174,12 +153,10 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
     controller.replace_structure(Atoms("Cu"))
     path.unlink()
     monkeypatch.setattr(
-        result_loading.Potential,
-        "from_file",
-        staticmethod(
-            lambda *_args, **_kwargs: pytest.fail(
-                "missing historical POTFIL must fail before parsing"
-            )
+        workspace_controller_module,
+        "load_potential_atoms",
+        lambda *_args, **_kwargs: pytest.fail(
+            "missing historical POTFIL must fail before parsing"
         ),
     )
 
@@ -225,23 +202,17 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     assert current_version != historical_version
 
     loaded_atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
-    loaded_potential = SimpleNamespace(atoms=loaded_atoms)
-    loaded_atoms._potential = loaded_potential
     calls = []
 
-    def parse(value):
+    def load(value):
         calls.append(value)
-        return loaded_potential
+        return loaded_atoms
 
-    monkeypatch.setattr(
-        workspace_controller_module.Potential,
-        "from_file",
-        staticmethod(parse),
-    )
+    monkeypatch.setattr(workspace_controller_module, "load_potential_atoms", load)
 
     controller.use_result_state(result.id, expected_potential=current_version)
 
-    assert calls == [str(path.resolve())]
+    assert calls == [current_version.path]
     assert controller.atoms is loaded_atoms
     assert controller.structure_id == structure_id
     assert len(controller.result_store.structures) == 1
