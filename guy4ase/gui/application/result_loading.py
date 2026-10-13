@@ -5,13 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ase2sprkkr.common.file_fingerprints import file_fingerprint
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
-
-
-class PotentialFileChanged(RuntimeError):
-    """A potential file changed while a stable version was being parsed."""
 
 
 @dataclass(frozen=True)
@@ -37,28 +32,12 @@ class LoadedResult:
 def load_potential_atoms(file_path: str | Path) -> Any:
     """Load one stable POT file and return the atoms owned by that potential.
 
-    ``Potential.from_file`` is the authority for reconstructing SPR-KKR atoms and
-    for attaching the parsed potential to them. Guy4ASE deliberately does not
-    promote the returned atoms or rewrite their potential relationship.
-
-    POTFIL may be rewritten by a running SCF calculation. Fingerprinting the file
-    immediately before and after parsing prevents publishing a structure rebuilt
-    from a file that changed while it was being read.
+    ASE2SPRKKR owns both reconstruction of SPR-KKR atoms and the bidirectional
+    potential/atoms relationship. Guy4ASE only opts into ASE2SPRKKR's stable-file
+    check because POTFIL may be rewritten by a running SCF calculation.
     """
     path = Path(file_path).resolve()
-    before = file_fingerprint(path)
-    potential = Potential.from_file(str(path))
-    try:
-        after = file_fingerprint(path)
-    except OSError as exc:
-        raise PotentialFileChanged(
-            f"Potential file changed while it was being read: {path}"
-        ) from exc
-    if after != before:
-        raise PotentialFileChanged(
-            f"Potential file changed while it was being read: {path}"
-        )
-
+    potential = Potential.from_file(str(path), check_file_unchanged=True)
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
@@ -87,9 +66,7 @@ def load_result(
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
     atoms, potential_error = _load_potential(potential)
-    input_parameters, input_parameters_error = _load_input_parameters(
-        result
-    )
+    input_parameters, input_parameters_error = _load_input_parameters(result)
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
         result=result,
