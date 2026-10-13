@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_artifacts import (
     ArtifactState,
     ResultArtifactVersion,
@@ -17,6 +18,7 @@ from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
 _KEEP_EMPTY_SPHERES = object()
+_KEEP_POTENTIAL_SOURCE = object()
 
 
 def _task_name(result: Any) -> str:
@@ -37,8 +39,6 @@ def _snapshot_input_parameters(parameters: Any | None) -> Any | None:
         try:
             return copier(copy_values=True)
         except TypeError:
-            # Generic mappings/copyables do not support ASE2SPRKKR's
-            # ``copy_values`` contract; use a real deep snapshot below.
             pass
 
     if isinstance(parameters, Mapping):
@@ -56,15 +56,7 @@ class StructureRecord:
 
 @dataclass(frozen=True)
 class CalculationStateRecord:
-    """One concrete restorable state in a calculation lineage.
-
-    Identity is assigned, never inferred from contents. ``branch_id`` is stable
-    provenance: sequential state-producing operations normally keep it, while
-    an explicit restart or a sibling continuation starts another branch.
-
-    ``empty_spheres`` records metadata of the explicit empty-sphere search that
-    produced this state. The atoms remain authoritative for the actual structure.
-    """
+    """One concrete restorable state in a calculation lineage."""
 
     id: int
     structure_id: int
@@ -72,8 +64,10 @@ class CalculationStateRecord:
     branch_id: int
     atoms: Any
     potential_path: str | None
+    potential_version: PotentialFileVersion | None
     empty_spheres: EmptySpheresState | None = None
     produced_by_result_id: int | None = None
+    potential_source_result_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +168,22 @@ class ResultStore:
         state_id = record.output_state_id or record.input_state_id
         return self._states.get(state_id) if state_id is not None else None
 
+    def state_for_potential_version(
+        self, version: PotentialFileVersion
+    ) -> CalculationStateRecord | None:
+        """Return the newest state known to represent this exact potential file."""
+        for state_id in sorted(self._states, reverse=True):
+            state = self._states[state_id]
+            if state.potential_version == version:
+                return state
+        return None
+
+    def potential_source_result(self, state_id: int | None) -> ResultRecord | None:
+        if state_id is None:
+            return None
+        source_id = self.state(state_id).potential_source_result_id
+        return self._results.get(source_id) if source_id is not None else None
+
     def branch_id_for_result(self, record: ResultRecord) -> int | None:
         state = self.state_for_result(record)
         return state.branch_id if state is not None else None
@@ -219,7 +229,6 @@ class ResultStore:
         )
 
     def latest_result_for_state(self, state_id: int | None) -> ResultRecord | None:
-        """Return the latest result attached to the active state, if any."""
         if state_id is None:
             return None
         result_ids = self._result_ids_by_state.get(state_id, ())
@@ -232,22 +241,33 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        potential_version: PotentialFileVersion | None = None,
         empty_spheres: EmptySpheresState | None = None,
+        produced_by_result_id: int | None = None,
+        potential_source_result_id: int | None = None,
     ) -> tuple[int, int]:
-        """Create a new user-visible structure and its initial branch/state."""
         structure_id = self._next_structure_id
         self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
         self._structures[structure_id] = StructureRecord(structure_id, formula)
         branch_id = self._allocate_branch(structure_id)
+        resolved_version = (
+            potential_version
+            if potential_version is not None
+            else PotentialFileVersion.capture(potential_path)
+            if potential_path is not None
+            else None
+        )
         state_id = self._new_state(
             structure_id,
             atoms,
             potential_path=potential_path,
+            potential_version=resolved_version,
             empty_spheres=empty_spheres,
             parent_id=None,
             branch_id=branch_id,
-            produced_by_result_id=None,
+            produced_by_result_id=produced_by_result_id,
+            potential_source_result_id=potential_source_result_id,
         )
         return structure_id, state_id
 
@@ -259,21 +279,28 @@ class ResultStore:
         potential_path: str | None | object = _KEEP_POTENTIAL,
         empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
+        potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
         new_branch: bool = False,
     ) -> int:
-        """Create a state below ``parent_id`` and assign its branch.
-
-        Sequential state changes keep the parent's branch. A second sibling
-        continuation is an alternative and therefore starts another branch.
-        Potential and empty-sphere provenance are inherited unless explicitly
-        replaced. ``new_branch=True`` is used by an explicit continuation.
-        """
         parent = self.state(parent_id)
-        resolved_potential = (
-            parent.potential_path
-            if potential_path is _KEEP_POTENTIAL
-            else potential_path
+        reuses_potential = potential_path is _KEEP_POTENTIAL
+        resolved_potential = parent.potential_path if reuses_potential else potential_path
+        resolved_version = (
+            parent.potential_version
+            if reuses_potential
+            else PotentialFileVersion.capture(resolved_potential)
+            if resolved_potential is not None
+            else None
         )
+        resolved_source = (
+            parent.potential_source_result_id
+            if potential_source_result_id is _KEEP_POTENTIAL_SOURCE and reuses_potential
+            else None
+            if potential_source_result_id is _KEEP_POTENTIAL_SOURCE
+            else potential_source_result_id
+        )
+        if resolved_version is None:
+            resolved_source = None
         resolved_empty_spheres = (
             parent.empty_spheres
             if empty_spheres is _KEEP_EMPTY_SPHERES
@@ -292,10 +319,12 @@ class ResultStore:
             parent.structure_id,
             parent.atoms if atoms is None else atoms,
             potential_path=resolved_potential,
+            potential_version=resolved_version,
             empty_spheres=resolved_empty_spheres,
             parent_id=parent.id,
             branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
+            potential_source_result_id=resolved_source,
         )
 
     def add_result(
@@ -325,6 +354,12 @@ class ResultStore:
 
         result_id = self._next_result_id
         self._next_result_id += 1
+        task_name = _task_name(result)
+        potential_source_result_id = (
+            result_id
+            if task_name == "scf" and output_potential_path is not None
+            else None
+        )
 
         output_state_id = None
         produces_state = (
@@ -344,17 +379,8 @@ class ResultStore:
                     output_atoms,
                     potential_path=output_potential_path,
                     empty_spheres=root_empty_spheres,
-                )
-                root = self._states[output_state_id]
-                self._states[output_state_id] = CalculationStateRecord(
-                    id=root.id,
-                    structure_id=root.structure_id,
-                    parent_id=None,
-                    branch_id=root.branch_id,
-                    atoms=root.atoms,
-                    potential_path=root.potential_path,
-                    empty_spheres=root.empty_spheres,
                     produced_by_result_id=result_id,
+                    potential_source_result_id=potential_source_result_id,
                 )
             else:
                 if input_state_id is None:
@@ -365,12 +391,13 @@ class ResultStore:
                     potential_path=output_potential_path,
                     empty_spheres=output_empty_spheres,
                     produced_by_result_id=result_id,
+                    potential_source_result_id=potential_source_result_id,
                 )
 
         record = ResultRecord(
             id=result_id,
             result=result,
-            task_name=_task_name(result),
+            task_name=task_name,
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
@@ -443,7 +470,6 @@ class ResultStore:
         )
 
     def branch_path(self, record: ResultRecord) -> tuple[int, ...]:
-        """Compatibility presentation of the stable branch identity."""
         if record.structure_id is None:
             return ()
         branch_id = self.branch_id_for_result(record)
@@ -464,10 +490,12 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        potential_version: PotentialFileVersion | None,
         empty_spheres: EmptySpheresState | None,
         parent_id: int | None,
         branch_id: int,
         produced_by_result_id: int | None,
+        potential_source_result_id: int | None,
     ) -> int:
         state_id = self._next_state_id
         self._next_state_id += 1
@@ -478,8 +506,10 @@ class ResultStore:
             branch_id=branch_id,
             atoms=atoms,
             potential_path=potential_path,
+            potential_version=potential_version,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
+            potential_source_result_id=potential_source_result_id,
         )
         if parent_id is not None:
             self._state_children.setdefault(parent_id, []).append(state_id)
