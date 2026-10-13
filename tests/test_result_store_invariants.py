@@ -5,9 +5,13 @@ from types import SimpleNamespace
 import pytest
 from ase import Atoms
 
+from guy4ase.gui.application import result_store as result_store_module
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.workspace import Generation
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import (
+    CalculationRequest,
+    WorkspaceController,
+)
 
 
 class _Parameters:
@@ -18,6 +22,12 @@ class _Parameters:
     def copy(self, *, copy_values: bool):
         assert copy_values
         return _Parameters(self.task_name, self.value)
+
+
+class _FailingParameters:
+    def copy(self, *, copy_values: bool):
+        assert copy_values
+        raise ValueError("parameter snapshot failed")
 
 
 def test_calculation_request_requires_structure_and_state_ids():
@@ -64,6 +74,156 @@ def test_add_result_rejects_cross_structure_input_state_atomically():
         directory=None,
     )
     assert record.id == 1
+
+
+def test_add_result_snapshot_failure_does_not_commit_state_or_result():
+    store = ResultStore()
+    structure_id, state_id = store.new_structure_state(
+        Atoms("Fe"), potential_path=None
+    )
+    result = SimpleNamespace(task_name="scf")
+
+    with pytest.raises(ValueError, match="parameter snapshot failed"):
+        store.add_result(
+            result,
+            structure_id=structure_id,
+            input_state_id=state_id,
+            input_parameters=_FailingParameters(),
+            directory=None,
+            output_atoms=Atoms("Fe"),
+        )
+
+    assert len(store) == 0
+    assert store.results_for_state(state_id) == ()
+
+    record = store.add_result(
+        result,
+        structure_id=structure_id,
+        input_state_id=state_id,
+        input_parameters=None,
+        directory=None,
+        output_atoms=Atoms("Fe"),
+    )
+
+    assert record.id == 1
+    assert record.output_state_id == state_id + 1
+    output_state = store.state(record.output_state_id)
+    assert output_state.produced_by_result_id == record.id
+    assert store.result(record.id) is record
+
+
+def test_add_external_result_snapshot_failure_does_not_commit_structure():
+    store = ResultStore()
+
+    with pytest.raises(ValueError, match="parameter snapshot failed"):
+        store.add_external_result(
+            SimpleNamespace(task_name="dos"),
+            atoms=Atoms("Fe"),
+            input_parameters=_FailingParameters(),
+            directory=None,
+            output_path=None,
+            potential_path=None,
+            produces_state=False,
+        )
+
+    assert store.structures == ()
+    assert len(store) == 0
+
+    record = store.add_external_result(
+        SimpleNamespace(task_name="dos"),
+        atoms=Atoms("Fe"),
+        input_parameters=None,
+        directory=None,
+        output_path=None,
+        potential_path=None,
+        produces_state=False,
+    )
+    assert record.id == 1
+    assert record.structure_id == 1
+    assert record.input_state_id == 1
+
+
+def test_new_structure_state_snapshot_failure_does_not_mutate_store(monkeypatch):
+    store = ResultStore()
+
+    def fail_capture(_atoms):
+        raise ValueError("structure snapshot failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            result_store_module.StructureSnapshot,
+            "capture",
+            staticmethod(fail_capture),
+        )
+        with pytest.raises(ValueError, match="structure snapshot failed"):
+            store.new_structure_state(Atoms("Fe"), potential_path=None)
+
+    assert store.structures == ()
+    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
+    assert (structure_id, state_id) == (1, 1)
+    assert store.state(state_id).branch_id == 1
+
+
+def test_replace_structure_store_failure_keeps_workspace_unchanged(monkeypatch):
+    controller = WorkspaceController()
+    original = Atoms("Fe")
+    controller.replace_structure(original, directory="old", restarted=True)
+    original_structure_id = controller.structure_id
+    original_state_id = controller.state_id
+    original_generation = controller.generation
+
+    def fail_new_structure_state(*_args, **_kwargs):
+        raise ValueError("state preparation failed")
+
+    monkeypatch.setattr(
+        controller.result_store,
+        "new_structure_state",
+        fail_new_structure_state,
+    )
+
+    with pytest.raises(ValueError, match="state preparation failed"):
+        controller.replace_structure(
+            Atoms("Cu"),
+            directory="new",
+            restarted=False,
+        )
+
+    assert controller.atoms is original
+    assert controller.directory == "old"
+    assert controller.structure_id == original_structure_id
+    assert controller.state_id == original_state_id
+    assert controller.restarted is True
+    assert controller.generation == original_generation
+
+
+def test_apply_structure_edit_store_failure_keeps_workspace_unchanged(monkeypatch):
+    controller = WorkspaceController()
+    original = Atoms("Fe")
+    controller.replace_structure(original)
+    original_structure_id = controller.structure_id
+    original_state_id = controller.state_id
+    original_generation = controller.generation
+
+    def fail_new_structure_state(*_args, **_kwargs):
+        raise ValueError("state preparation failed")
+
+    monkeypatch.setattr(
+        controller.result_store,
+        "new_structure_state",
+        fail_new_structure_state,
+    )
+
+    with pytest.raises(ValueError, match="state preparation failed"):
+        controller.apply_structure_edit(
+            lambda atoms: atoms,
+            expected_generation=original_generation,
+        )
+
+    assert controller.atoms is original
+    assert controller.structure_id == original_structure_id
+    assert controller.state_id == original_state_id
+    assert controller.restarted is False
+    assert controller.generation == original_generation
 
 
 def test_result_record_snapshots_task_name_and_input_parameters():
