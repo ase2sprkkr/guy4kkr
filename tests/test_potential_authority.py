@@ -134,3 +134,49 @@ def test_result_state_restart_decision_uses_atoms_not_path(tmp_path):
     assert controller.atoms is atoms
     assert controller.potential_path is None
     assert not controller.restarted
+
+
+def test_use_result_state_never_reloads_historical_potential(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("historical potential")
+    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    potential = SimpleNamespace(atoms=atoms)
+    atoms._potential = potential
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=atoms,
+            input_parameters=_Parameters(),
+            directory=str(tmp_path),
+            potential_path=str(path),
+        )
+    )
+    state_id = controller.state_id
+    assert state_id is not None
+    result = controller.result_store.add_result(
+        SimpleNamespace(task_name="dos"),
+        structure_id=controller.structure_id,
+        input_state_id=state_id,
+        atoms=atoms,
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+        potential_path=path,
+    )
+
+    controller.replace_structure(Atoms("Cu"))
+    path.unlink()
+    monkeypatch.setattr(
+        result_loading.Potential,
+        "from_file",
+        staticmethod(
+            lambda *_args, **_kwargs: pytest.fail(
+                "use_result_state() must not reload a historical potential"
+            )
+        ),
+    )
+
+    controller.use_result_state(result.id)
+
+    assert controller.atoms is atoms
+    assert controller.atoms.potential is potential
+    assert controller.potential_path == str(path)
+    assert not controller.restarted
