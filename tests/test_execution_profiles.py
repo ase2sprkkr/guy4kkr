@@ -215,6 +215,37 @@ def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
     assert finished == [loaded_result]
 
 
+def test_worker_launches_persistent_run(monkeypatch, tmp_path):
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    worker = run_module._SprkkrRunWorker(request)
+    captured = {}
+
+    class Runner:
+        reference = None
+
+        def submit(self):
+            return None
+
+        def cancel(self):
+            return None
+
+    runner = Runner()
+
+    def create_runner(_calculator, **kwargs):
+        captured.update(kwargs)
+        return runner
+
+    monkeypatch.setattr(worker, "_create_runner", create_runner)
+
+    assert worker._launch(object()) is runner
+    assert captured["persistent"] is True
+
+
 def test_worker_forwards_specific_mpi_warning():
     request = CalculationRequest(
         atoms=object(),
@@ -257,6 +288,38 @@ def test_run_window_shows_mpi_warning_message_box(monkeypatch, tmp_path):
     window._on_warning("MPI autodetection failed")
 
     assert shown == [(window, "MPI Not Detected", "MPI autodetection failed")]
+    window.close()
+
+
+def test_run_window_close_hides_without_cancelling_running_job(monkeypatch, tmp_path):
+    app = _app()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+
+    class RunningThread:
+        @staticmethod
+        def isRunning():
+            return True
+
+    window = run_module.SprkkrRunWindow(request)
+    window._cancellation = run_module._RunCancellation()
+    window._thread = RunningThread()
+    window.show()
+    app.processEvents()
+
+    window.close()
+    app.processEvents()
+
+    assert window._close_requested
+    assert not window.isVisible()
+    assert not window._cancellation.requested
+
+    window._thread = None
     window.close()
 
 

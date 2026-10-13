@@ -161,6 +161,7 @@ class _SprkkrRunWorker(QObject):
             empty_spheres=False,
             read_callback=read_callback,
             print_output=False,
+            persistent=True,
         )
         if not self._cancellation.register(runner):
             runner.cancel()
@@ -277,8 +278,9 @@ class SprkkrRunWindow(QDialog):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._thread is not None and self._thread.isRunning():
+            # Closing only detaches the monitor. Cancellation is an explicit
+            # Stop action, so the worker keeps the original request alive.
             self._close_requested = True
-            self._on_stop()
             self.hide()
             event.ignore()
             return
