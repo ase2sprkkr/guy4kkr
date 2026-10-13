@@ -62,7 +62,7 @@ def _loaded_result(task, atoms):
 def _controller(*, restarted=True):
     return WorkspaceController(
         WorkspaceState(
-            atoms=_scf_atoms("START" if restarted else "CONVERGED"),
+            atoms=_scf_atoms(),
             input_parameters=_Parameters(),
             directory="calculation",
             restarted=restarted,
@@ -70,20 +70,18 @@ def _controller(*, restarted=True):
     )
 
 
-def test_restart_marker_does_not_override_real_scf_status():
+def test_restart_intent_overrides_effective_status_without_mutating_potential():
     atoms = _scf_atoms()
     workspace = WorkspaceState(atoms=atoms)
 
+    assert workspace.potential_scf_status() == "CONVERGED"
     assert workspace.scf_status() == "CONVERGED"
     assert workspace.is_scf_converged()
 
-    workspace.restarted = True
+    workspace.restart_scf_requested = True
 
-    assert workspace.scf_status() == "CONVERGED"
-    assert workspace.is_scf_converged()
-
-    atoms.potential.SCF_INFO.SCFSTATUS = "START"
-
+    assert atoms.potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert workspace.potential_scf_status() == "CONVERGED"
     assert workspace.scf_status() == "START"
     assert not workspace.is_scf_converged()
 
@@ -98,13 +96,19 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
     )
 
     assert change is DocumentChange.APPLIED
-    assert controller.restarted
+    assert controller.restart_scf_requested
     assert not controller.is_scf_converged()
 
 
-def test_use_for_new_calculation_restarts_attached_potential():
+def test_use_for_new_calculation_sets_restart_intent_without_touching_potential():
     atoms = _scf_atoms()
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=atoms,
+            input_parameters=_Parameters(),
+            directory="calculation",
+        )
+    )
     previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(
@@ -113,14 +117,17 @@ def test_use_for_new_calculation_restarts_attached_potential():
 
     assert change is DocumentChange.APPLIED
     assert controller.atoms is atoms
-    assert atoms.potential.SCF_INFO.SCFSTATUS() == "START"
-    assert controller.restarted
+    assert atoms.potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert controller.restart_scf_requested
     assert controller.scf_status() == "START"
     assert not controller.is_scf_converged()
     assert controller.state_id != previous_state_id
 
+    request = controller.create_calculation_request()
+    assert request.restart_scf
 
-def test_active_scf_result_with_new_potential_clears_restart_override():
+
+def test_active_scf_result_with_new_potential_clears_restart_intent():
     controller = _controller()
     request = controller.create_calculation_request()
     new_atoms = _scf_atoms()
@@ -131,12 +138,14 @@ def test_active_scf_result_with_new_potential_clears_restart_override():
     )
 
     assert adoption.workspace_updated
+    assert adoption.record is not None
+    assert adoption.record.restart_scf
     assert controller.atoms is new_atoms
-    assert not controller.restarted
+    assert not controller.restart_scf_requested
     assert controller.is_scf_converged()
 
 
-def test_scf_result_without_new_potential_keeps_restart_override():
+def test_scf_result_without_new_potential_keeps_restart_intent():
     controller = _controller()
     request = controller.create_calculation_request()
 
@@ -146,12 +155,14 @@ def test_scf_result_without_new_potential_keeps_restart_override():
     )
 
     assert not adoption.workspace_updated
-    assert controller.restarted
+    assert adoption.record is not None
+    assert adoption.record.restart_scf
+    assert controller.restart_scf_requested
     assert controller.scf_status() == "START"
     assert not controller.is_scf_converged()
 
 
-def test_non_scf_result_does_not_clear_restart_override():
+def test_non_scf_result_does_not_clear_restart_intent():
     controller = _controller()
     request = controller.create_calculation_request()
 
@@ -161,11 +172,13 @@ def test_non_scf_result_does_not_clear_restart_override():
     )
 
     assert not adoption.workspace_updated
-    assert controller.restarted
+    assert adoption.record is not None
+    assert adoption.record.restart_scf
+    assert controller.restart_scf_requested
     assert controller.scf_status() == "START"
 
 
-def test_external_result_does_not_clear_restart_override():
+def test_external_result_does_not_clear_restart_intent():
     controller = _controller()
 
     adoption = controller.adopt_external_result(
@@ -173,5 +186,7 @@ def test_external_result_does_not_clear_restart_override():
     )
 
     assert not adoption.workspace_updated
-    assert controller.restarted
+    assert adoption.record is not None
+    assert not adoption.record.restart_scf
+    assert controller.restart_scf_requested
     assert controller.scf_status() == "START"
