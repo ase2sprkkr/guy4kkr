@@ -80,16 +80,18 @@ def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
     assert scf2_state.structure_snapshot is None
 
     loaded_atoms = Atoms("Fe")
+    loaded = []
     monkeypatch.setattr(
-        controller_module.Potential,
-        "from_file",
-        staticmethod(lambda path: SimpleNamespace(atoms=loaded_atoms)),
+        controller_module,
+        "load_potential_atoms",
+        lambda path: loaded.append(path) or loaded_atoms,
     )
 
     structures_before = store.structures
     generation_before = controller.generation
     controller.use_result_state(scf1.id, version2)
 
+    assert loaded == [version2.path]
     assert controller.state_id == scf2.output_state_id
     assert controller.structure_id == scf2_state.structure_id
     assert controller.atoms is loaded_atoms
