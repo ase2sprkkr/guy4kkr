@@ -334,12 +334,8 @@ class ResultActionsWidget(QWidget):
                 else "Use this potential"
             )
 
-        try:
-            task = str(record.result.task_name).strip()
-        except (AttributeError, TypeError, ValueError):
-            task = ""
         can_recompute = (
-            bool(task)
+            bool(record.task_name)
             and record.input_parameters is not None
             and self._current_structure_id is not None
         )
@@ -366,10 +362,7 @@ class ResultActionsWidget(QWidget):
     @staticmethod
     def _result_label(record: ResultRecord) -> str:
         result = record.result
-        try:
-            task = str(result.task_name).strip().upper()
-        except (AttributeError, TypeError, ValueError):
-            task = str(getattr(result, "display_name", type(result).__name__))
+        task = record.task_name.upper()
         try:
             output = getattr(result, "output_file", None)
             output_name = Path(str(output)).name if output else ""
