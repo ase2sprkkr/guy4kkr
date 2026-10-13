@@ -58,6 +58,10 @@ class CalculationRequest:
     Structural edits must still go through controller transitions. ``atoms`` is
     also the sole physical authority for the input potential; potential paths
     are provenance/artifact metadata only.
+
+    ``restart_scf`` snapshots the pending workspace execution intent. It asks
+    ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
+    authoritative workspace potential.
     """
 
     atoms: Any
@@ -66,6 +70,7 @@ class CalculationRequest:
     generation: Generation
     structure_id: int
     state_id: int
+    restart_scf: bool = False
 
 
 @dataclass(frozen=True)
@@ -237,6 +242,7 @@ class WorkspaceController(QObject):
             generation=self._generation,
             structure_id=structure_id,
             state_id=state_id,
+            restart_scf=self.restarted,
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
@@ -414,6 +420,7 @@ class WorkspaceController(QObject):
                 generation=self.generation,
                 structure_id=self.structure_id,
                 state_id=self.state_id,
+                restart_scf=self.restarted,
             )
 
         is_scf = _result_is_scf(loaded.result)
@@ -425,6 +432,7 @@ class WorkspaceController(QObject):
             atoms=request.atoms,
             input_parameters=request.input_parameters,
             directory=request.directory,
+            restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             output_atoms=output_atoms,

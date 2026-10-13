@@ -84,6 +84,7 @@ class ResultRecord:
     atoms: Any | None
     input_parameters: Any | None
     directory: str | None
+    restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
 
@@ -281,6 +282,7 @@ class ResultStore:
         atoms: Any | None,
         input_parameters: Any | None,
         directory: str | None,
+        restart_scf: bool = False,
         output_path: Path | None = None,
         potential_path: Path | None = None,
         output_atoms: Any | None = None,
@@ -350,6 +352,7 @@ class ResultStore:
             atoms=atoms,
             input_parameters=_snapshot_input_parameters(input_parameters),
             directory=directory,
+            restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
         )

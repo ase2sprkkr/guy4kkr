@@ -102,6 +102,7 @@ class _SprkkrRunWorker(QObject):
             read_callback=read_callback,
             print_output=False,
             persistent=True,
+            restart_scf=self._request.restart_scf,
         )
         if not self._cancellation.register(runner):
             runner.cancel()
