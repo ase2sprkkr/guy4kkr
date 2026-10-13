@@ -46,6 +46,7 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
+from guy4ase.gui.widgets.browser_panel import BrowserPanel
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     recent_launch,
@@ -211,6 +212,12 @@ class WorkflowWindow(QMainWindow):
         working_directory_layout.addLayout(directory_row)
         side_layout.addWidget(working_directory)
 
+        self._browser_panel = BrowserPanel(side)
+        self._browser_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        side_layout.addWidget(self._browser_panel)
+
         self._result_actions = QWidget(side)
         result_actions_layout = QVBoxLayout(self._result_actions)
         result_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -223,6 +230,7 @@ class WorkflowWindow(QMainWindow):
         self._result_actions_widget = ResultActionsWidget(
             lambda value, action: execute_value_action(value, action, self),
             show_values_without_actions=False,
+            show_history_button=False,
             parent=self._result_actions,
         )
         result_actions_layout.addWidget(self._result_actions_widget, 1)
@@ -390,7 +398,7 @@ class WorkflowWindow(QMainWindow):
             menu_button=True,
         )
         button.clicked.connect(
-            lambda _checked=False, item=launch: self._load_recent(
+            lambda _checked=False, item=launch: self._continue_recent(
                 item.kind, item.path
             )
         )
@@ -398,7 +406,7 @@ class WorkflowWindow(QMainWindow):
             build_recent_launch_menu(
                 button,
                 self.recent_history,
-                self._load_recent,
+                self._continue_recent,
             )
         )
         self._action_group(self._GROUP_LOAD).addWidget(button)
@@ -594,8 +602,8 @@ class WorkflowWindow(QMainWindow):
             self.controller, self.recent_history, self
         )
 
-    def _load_recent(self, kind: RecentKind, file_path: str) -> None:
-        file_flows.open_recent(
+    def _continue_recent(self, kind: RecentKind, file_path: str) -> None:
+        file_flows.continue_recent(
             self.controller,
             self.recent_history,
             kind,

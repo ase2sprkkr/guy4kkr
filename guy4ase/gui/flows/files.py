@@ -12,10 +12,15 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.result_loading import (
+    LoadedResult,
     load_potential_atoms,
     load_result_file,
 )
-from guy4ase.gui.application.workspace_controller import ResultAdoption, WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    PotentialVersionChanged,
+    ResultAdoption,
+    WorkspaceController,
+)
 from guy4ase.gui.flows.structure_candidates import (
     load_structure_candidate,
     structure_open_filter,
@@ -163,14 +168,9 @@ def choose_and_load_output(
     return bool(file_path and load_output(controller, recent_files, file_path, parent))
 
 
-def load_output(
-    controller: WorkspaceController,
-    recent_files: RecentFiles,
-    file_path: str | Path,
-    parent: QWidget,
-) -> bool:
+def _read_output(file_path: str | Path, parent: QWidget) -> LoadedResult | None:
     try:
-        loaded = run_modal_task(
+        return run_modal_task(
             parent,
             lambda: load_result_file(file_path),
             title="Loading Result",
@@ -182,12 +182,76 @@ def load_output(
             "Load Error",
             f"Failed to load SPR-KKR output:\n{exc}",
         )
-        return False
+        return None
 
-    adoption = controller.adopt_external_result(loaded, select_result=True)
+
+def _finish_output_load(
+    adoption: ResultAdoption,
+    recent_files: RecentFiles,
+    file_path: str | Path,
+    parent: QWidget,
+) -> None:
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
     _show_input_parameters_warning(adoption, parent)
+
+
+def load_output(
+    controller: WorkspaceController,
+    recent_files: RecentFiles,
+    file_path: str | Path,
+    parent: QWidget,
+) -> bool:
+    """Import an output into result history without changing the workspace."""
+    loaded = _read_output(file_path, parent)
+    if loaded is None:
+        return False
+    adoption = controller.adopt_external_result(loaded, select_result=True)
+    _finish_output_load(adoption, recent_files, file_path, parent)
+    return True
+
+
+def continue_output(
+    controller: WorkspaceController,
+    recent_files: RecentFiles,
+    file_path: str | Path,
+    parent: QWidget,
+) -> bool:
+    """Import or reuse an output and make its reusable calculation state active."""
+    loaded = _read_output(file_path, parent)
+    if loaded is None:
+        return False
+
+    adoption = controller.adopt_external_result(loaded, select_result=True)
+    record = adoption.record
+    if record is None:
+        return False
+
+    state = controller.result_store.state_for_result(record)
+    if state is None:
+        QMessageBox.warning(
+            parent,
+            "Cannot Continue Calculation",
+            "The selected result has no reusable calculation state.",
+        )
+        _finish_output_load(adoption, recent_files, file_path, parent)
+        return False
+
+    if controller.state_id != state.id:
+        try:
+            controller.use_result_state(record.id)
+        except (ValueError, PotentialVersionChanged) as exc:
+            QMessageBox.warning(
+                parent,
+                "Cannot Continue Calculation",
+                f"The selected result cannot be restored:\n{exc}",
+            )
+            _finish_output_load(adoption, recent_files, file_path, parent)
+            return False
+
+    if loaded.directory is not None:
+        controller.change_directory(loaded.directory)
+    _finish_output_load(adoption, recent_files, file_path, parent)
     return True
 
 
@@ -275,3 +339,20 @@ def open_recent(
         "output": load_output,
     }
     return loaders[kind](controller, recent_files, file_path, parent)
+
+
+def continue_recent(
+    controller: WorkspaceController,
+    recent_files: RecentFiles,
+    kind: RecentKind,
+    file_path: str | Path,
+    parent: QWidget,
+) -> bool:
+    """Continue from a recent item instead of merely reopening an output."""
+    if not Path(file_path).exists():
+        QMessageBox.warning(parent, "Missing File", f"File not found:\n{file_path}")
+        recent_files.forget(kind, file_path)
+        return False
+    if kind == "output":
+        return continue_output(controller, recent_files, file_path, parent)
+    return open_recent(controller, recent_files, kind, file_path, parent)

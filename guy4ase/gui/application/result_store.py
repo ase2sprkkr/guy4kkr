@@ -112,6 +112,7 @@ class ResultRecord:
     persistent_ref: str | None = None
     restart_scf: bool = False
     output_path: Path | None = None
+    output_version: FileVersion | None = None
     potential_path: Path | None = None
     imported: bool = False
 
@@ -192,6 +193,35 @@ class ResultStore:
 
     def result(self, result_id: int) -> ResultRecord:
         return self._results[result_id]
+
+    def result_for_external_source(
+        self,
+        output_path: str | Path | None,
+        *,
+        persistent_ref: str | None = None,
+    ) -> ResultRecord | None:
+        """Return an already recorded result for the same persistent/source version.
+
+        A persistent run id is the strongest identity.  Otherwise the exact
+        captured contents of the source output file identify an external result.
+        Re-importing an unchanged file therefore reuses its record, while a file
+        that was overwritten with new contents may legitimately create a new one.
+        """
+        if persistent_ref is not None:
+            for record in self.results:
+                if record.persistent_ref == persistent_ref:
+                    return record
+
+        if output_path is None:
+            return None
+        path = Path(output_path).expanduser().resolve()
+        for record in self.results:
+            version = record.output_version
+            if version is None or version.path != path:
+                continue
+            if version.state() is FileState.CURRENT:
+                return record
+        return None
 
     def current_value_for_result_file(
         self, result_file: FileVersion
@@ -497,6 +527,9 @@ class ResultStore:
             persistent_ref=persistent_ref,
             restart_scf=restart_scf,
             output_path=output_path,
+            output_version=(
+                FileVersion.capture(output_path) if output_path is not None else None
+            ),
             potential_path=potential_path,
             imported=imported,
         )
@@ -524,6 +557,13 @@ class ResultStore:
         produces_state: bool,
         persistent_ref: str | None = None,
     ) -> ResultRecord:
+        existing = self.result_for_external_source(
+            output_path,
+            persistent_ref=persistent_ref,
+        )
+        if existing is not None:
+            return existing
+
         if atoms is None:
             return self.add_result(
                 result,

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from guy4ase.main import GuiApplication
 
 
-def test_workflow_job_entry_is_available_without_workspace_results(tmp_path):
+def test_workflow_job_entry_is_separate_from_workspace_results(tmp_path):
     _application = QApplication.instance() or QApplication([])
     gui = GuiApplication(
         recent_files_path=tmp_path / "recent.json",
@@ -19,9 +19,6 @@ def test_workflow_job_entry_is_available_without_workspace_results(tmp_path):
     window = gui.create_workflow_window()
 
     assert not gui.controller.result_store.results
-    assert not window._result_actions.isHidden()
-    assert window._result_actions_widget._history_button is not None
-    assert window._result_actions_widget._history_button.text() == (
-        "Browse calculation jobs…"
-    )
+    assert window._browser_panel.calculation_jobs_button.text() == "Calculation Jobs…"
+    assert window._result_actions_widget._history_button is None
     window.close()

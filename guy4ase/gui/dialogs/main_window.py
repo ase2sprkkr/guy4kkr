@@ -44,6 +44,7 @@ from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.plots.lattice import plot_atoms_preview
+from guy4ase.gui.widgets.browser_panel import BrowserPanel
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     populate_recent_menu,
@@ -236,6 +237,16 @@ class MainWindow(QMainWindow):
             self,
         )
 
+    def continue_recent_file(self, kind: RecentKind, file_path: str) -> None:
+        """Continue from a recent item, activating an output's calculation state."""
+        file_flows.continue_recent(
+            self.controller,
+            self.recent_history,
+            kind,
+            file_path,
+            self,
+        )
+
     def _refresh_recent_start_button(self) -> None:
         btn = self._recent_start_button
         if btn is None:
@@ -251,7 +262,7 @@ class MainWindow(QMainWindow):
         self._recent_start_menu = build_recent_launch_menu(
             btn,
             self.recent_history,
-            self.open_recent_file,
+            self.continue_recent_file,
         )
         btn.setMenu(self._recent_start_menu)
 
@@ -260,7 +271,7 @@ class MainWindow(QMainWindow):
         except TypeError:
             pass
         btn.clicked.connect(
-            lambda _checked=False, item=launch: self.open_recent_file(
+            lambda _checked=False, item=launch: self.continue_recent_file(
                 item.kind, item.path
             )
         )
@@ -614,6 +625,8 @@ class MainWindow(QMainWindow):
         self._build_input_panel(actions_group_layout)
         self._build_calculation_panel(actions_group_layout)
         actions_layout.addWidget(actions_group)
+        self._browser_panel = BrowserPanel(actions_widget)
+        actions_layout.addWidget(self._browser_panel)
         actions_layout.addWidget(self._build_results_panel(), 1)
         actions_widget.setMaximumWidth(350)
         return actions_widget
@@ -695,6 +708,7 @@ class MainWindow(QMainWindow):
         self._result_actions_widget = ResultActionsWidget(
             lambda value, action: execute_value_action(value, action, self),
             show_values_without_actions=True,
+            show_history_button=False,
             parent=self._result_group,
         )
         result_layout.addWidget(self._result_actions_widget, 1)
