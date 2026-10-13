@@ -554,10 +554,11 @@ class WorkspaceController(QObject):
                     target_state = known_state
                 else:
                     atoms = self._load_potential_version(expected_potential)
-                    _, target_state_id = self._results.new_structure_state(
-                        atoms,
+                    target_state_id = self._results.new_child_state(
+                        state.id,
                         potential_path=str(expected_potential.path),
                         potential_version=expected_potential,
+                        empty_spheres=None,
                     )
                     target_state = self._results.state(target_state_id)
             if atoms is None:

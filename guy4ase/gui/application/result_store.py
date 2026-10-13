@@ -52,6 +52,20 @@ def _capture_potential(path: str | Path | None) -> PotentialFileVersion | None:
     return PotentialFileVersion.capture(path) if path is not None else None
 
 
+def _resolve_potential_version(
+    path: str | Path | None,
+    version: PotentialFileVersion | None,
+) -> PotentialFileVersion | None:
+    if version is None:
+        return _capture_potential(path)
+    if path is None:
+        raise AssertionError("A captured potential version requires its potential path.")
+    resolved_path = Path(path).expanduser().absolute()
+    if version.path != resolved_path:
+        raise AssertionError("Captured potential version does not match potential path.")
+    return version
+
+
 def _snapshot_needed(version: PotentialFileVersion | None) -> bool:
     return version is None or not version.available
 
@@ -288,19 +302,7 @@ class ResultStore:
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> tuple[int, int]:
-        if potential_version is not None:
-            if potential_path is None:
-                raise AssertionError(
-                    "A captured potential version requires its potential path."
-                )
-            resolved_path = Path(potential_path).expanduser().absolute()
-            if potential_version.path != resolved_path:
-                raise AssertionError(
-                    "Captured potential version does not match potential path."
-                )
-            resolved_version = potential_version
-        else:
-            resolved_version = _capture_potential(potential_path)
+        resolved_version = _resolve_potential_version(potential_path, potential_version)
 
         structure_id = self._next_structure_id
         self._next_structure_id += 1
@@ -335,6 +337,7 @@ class ResultStore:
         parent_id: int,
         *,
         potential_path: str | None | object = _KEEP_POTENTIAL,
+        potential_version: PotentialFileVersion | None = None,
         structure_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE,
         empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
@@ -343,12 +346,19 @@ class ResultStore:
     ) -> int:
         parent = self.state(parent_id)
         reuses_potential = potential_path is _KEEP_POTENTIAL
-        resolved_path = parent.potential_path if reuses_potential else potential_path
-        resolved_version = (
-            parent.potential_version
-            if reuses_potential
-            else _capture_potential(resolved_path)
-        )
+        if reuses_potential:
+            if potential_version is not None:
+                raise AssertionError(
+                    "An explicit potential version requires an explicit potential path."
+                )
+            resolved_path = parent.potential_path
+            resolved_version = parent.potential_version
+        else:
+            resolved_path = potential_path
+            resolved_version = _resolve_potential_version(
+                resolved_path,
+                potential_version,
+            )
         resolved_source = (
             parent.potential_source_result_id
             if potential_source_result_id is _KEEP_POTENTIAL_SOURCE and reuses_potential

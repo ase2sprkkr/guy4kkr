@@ -7,6 +7,8 @@ from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 from guy4ase.gui.application import result_loading
+from guy4ase.gui.application import workspace_controller as workspace_controller_module
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     PotentialVersionChanged,
@@ -185,3 +187,69 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
         controller.use_result_state(result.id)
 
     assert controller.atoms.get_chemical_symbols() == ["Cu"]
+
+
+def test_unknown_current_potfil_version_stays_in_structure_lineage(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "Fe.pot"
+    path.write_text("historical potential")
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters(),
+            directory=str(tmp_path),
+            potential_path=str(path),
+        )
+    )
+    structure_id = controller.structure_id
+    historical_state_id = controller.state_id
+    assert structure_id is not None
+    assert historical_state_id is not None
+    historical_state = controller.result_store.state(historical_state_id)
+    historical_version = historical_state.potential_version
+    assert historical_version is not None
+
+    result = controller.result_store.add_result(
+        SimpleNamespace(task_name="dos"),
+        structure_id=structure_id,
+        input_state_id=historical_state_id,
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+        potential_path=path,
+    )
+
+    path.write_text("externally modified current potential is a different version")
+    current_version = PotentialFileVersion.capture(path)
+    assert current_version.available
+    assert current_version != historical_version
+
+    loaded_atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    loaded_potential = SimpleNamespace(atoms=loaded_atoms)
+    loaded_atoms._potential = loaded_potential
+    calls = []
+
+    def parse(value):
+        calls.append(value)
+        return loaded_potential
+
+    monkeypatch.setattr(
+        workspace_controller_module.Potential,
+        "from_file",
+        staticmethod(parse),
+    )
+
+    controller.use_result_state(result.id, expected_potential=current_version)
+
+    assert calls == [str(path.resolve())]
+    assert controller.atoms is loaded_atoms
+    assert controller.structure_id == structure_id
+    assert len(controller.result_store.structures) == 1
+    assert controller.state_id != historical_state_id
+    current_state = controller.result_store.state(controller.state_id)
+    assert current_state.structure_id == structure_id
+    assert current_state.parent_id == historical_state_id
+    assert current_state.potential_version == current_version
+    assert current_state.potential_source_result_id is None
+    assert current_state.empty_spheres is None
+    assert not controller.restarted
