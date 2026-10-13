@@ -337,7 +337,6 @@ class WorkflowWindow(QMainWindow):
             self.controller.state_id,
         )
         self._result_actions_widget.set_results(store)
-        self._result_actions.setVisible(bool(store))
 
     def _add_action(
         self,

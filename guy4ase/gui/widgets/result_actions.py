@@ -97,6 +97,7 @@ class ResultActionsWidget(QWidget):
         *,
         show_values_without_actions: bool,
         empty_text: str = "No result loaded.",
+        show_history_button: bool = True,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -108,9 +109,17 @@ class ResultActionsWidget(QWidget):
         self._records: dict[int, ResultRecord] = {}
         self._current_structure_id: int | None = None
         self._current_state_id: int | None = None
+        self._history_dialog = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        if show_history_button:
+            self._history_button = QPushButton("Browse calculation jobs…", self)
+            self._history_button.clicked.connect(self._open_calculation_history)
+            layout.addWidget(self._history_button)
+        else:
+            self._history_button = None
 
         self._selector = QTreeWidget(self)
         self._selector.setHeaderHidden(True)
@@ -152,6 +161,23 @@ class ResultActionsWidget(QWidget):
     @property
     def has_rows(self) -> bool:
         return self._row_count > 0
+
+    def _open_calculation_history(self) -> None:
+        if self._history_dialog is not None:
+            self._history_dialog.show()
+            self._history_dialog.raise_()
+            self._history_dialog.activateWindow()
+            return
+
+        from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
+
+        dialog = CalculationHistoryDialog(self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.destroyed.connect(lambda: setattr(self, "_history_dialog", None))
+        self._history_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def set_workspace_state(
         self,
