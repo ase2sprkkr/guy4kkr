@@ -164,8 +164,9 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
 
     assert change is DocumentChange.APPLIED
     assert workspace.atoms is atoms
-    assert atoms.potential.SCF_INFO.SCFSTATUS == "START"
-    assert workspace.restarted
+    assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
+    assert workspace.restart_scf_requested
+    assert workspace.scf_status() == "START"
     assert not workspace.is_scf_converged()
     assert workspace.empty_spheres is empty_spheres
     assert workspace.empty_spheres_added == 3
