@@ -65,7 +65,7 @@ class GuiApplication(QObject):
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
         """Connect explicit result actions and one authoritative result store."""
-        widget = window._result_actions_widget
+        widget = window.result_actions_widget
         if widget is None:
             return
 
@@ -75,11 +75,6 @@ class GuiApplication(QObject):
                 self.controller.state_id,
             )
             widget.set_results(self.controller.result_store)
-
-        def select_result(result_id: int) -> None:
-            item = widget._find_result_item(result_id)
-            if item is not None:
-                widget._selector.setCurrentItem(item)
 
         widget.useStateRequested.connect(self.controller.use_result_state)
         widget.recomputeRequested.connect(
@@ -92,7 +87,7 @@ class GuiApplication(QObject):
         )
         self.controller.structureChanged.connect(refresh_result_context)
         self.controller.resultChanged.connect(refresh_result_context)
-        self.controller.resultSelectionRequested.connect(select_result)
+        self.controller.resultSelectionRequested.connect(widget.select_result)
         self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
 
