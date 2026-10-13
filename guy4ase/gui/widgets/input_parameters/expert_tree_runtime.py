@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable
 
 from PyQt6 import sip
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
@@ -52,10 +51,10 @@ class ExpertTreeRuntime:
     def error_messages(self) -> tuple[str, ...]:
         return tuple(f"{label}: {error}" for _, label, error in self._errors.values())
 
-    @property
-    def option_rows(self) -> Mapping[InputParameterPath, QTreeWidgetItem]:
-        """Read-only compatibility view used by tree-rendering tests."""
-        return MappingProxyType(self._option_rows)
+    def option_items(self) -> tuple[tuple[InputParameterPath, QTreeWidgetItem], ...]:
+        """Return the currently registered option rows."""
+        self.prune()
+        return tuple(self._option_rows.items())
 
     def option_item(self, path: InputParameterPath) -> QTreeWidgetItem | None:
         item = self._option_rows.get(path)
