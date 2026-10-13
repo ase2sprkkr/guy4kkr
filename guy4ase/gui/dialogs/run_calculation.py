@@ -154,6 +154,7 @@ class _SprkkrRunWorker(QObject):
             potential_file=potential_file,
             output_file=output_file,
             empty_spheres=False,
+            restart_scf=self._request.restart_scf,
             read_callback=read_callback,
             print_output=False,
         )
