@@ -21,9 +21,13 @@ def _job(
     finished_at: str | None = None,
     target: str = "SSH · cluster",
     attachable: bool | None = None,
+    result_files_state: str | None = None,
+    result_files_verified: bool = False,
 ) -> PersistentJob:
     if attachable is None:
         attachable = state not in {"finished", "failed", "cancelled"}
+    if result_files_state is None and state == "finished":
+        result_files_state = "current"
     return PersistentJob(
         id=job_id,
         state=state,
@@ -36,8 +40,9 @@ def _job(
         target=target,
         return_code=0 if state == "finished" else None,
         message=None,
-        artifact_state="current" if state == "finished" else None,
+        result_files_state=result_files_state,
         attachable=attachable,
+        result_files_verified=result_files_verified,
     )
 
 
@@ -47,6 +52,7 @@ class _Source:
     supports_refresh = True
     supports_results = True
     supports_attach = True
+    supports_result_file_check = False
 
     def __init__(self, jobs):
         self._jobs = tuple(jobs)
@@ -104,6 +110,7 @@ def test_history_groups_jobs_and_shows_selected_metadata():
     assert dialog.status_value.text() == "Running"
     assert dialog.started_value.text() == "2026-10-13 10:00:00"
     assert dialog.finished_value.text() == "—"
+    assert dialog.result_files_value.text() == "—"
     assert dialog.result_widget._history_button is None
     assert not dialog.monitor_button.isHidden()
     assert dialog.load_result_button.isHidden()
@@ -132,11 +139,52 @@ def test_finished_job_shows_stable_finished_time_and_can_load_result():
 
     assert dialog.finished_value.text() == "2026-10-13 10:37:00"
     assert dialog.tree.topLevelItem(0).child(0).text(3) == "2026-10-13 10:37:00"
+    assert dialog.result_files_value.text() == "Current (stored, not checked)"
     assert dialog.monitor_button.isHidden()
     assert not dialog.load_result_button.isHidden()
     dialog._load_selected_result()
 
     assert source.loaded == [job.id]
+    dialog.close()
+
+
+def test_selected_final_job_verifies_result_files():
+    _application = QApplication.instance() or QApplication([])
+    job = _job(
+        "finished-overwritten",
+        state="finished",
+        task="DOS",
+        dataset="Fe-DOS",
+        created_at="2026-10-13T08:00:00+00:00",
+        finished_at="2026-10-13T08:37:00+00:00",
+    )
+
+    class Source(_Source):
+        supports_result_file_check = True
+
+        def __init__(self, jobs):
+            super().__init__(jobs)
+            self.checked = []
+
+        def check_result_files(self, job_id):
+            self.checked.append(job_id)
+            return _job(
+                job_id,
+                state="finished",
+                task="DOS",
+                dataset="Fe-DOS",
+                created_at="2026-10-13T08:00:00+00:00",
+                finished_at="2026-10-13T08:37:00+00:00",
+                result_files_state="overwritten",
+                result_files_verified=True,
+            )
+
+    source = Source((job,))
+    dialog = CalculationHistoryDialog(source=source)
+
+    assert source.checked == [job.id]
+    assert dialog.result_files_value.text() == "Overwritten"
+    assert dialog._jobs_by_id[job.id].result_files_verified
     dialog.close()
 
 
@@ -182,6 +230,7 @@ def test_unavailable_backend_is_an_empty_nonfatal_history():
         supports_refresh = False
         supports_results = False
         supports_attach = False
+        supports_result_file_check = False
 
         @staticmethod
         def jobs():
