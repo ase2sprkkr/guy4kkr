@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from guy4ase.gui.application.atomic_io import atomic_write_json
 from guy4ase.gui.application.config import config_home
 
 
@@ -49,16 +50,12 @@ class ApplicationSettings:
     def save(self) -> bool:
         """Persist settings, returning false when the file is not writable."""
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
-                json.dumps(
-                    {
-                        "viewer": self.viewer,
-                        "dataset_default_mode": self.dataset_default_mode,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            atomic_write_json(
+                self.path,
+                {
+                    "viewer": self.viewer,
+                    "dataset_default_mode": self.dataset_default_mode,
+                },
             )
         except OSError:
             return False
