@@ -11,7 +11,10 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.result_loading import load_result_file
+from guy4ase.gui.application.result_loading import (
+    load_potential_atoms,
+    load_result_file,
+)
 from guy4ase.gui.application.workspace_controller import ResultAdoption, WorkspaceController
 from guy4ase.gui.flows.structure_candidates import (
     load_structure_candidate,
@@ -20,6 +23,16 @@ from guy4ase.gui.flows.structure_candidates import (
 from guy4ase.gui.flows.structures import warn_if_structure_kind_is_unknown
 from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
+
+
+_POTENTIAL_SUFFIXES = {".pot", ".pot_new"}
+
+
+def _read_structure_file(path: Path):
+    """Read a structure, keeping a POT file's potential authoritative in atoms."""
+    if path.suffix.lower() in _POTENTIAL_SUFFIXES and path.exists():
+        return load_potential_atoms(path)
+    return ase_read(path)
 
 
 def _show_potential_warning(adoption: ResultAdoption, parent: QWidget) -> None:
@@ -66,12 +79,12 @@ def load_structure(
 ) -> bool:
     generation = controller.generation
     path = Path(file_path).resolve()
-    candidate = load_structure_candidate(path, parent, reader=ase_read)
+    candidate = load_structure_candidate(path, parent, reader=_read_structure_file)
     if candidate is None:
         return False
     atoms = candidate.atoms
 
-    potential_path = str(path) if path.suffix.lower() in {".pot", ".pot_new"} else None
+    potential_path = str(path) if path.suffix.lower() in _POTENTIAL_SUFFIXES else None
     change = controller.replace_structure(
         atoms,
         potential_path=potential_path,

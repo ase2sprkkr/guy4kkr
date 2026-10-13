@@ -51,7 +51,10 @@ class WorkspaceState:
 
     Results deliberately do not live here. ``structure_id`` identifies the
     user-visible structure and ``state_id`` the exact structure/potential input
-    from which the next task will start.
+    from which the next task will start. ``atoms`` is the sole physical
+    authority for that state, including an attached SPR-KKR potential when one
+    exists. ``potential_path`` is provenance/artifact metadata only and is never
+    consulted to construct a calculation input.
     """
 
     atoms: Any | None = None

@@ -24,6 +24,12 @@ def _result_is_scf(result: Any) -> bool:
         return False
 
 
+def _atoms_has_potential(atoms: Any) -> bool:
+    """Return whether the authoritative atoms state owns a potential."""
+    checker = getattr(atoms, "has_potential", None)
+    return bool(callable(checker) and checker())
+
+
 class DocumentChange(Enum):
     """Semantic result of a revision-sensitive draft command."""
 
@@ -48,7 +54,9 @@ class CalculationRequest:
     preparation may lazily promote or populate caches/site/potential bookkeeping
     on that object; those mutations do not change the represented physical
     structure and therefore do not constitute a provenance or generation change.
-    Structural edits must still go through controller transitions.
+    Structural edits must still go through controller transitions. ``atoms`` is
+    also the sole physical authority for the input potential; potential paths
+    are provenance/artifact metadata only.
     """
 
     atoms: Any
@@ -111,6 +119,7 @@ class WorkspaceController(QObject):
 
     @property
     def potential_path(self) -> str | None:
+        """Return potential provenance/artifact path, never calculation input."""
         return self._workspace.potential_path
 
     @property
@@ -426,7 +435,7 @@ class WorkspaceController(QObject):
         self._workspace.state_id = state.id
         self._workspace.empty_spheres = state.empty_spheres
         self._workspace.restarted = (
-            state.potential_path is None and state.parent_id is not None
+            state.parent_id is not None and not _atoms_has_potential(state.atoms)
         )
         self._changed()
         self.structureChanged.emit(state.atoms)
