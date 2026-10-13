@@ -7,9 +7,6 @@ from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
-
-from guy4ase.gui.application.file_version import FileFingerprint
 
 
 @dataclass(frozen=True)
@@ -38,25 +35,12 @@ class LoadedResult:
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
-    """Load a stable POT file and attach that exact parsed potential to its atoms."""
+    """Load one stable POT file and return the atoms owned by that potential."""
     path = Path(file_path).resolve()
-    before = FileFingerprint.capture(path)
-    potential = Potential.from_file(str(path))
-    try:
-        after = FileFingerprint.capture(path)
-    except OSError as exc:
-        raise RuntimeError(
-            f"Potential file changed while it was being read: {path}"
-        ) from exc
-    if after != before:
-        raise RuntimeError(f"Potential file changed while it was being read: {path}")
-
+    potential = Potential.from_file(str(path), check_file_unchanged=True)
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
-    atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
-    atoms._potential = potential
-    potential.atoms = atoms
     return atoms
 
 
