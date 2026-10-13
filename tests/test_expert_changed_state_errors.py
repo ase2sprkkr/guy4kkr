@@ -1,6 +1,7 @@
 import pytest
 
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
+from guy4ase.gui.widgets.input_parameters.expert_tree_renderer import ExpertTreeRole
 
 
 class _Item:
@@ -8,17 +9,19 @@ class _Item:
         self.related_paths = related_paths
 
     def data(self, _column, role):
-        if role == ExpertInputTreeEditor._RELATED_PATHS_ROLE:
+        if role == ExpertTreeRole.RELATED_PATHS:
             return self.related_paths
         return None
 
 
 class _EditorContext:
-    _RELATED_PATHS_ROLE = ExpertInputTreeEditor._RELATED_PATHS_ROLE
-    _CHANGED_ROLE = ExpertInputTreeEditor._CHANGED_ROLE
-
     def __init__(self, parameters=None):
         self.parameters = {} if parameters is None else parameters
+
+    def apply_filter(self, _text):
+        pass
+
+    filter_edit = type("Filter", (), {"text": lambda self: ""})()
 
 
 class _UnchangedOption:
