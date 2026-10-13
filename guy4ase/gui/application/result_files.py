@@ -5,14 +5,10 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
-from guy4ase.gui.application.file_version import FileState, FileVersion
+from guy4ase.gui.application.file_version import FileVersion
 
 
-ArtifactState = FileState
-ResultArtifactVersion = FileVersion
-
-
-def capture_result_artifacts(result: Any) -> Mapping[str, ResultArtifactVersion]:
+def capture_result_files(result: Any) -> Mapping[str, FileVersion]:
     """Capture path-backed output values without making result recording fragile.
 
     ASE2SPRKKR ``OutputFileOption`` values expose ``path()``. Guy4ASE keeps the
@@ -25,7 +21,7 @@ def capture_result_artifacts(result: Any) -> Mapping[str, ResultArtifactVersion]
     except Exception:  # noqa: BLE001 - optional result presentation metadata
         return MappingProxyType({})
 
-    artifacts: dict[str, ResultArtifactVersion] = {}
+    result_files: dict[str, FileVersion] = {}
     for key, value in items:
         path_getter = getattr(value, "path", None)
         if not callable(path_getter):
@@ -38,7 +34,7 @@ def capture_result_artifacts(result: Any) -> Mapping[str, ResultArtifactVersion]
             continue
         try:
             name = str(key)
-            artifacts[name] = ResultArtifactVersion.capture(path)
+            result_files[name] = FileVersion.capture(path)
         except Exception:  # noqa: BLE001 - provenance enrichment is best effort
             continue
-    return MappingProxyType(artifacts)
+    return MappingProxyType(result_files)
