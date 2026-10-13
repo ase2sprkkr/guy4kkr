@@ -58,6 +58,9 @@ class _Source:
         self._jobs = tuple(jobs)
         self.loaded = []
         self.refresh_calls = 0
+        self.attach_calls = []
+        self.attach_callbacks = {}
+        self.runners = {}
 
     def jobs(self):
         return self._jobs
@@ -65,6 +68,11 @@ class _Source:
     def refresh(self):
         self.refresh_calls += 1
         return self._jobs
+
+    def attach(self, job_id, *, callback=None, output_listener=None):
+        self.attach_calls.append(job_id)
+        self.attach_callbacks[job_id] = callback
+        return self.runners.setdefault(job_id, object())
 
     def load_result(self, job_id):
         self.loaded.append(job_id)
@@ -185,6 +193,44 @@ def test_selected_final_job_verifies_result_files():
     assert source.checked == [job.id]
     assert dialog.result_files_value.text() == "Overwritten"
     assert dialog._jobs_by_id[job.id].result_files_verified
+    dialog.close()
+
+
+def test_finishing_job_is_recovered_without_opening_monitor():
+    application = QApplication.instance() or QApplication([])
+    finishing = _job(
+        "recovering-dos",
+        state="finishing",
+        task="DOS",
+        dataset="Fe-DOS",
+        created_at="2026-10-13T08:00:00+00:00",
+        attachable=True,
+    )
+    finished = _job(
+        finishing.id,
+        state="finished",
+        task="DOS",
+        dataset="Fe-DOS",
+        created_at=finishing.created_at,
+        finished_at="2026-10-13T08:45:00+00:00",
+        attachable=False,
+    )
+    source = _Source((finishing,))
+
+    dialog = CalculationHistoryDialog(source=source)
+
+    assert source.attach_calls == [finishing.id]
+    assert dialog._recovery.active_ids == (finishing.id,)
+    assert dialog.monitor_button.isHidden()
+
+    source._jobs = (finished,)
+    result = type("Result", (), {"output_values": {}})()
+    source.attach_callbacks[finishing.id](result)
+    application.processEvents()
+
+    assert dialog._recovery.active_ids == ()
+    assert dialog._jobs_by_id[finishing.id].state == "finished"
+    assert not dialog.load_result_button.isHidden()
     dialog.close()
 
 

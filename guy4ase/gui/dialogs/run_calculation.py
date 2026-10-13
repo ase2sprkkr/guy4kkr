@@ -3,26 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Callable
-from threading import Lock, Thread
+from threading import Thread
 from typing import Any
 
 from ase2sprkkr.execution import MpiNotFoundWarning
 from ase2sprkkr.sprkkr.calculator import SPRKKR
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QLabel,
-    QMessageBox,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-)
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QMessageBox
 
 from guy4ase.gui.application.result_loading import load_result
 from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.dialogs.run_monitor import RunCancellation, RunMonitorWindow
 from guy4ase.gui.widgets.input_parameters.dataset import (
     dataset_value,
     filename_component,
@@ -31,55 +22,8 @@ from guy4ase.gui.widgets.input_parameters.dataset import (
 
 logger = logging.getLogger(__name__)
 
-
-class _RunCancellation:
-    """Bridge a GUI stop request to a runner that may not exist yet."""
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._requested = False
-        self._runner: Any | None = None
-
-    @property
-    def requested(self) -> bool:
-        with self._lock:
-            return self._requested
-
-    @property
-    def runner(self) -> Any | None:
-        """Return the current runner for non-blocking status refresh."""
-        with self._lock:
-            return self._runner
-
-    def register(self, runner: Any) -> bool:
-        """Register the runner and return whether it may be started."""
-        with self._lock:
-            if self._requested:
-                return False
-            self._runner = runner
-            return True
-
-    @staticmethod
-    def _cancel_runner(runner: Any) -> None:
-        try:
-            runner.cancel()
-        except Exception:  # noqa: BLE001 - backend cancellation boundary
-            logger.exception("Failed to cancel SPR-KKR calculation")
-
-    def request(self) -> None:
-        with self._lock:
-            if self._requested:
-                return
-            self._requested = True
-            runner = self._runner
-
-        if runner is not None:
-            Thread(
-                target=self._cancel_runner,
-                args=(runner,),
-                name="sprkkr-cancel",
-                daemon=True,
-            ).start()
+# Compatibility alias while callers/tests migrate to the generic monitor module.
+_RunCancellation = RunCancellation
 
 
 class _SprkkrRunWorker(QObject):
@@ -93,7 +37,7 @@ class _SprkkrRunWorker(QObject):
     def __init__(
         self,
         request: CalculationRequest,
-        cancellation: _RunCancellation | None = None,
+        cancellation: RunCancellation | None = None,
         *,
         profile_name: str | None = None,
         run_registry=None,
@@ -102,9 +46,7 @@ class _SprkkrRunWorker(QObject):
         super().__init__()
         self._request = request
         self._profile_name = profile_name
-        self._cancellation = cancellation or _RunCancellation()
-        # ``run_registry`` and ``launch_lock`` are accepted only while callers
-        # and tests migrate from the former GUI-owned execution registry.
+        self._cancellation = cancellation or RunCancellation()
         del run_registry, launch_lock
 
     def _emit_cancelled(self) -> None:
@@ -112,7 +54,6 @@ class _SprkkrRunWorker(QObject):
         self.cancelled.emit()
 
     def _file_names(self) -> tuple[str, str, str]:
-        """Use DATASET as the visible namespace for files owned by this run."""
         dataset = dataset_value(self._request.input_parameters)
         if dataset is None:
             return "%a_%T.inp", "%a.pot", "%a_%T.out"
@@ -122,7 +63,6 @@ class _SprkkrRunWorker(QObject):
         return f"{base}_%T.inp", f"{base}.pot", f"{base}_%T.out"
 
     def _with_mpi_warnings(self, operation):
-        """Run one backend operation and surface only the dedicated MPI warning."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", MpiNotFoundWarning)
             result = operation()
@@ -213,8 +153,8 @@ class _SprkkrRunWorker(QObject):
                 self.error.emit(str(exc))
 
 
-class SprkkrRunWindow(QDialog):
-    refreshed = pyqtSignal(str)
+class SprkkrRunWindow(RunMonitorWindow):
+    """Create an SPR-KKR runner and display it in the generic run monitor."""
 
     def __init__(
         self,
@@ -223,165 +163,31 @@ class SprkkrRunWindow(QDialog):
         *,
         profile_name: str | None = None,
         profile_description: str | None = None,
-        on_finished: Callable[[Any], None] | None = None,
+        on_finished=None,
     ):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setWindowTitle("SPRKKR Run")
-        self.resize(900, 600)
-
-        self._thread: QThread | None = None
-        self._worker: _SprkkrRunWorker | None = None
-        self._finished_callback = on_finished
-        self._close_requested = False
-        self._profile_name = profile_name
-        self.refreshed.connect(self._set_status)
-
-        layout = QVBoxLayout(self)
-
-        header = QLabel(f"Directory: {request.directory}")
-        header.setWordWrap(True)
-        layout.addWidget(header)
+        header = f"Directory: {request.directory}"
         if profile_description:
-            profile = QLabel(profile_description)
-            profile.setWordWrap(True)
-            layout.addWidget(profile)
-
-        self._status = QLabel("")
-        layout.addWidget(self._status)
-
-        self._output = QTextEdit()
-        self._output.setReadOnly(True)
-        layout.addWidget(self._output, 1)
-
-        btn_row = QHBoxLayout()
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.clicked.connect(self._on_stop)
-        btn_row.addWidget(self._stop_btn)
-
-        self._refresh_btn = QPushButton("Refresh")
-        self._refresh_btn.setToolTip(
-            "Refresh the backend run state without blocking the GUI. "
-            "Output continues to use the runner's normal live listener."
+            header = f"{header}\n{profile_description}"
+        super().__init__(
+            lambda cancellation: _SprkkrRunWorker(
+                request,
+                cancellation,
+                profile_name=profile_name,
+            ),
+            parent,
+            title="SPRKKR Run",
+            header=header,
+            warning_title="MPI Not Detected",
+            background_thread_factory=lambda **kwargs: Thread(**kwargs),
+            on_finished=on_finished,
+            autostart=False,
         )
-        self._refresh_btn.clicked.connect(self._on_refresh)
-        btn_row.addWidget(self._refresh_btn)
-
-        btn_row.addStretch(1)
-
-        self._close_btn = QPushButton("Close")
-        self._close_btn.clicked.connect(self.close)
-        btn_row.addWidget(self._close_btn)
-        layout.addLayout(btn_row)
-
         self._start(request)
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._thread is not None and self._thread.isRunning():
-            # Closing only detaches the monitor. Cancellation is an explicit
-            # Stop action, so the worker keeps the original request alive.
-            self._close_requested = True
-            self.hide()
-            event.ignore()
-            return
-        super().closeEvent(event)
-
-    def _start(self, request: CalculationRequest) -> None:
-        thread = QThread(self)
-        self._cancellation = _RunCancellation()
-        worker = _SprkkrRunWorker(
-            request,
-            self._cancellation,
-            profile_name=self._profile_name,
-        )
-        worker.moveToThread(thread)
-
-        thread.started.connect(worker.run)
-        worker.output.connect(self._append_output)
-        worker.status.connect(self._set_status)
-        worker.warning.connect(self._on_warning)
-        worker.error.connect(self._on_error)
-        worker.finished.connect(self._on_finished)
-        worker.cancelled.connect(self._on_cancelled)
-
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
-        worker.cancelled.connect(worker.deleteLater)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        worker.cancelled.connect(thread.quit)
-        thread.finished.connect(self._thread_finished)
-
-        self._thread = thread
-        self._worker = worker
-        thread.start()
-
-    @pyqtSlot()
-    def _thread_finished(self) -> None:
-        if self._close_requested:
-            self.close()
-
-    @pyqtSlot(str)
-    def _set_status(self, text: str) -> None:
-        self._status.setText(text)
-
-    @pyqtSlot(str, str)
-    def _append_output(self, text: str, kind: str) -> None:
-        cursor = self._output.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-
-        is_err = kind in {"err", "stderr"}
-        fmt = QTextCharFormat()
-        if is_err:
-            fmt.setForeground(QColor("red"))
-            fmt.setFontWeight(QFont.Weight.Bold)
-        cursor.setCharFormat(fmt)
-
-        cursor.insertText(text)
-        self._output.setTextCursor(cursor)
-        self._output.ensureCursorVisible()
-
-    @pyqtSlot()
-    def _on_stop(self) -> None:
-        self._stop_btn.setEnabled(False)
-        self._cancellation.request()
-
-    @pyqtSlot()
-    def _on_refresh(self) -> None:
-        runner = self._cancellation.runner
-        if runner is None:
-            self._set_status("Preparing calculation…")
-            return
-
-        def refresh() -> None:
-            try:
-                state = runner.state
-            except Exception as exc:  # noqa: BLE001 - backend status boundary
-                logger.exception("Failed to refresh SPR-KKR run state")
-                self.refreshed.emit(f"Refresh failed: {exc}")
-                return
-            value = getattr(state, "value", state)
-            self.refreshed.emit(str(value).replace("_", " ").capitalize())
-
-        Thread(target=refresh, name="sprkkr-refresh", daemon=True).start()
+    def _start(self, _request: CalculationRequest) -> None:
+        """Compatibility seam; actual monitor startup is backend-agnostic."""
+        self._start_worker()
 
     @pyqtSlot(str)
     def _on_warning(self, message: str) -> None:
         QMessageBox.warning(self, "MPI Not Detected", message)
-
-    @pyqtSlot(str)
-    def _on_error(self, message: str) -> None:
-        self._append_output(f"\n[ERROR] {message}\n", "stderr")
-        self._stop_btn.setEnabled(False)
-
-    @pyqtSlot()
-    def _on_cancelled(self) -> None:
-        self._stop_btn.setEnabled(False)
-
-    @pyqtSlot(object)
-    def _on_finished(self, result: object) -> None:
-        try:
-            if self._finished_callback is not None:
-                self._finished_callback(result)
-        finally:
-            self._stop_btn.setEnabled(False)

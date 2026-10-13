@@ -1,10 +1,9 @@
-"""Monitor an already submitted persistent ASE2SPRKKR calculation."""
+"""Generic UI for monitoring one calculation runner."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -13,121 +12,115 @@ from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
-from guy4ase.gui.dialogs.run_calculation import _RunCancellation
-
 
 logger = logging.getLogger(__name__)
 
 
-def _state_label(state: Any) -> str:
+def state_label(state: Any) -> str:
     value = getattr(state, "value", state)
     return str(value).replace("_", " ").capitalize()
 
 
-class _PersistentRunWorker(QObject):
-    output = pyqtSignal(str, str)
-    status = pyqtSignal(str)
-    error = pyqtSignal(str)
-    finished = pyqtSignal(object)
-    cancelled = pyqtSignal()
+class RunCancellation:
+    """Bridge a GUI stop request to a runner that may not exist yet."""
 
-    def __init__(
-        self,
-        source: PersistentJobSource,
-        job_id: str,
-        cancellation: _RunCancellation | None = None,
-    ) -> None:
-        super().__init__()
-        self._source = source
-        self._job_id = job_id
-        self._cancellation = cancellation or _RunCancellation()
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._requested = False
+        self._runner: Any | None = None
 
-    def _emit_cancelled(self) -> None:
-        self.status.emit("Cancelled")
-        self.cancelled.emit()
+    @property
+    def requested(self) -> bool:
+        with self._lock:
+            return self._requested
 
-    @pyqtSlot()
-    def run(self) -> None:
-        attached = False
+    @property
+    def runner(self) -> Any | None:
+        with self._lock:
+            return self._runner
+
+    def register(self, runner: Any) -> bool:
+        with self._lock:
+            if self._requested:
+                return False
+            self._runner = runner
+            return True
+
+    @staticmethod
+    def _cancel_runner(runner: Any) -> None:
         try:
-            self.status.emit("Attaching to calculation…")
+            runner.cancel()
+        except Exception:  # noqa: BLE001 - backend cancellation boundary
+            logger.exception("Failed to cancel calculation")
 
-            def output_listener(text: str, kind: str) -> None:
-                self.output.emit(text, kind)
-
-            # ASE2SPRKKR installs output_listener before starting the attach
-            # monitor, so replayed output cannot race with this GUI hookup.
-            runner = self._source.attach(
-                self._job_id,
-                output_listener=output_listener,
-            )
-            if not self._cancellation.register(runner):
-                runner.cancel()
-                self._emit_cancelled()
+    def request(self) -> None:
+        with self._lock:
+            if self._requested:
                 return
+            self._requested = True
+            runner = self._runner
 
-            attached = True
-            self.status.emit(_state_label(runner.state))
-            result = runner.wait()
-            if self._cancellation.requested:
-                self._emit_cancelled()
-                return
-
-            self.status.emit("Finished")
-            self.finished.emit(result)
-        except asyncio.CancelledError:
-            self._emit_cancelled()
-        except Exception as exc:  # noqa: BLE001 - persisted/backend boundary
-            if attached and self._cancellation.requested:
-                self._emit_cancelled()
-            else:
-                logger.exception("Failed to monitor persistent SPR-KKR calculation")
-                self.error.emit(str(exc))
+        if runner is not None:
+            Thread(
+                target=self._cancel_runner,
+                args=(runner,),
+                name="run-cancel",
+                daemon=True,
+            ).start()
 
 
-class PersistentRunMonitorWindow(QDialog):
-    """Live output window for a persistent job selected from history."""
+class RunMonitorWindow(QDialog):
+    """Display one calculation worker without knowing how its runner was created.
+
+    The caller owns launch/attach/persistence semantics. ``worker_factory`` only
+    has to return a QObject exposing ``run`` and the usual output/status/error/
+    finished/cancelled signals. The worker registers its concrete runner in the
+    supplied :class:`RunCancellation`.
+    """
 
     refreshed = pyqtSignal(str)
 
     def __init__(
         self,
-        job: PersistentJob,
-        source: PersistentJobSource,
+        worker_factory: Callable[[RunCancellation], QObject],
         parent: QWidget | None = None,
         *,
+        title: str = "Calculation Run",
+        header: str | None = None,
+        initial_status: str = "",
+        warning_title: str = "Warning",
         on_finished: Callable[[Any], None] | None = None,
+        background_thread_factory: Callable[..., Any] = Thread,
+        autostart: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setWindowTitle(f"Monitor {job.task or 'SPRKKR'} Calculation")
+        self.setWindowTitle(title)
         self.resize(900, 600)
 
-        self._job = job
-        self._source = source
+        self._worker_factory = worker_factory
         self._finished_callback = on_finished
+        self._warning_title = warning_title
+        self._background_thread_factory = background_thread_factory
         self._thread: QThread | None = None
-        self._worker: _PersistentRunWorker | None = None
+        self._worker: QObject | None = None
         self._close_requested = False
         self.refreshed.connect(self._set_status)
 
         layout = QVBoxLayout(self)
-        title = job.dataset or job.id
-        header = QLabel(
-            f"{title}\n{job.target} · {job.directory}",
-            self,
-        )
-        header.setWordWrap(True)
-        layout.addWidget(header)
+        if header:
+            header_widget = QLabel(header, self)
+            header_widget.setWordWrap(True)
+            layout.addWidget(header_widget)
 
-        self._status = QLabel(_state_label(job.state), self)
+        self._status = QLabel(initial_status, self)
         layout.addWidget(self._status)
 
         self._output = QTextEdit(self)
@@ -140,6 +133,9 @@ class PersistentRunMonitorWindow(QDialog):
         buttons.addWidget(self._stop_btn)
 
         self._refresh_btn = QPushButton("Refresh", self)
+        self._refresh_btn.setToolTip(
+            "Refresh the backend run state without blocking the GUI."
+        )
         self._refresh_btn.clicked.connect(self._on_refresh)
         buttons.addWidget(self._refresh_btn)
         buttons.addStretch(1)
@@ -149,31 +145,32 @@ class PersistentRunMonitorWindow(QDialog):
         buttons.addWidget(self._close_btn)
         layout.addLayout(buttons)
 
-        self._start()
+        if autostart:
+            self._start_worker()
+
+    @property
+    def runner(self) -> Any | None:
+        return self._cancellation.runner
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._thread is not None and self._thread.isRunning():
-            # Detach only. The backend calculation is persistent and Stop is
-            # deliberately the only UI action that cancels it.
             self._close_requested = True
             self.hide()
             event.ignore()
             return
         super().closeEvent(event)
 
-    def _start(self) -> None:
+    def _start_worker(self) -> None:
         thread = QThread(self)
-        self._cancellation = _RunCancellation()
-        worker = _PersistentRunWorker(
-            self._source,
-            self._job.id,
-            self._cancellation,
-        )
+        self._cancellation = RunCancellation()
+        worker = self._worker_factory(self._cancellation)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
         worker.output.connect(self._append_output)
         worker.status.connect(self._set_status)
+        if hasattr(worker, "warning"):
+            worker.warning.connect(self._on_warning)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
         worker.cancelled.connect(self._on_cancelled)
@@ -221,19 +218,26 @@ class PersistentRunMonitorWindow(QDialog):
     def _on_refresh(self) -> None:
         runner = self._cancellation.runner
         if runner is None:
-            self._set_status("Attaching to calculation…")
             return
 
         def refresh() -> None:
             try:
                 state = runner.state
             except Exception as exc:  # noqa: BLE001 - backend status boundary
-                logger.exception("Failed to refresh persistent SPR-KKR run state")
+                logger.exception("Failed to refresh calculation run state")
                 self.refreshed.emit(f"Refresh failed: {exc}")
                 return
-            self.refreshed.emit(_state_label(state))
+            self.refreshed.emit(state_label(state))
 
-        Thread(target=refresh, name="sprkkr-persistent-refresh", daemon=True).start()
+        self._background_thread_factory(
+            target=refresh,
+            name="run-refresh",
+            daemon=True,
+        ).start()
+
+    @pyqtSlot(str)
+    def _on_warning(self, message: str) -> None:
+        QMessageBox.warning(self, self._warning_title, message)
 
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:

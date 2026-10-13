@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from threading import RLock
+from typing import Any, Callable
 
 _FINAL_STATES = frozenset({"finished", "failed", "cancelled"})
 
@@ -44,9 +45,6 @@ def _is_attachable(record: Any, state: str) -> bool:
     if state in _FINAL_STATES:
         return False
 
-    # A fresh ExecutionManager can reconstruct only persisted endpoints. Old
-    # records with a backend reference but no endpoint still work inside the
-    # process that registered their executor, but not after a GUI restart.
     if getattr(record, "endpoint", None) is None:
         return False
 
@@ -54,23 +52,11 @@ def _is_attachable(record: Any, state: str) -> bool:
     if reference is None:
         return False
 
-    # Before reconnectable local execution, local references stored only the
-    # subprocess PID. New detached local runs deliberately use the persistent
-    # ASE2SPRKKR record id as their backend native id, so this test is exact and
-    # does not rely on guessing whether a string merely looks like a PID.
     executor = _value(getattr(reference, "executor", None))
     native_id = _value(getattr(reference, "native_id", None))
     if executor == "local" and native_id != str(record.id):
         return False
     return True
-
-
-def _result_files(record: Any) -> Any | None:
-    """Return result-file metadata, accepting the legacy ``artifacts`` name."""
-    result_files = getattr(record, "result_files", None)
-    if result_files is None:
-        result_files = getattr(record, "artifacts", None)
-    return result_files
 
 
 @dataclass(frozen=True)
@@ -101,11 +87,6 @@ class PersistentJob:
     def is_final(self) -> bool:
         return self.state in _FINAL_STATES
 
-    @property
-    def artifact_state(self) -> str | None:
-        """Compatibility alias for the old GUI-facing name."""
-        return self.result_files_state
-
     @classmethod
     def from_run_record(
         cls,
@@ -113,7 +94,7 @@ class PersistentJob:
         *,
         result_files_verified: bool = False,
     ) -> "PersistentJob":
-        result_files = _result_files(record)
+        result_files = record.result_files
         result_files_state = (
             _value(getattr(result_files, "state", None))
             if result_files is not None
@@ -184,18 +165,14 @@ class PersistentJobSource:
 
     @property
     def supports_result_file_check(self) -> bool:
-        if not self.available:
-            return False
-        return callable(getattr(self._manager, "check_result_files", None)) or callable(
-            getattr(self._manager, "check_artifacts", None)
+        return self.available and callable(
+            getattr(self._manager, "check_result_files", None)
         )
 
     def jobs(self) -> tuple[PersistentJob, ...]:
         if self._manager is None:
             return ()
         records = self._manager.store.runs()
-        # RunStore.runs() is intentionally metadata-only, so freshness has not
-        # been checked merely because a persisted state says "current".
         return tuple(PersistentJob.from_run_record(record) for record in records)
 
     def refresh(self) -> tuple[PersistentJob, ...]:
@@ -212,19 +189,25 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot verify persistent result files."
             )
-        checker = getattr(self._manager, "check_result_files", None)
-        if not callable(checker):
-            checker = self._manager.check_artifacts
-        record = checker(job_id)
+        record = self._manager.check_result_files(job_id)
         return PersistentJob.from_run_record(record, result_files_verified=True)
 
-    def attach(self, job_id: str, *, output_listener=None) -> Any:
-        """Reconnect to an active persistent run and replay its output."""
+    def attach(
+        self,
+        job_id: str,
+        *,
+        callback=None,
+        output_listener=None,
+    ) -> Any:
+        """Reconnect to an active persistent run."""
         if not self.supports_attach:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot attach to persistent calculations."
             )
-        return self._manager.attach(job_id, output_listener=output_listener)
+        kwargs = {"output_listener": output_listener}
+        if callback is not None:
+            kwargs["callback"] = callback
+        return self._manager.attach(job_id, **kwargs)
 
     def load_result(self, job_id: str) -> Any:
         if not self.supports_results:
@@ -232,3 +215,61 @@ class PersistentJobSource:
                 "This ASE2SPRKKR version cannot load persistent historical results."
             )
         return self._manager.load_result(job_id)
+
+
+class PersistentJobRecovery:
+    """Complete persistent lifecycle recovery after a Guy4ASE restart.
+
+    This object has no UI responsibility. It owns attached runners only until
+    ASE2SPRKKR finishes stage-out, parsing and persistent finalization.
+    """
+
+    def __init__(self, source: PersistentJobSource) -> None:
+        self._source = source
+        self._runners: dict[str, Any] = {}
+        self._lock = RLock()
+
+    @property
+    def active_ids(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._runners)
+
+    def recover_finishing(
+        self,
+        jobs: tuple[PersistentJob, ...],
+        *,
+        on_completed: Callable[[str, Any], None] | None = None,
+    ) -> None:
+        if not self._source.supports_attach:
+            return
+        for job in jobs:
+            if job.state == "finishing" and job.attachable:
+                self.recover(job.id, on_completed=on_completed)
+
+    def recover(
+        self,
+        job_id: str,
+        *,
+        on_completed: Callable[[str, Any], None] | None = None,
+    ) -> Any | None:
+        """Attach once and retain the runner until its completion callback fires."""
+        with self._lock:
+            existing = self._runners.get(job_id)
+            if existing is not None:
+                return existing
+
+            completed_synchronously = False
+
+            def completed(result: Any) -> None:
+                nonlocal completed_synchronously
+                with self._lock:
+                    completed_synchronously = True
+                    self._runners.pop(job_id, None)
+                if on_completed is not None:
+                    on_completed(job_id, result)
+
+            runner = self._source.attach(job_id, callback=completed)
+            if completed_synchronously:
+                return None
+            self._runners[job_id] = runner
+            return runner

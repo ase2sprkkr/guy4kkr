@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,10 +21,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
+from guy4ase.gui.application.persistent_jobs import (
+    PersistentJob,
+    PersistentJobRecovery,
+    PersistentJobSource,
+)
 from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.dialogs.attached_run import create_attached_run_monitor
 from guy4ase.gui.dialogs.object_view import execute_value_action
-from guy4ase.gui.dialogs.persistent_run_monitor import PersistentRunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
 from guy4ase.gui.misc.modal_task import run_modal_task
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -75,6 +80,10 @@ _GROUPS: tuple[tuple[str, Callable[[PersistentJob], str]], ...] = (
 )
 
 
+class _HistorySignals(QObject):
+    recovered = pyqtSignal(str, object)
+
+
 class CalculationHistoryDialog(QDialog):
     """Browse persistent ASE2SPRKKR jobs independently of the current workspace."""
 
@@ -92,10 +101,17 @@ class CalculationHistoryDialog(QDialog):
             default_size=(1100, 700),
         )
         self._source = source if source is not None else PersistentJobSource()
+        self._recovery = PersistentJobRecovery(self._source)
+        self._signals = _HistorySignals(self)
+        self._signals.recovered.connect(
+            self._recovery_completed,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._jobs: tuple[PersistentJob, ...] = ()
         self._jobs_by_id: dict[str, PersistentJob] = {}
         self._selected_job_id: str | None = None
-        self._monitors: dict[str, PersistentRunMonitorWindow] = {}
+        self._monitors: dict[str, RunMonitorWindow] = {}
+        self._close_requested = False
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
@@ -199,6 +215,14 @@ class CalculationHistoryDialog(QDialog):
 
         self._load_metadata()
 
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._recovery.active_ids:
+            self._close_requested = True
+            self.hide()
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def _load_metadata(self) -> None:
         try:
             jobs = self._source.jobs()
@@ -221,7 +245,24 @@ class CalculationHistoryDialog(QDialog):
             self.backend_notice.show()
         else:
             self.backend_notice.hide()
+
+        try:
+            candidates = tuple(job for job in self._jobs if job.id not in self._monitors)
+            self._recovery.recover_finishing(
+                candidates,
+                on_completed=lambda job_id, result: self._signals.recovered.emit(job_id, result),
+            )
+        except Exception as exc:  # noqa: BLE001 - persisted/backend recovery boundary
+            self.backend_notice.setText(f"Persistent recovery failed: {exc}")
+            self.backend_notice.show()
         self._populate_tree()
+
+    def _recovery_completed(self, job_id: str, result: object) -> None:
+        self._load_metadata()
+        if self._selected_job_id == job_id:
+            self.result_widget.set_result(result)
+        if self._close_requested and not self._recovery.active_ids:
+            self.close()
 
     def _replace_job(self, job: PersistentJob) -> None:
         self._jobs_by_id[job.id] = job
@@ -237,8 +278,6 @@ class CalculationHistoryDialog(QDialog):
         try:
             checked = self._source.check_result_files(job.id)
         except (OSError, RuntimeError, ValueError):
-            # Selection should remain usable if a historical filesystem record
-            # cannot be checked. The stored state is shown explicitly as such.
             return job
         self._replace_job(checked)
         return checked
@@ -345,9 +384,7 @@ class CalculationHistoryDialog(QDialog):
         self.started_value.setText(_timestamp_label(job.started_at))
         self.finished_value.setText(_timestamp_label(job.finished_at))
         self.updated_value.setText(_timestamp_label(job.updated_at))
-        self.return_code_value.setText(
-            "—" if job.return_code is None else str(job.return_code)
-        )
+        self.return_code_value.setText("—" if job.return_code is None else str(job.return_code))
         if not job.is_final or not job.result_files_state:
             result_files_label = "—"
         else:
@@ -358,7 +395,9 @@ class CalculationHistoryDialog(QDialog):
         self.message_value.setText(job.message or "")
         self.message_value.setVisible(bool(job.message))
         self.monitor_button.setVisible(
-            job.attachable and bool(getattr(self._source, "supports_attach", False))
+            job.attachable
+            and job.id not in self._recovery.active_ids
+            and bool(getattr(self._source, "supports_attach", False))
         )
         self.load_result_button.setVisible(job.is_final and self._source.supports_results)
 
@@ -377,7 +416,7 @@ class CalculationHistoryDialog(QDialog):
 
     def _monitor_selected_job(self) -> None:
         job_id = self._selected_job_id
-        if job_id is None:
+        if job_id is None or job_id in self._recovery.active_ids:
             return
         job = self._jobs_by_id.get(job_id)
         if job is None or not job.attachable:
@@ -391,14 +430,11 @@ class CalculationHistoryDialog(QDialog):
             return
 
         def finished(result) -> None:
-            # The manager finalizes the persistent record before wait() returns.
-            # Reload metadata first, then keep the completed result visible for
-            # the selected job without forcing a second result-file parse.
             self._load_metadata()
             if self._selected_job_id == job_id:
                 self.result_widget.set_result(result)
 
-        window = PersistentRunMonitorWindow(
+        window = create_attached_run_monitor(
             job,
             self._source,
             parent=self,

@@ -4,11 +4,16 @@ from __future__ import annotations
 from enum import Enum
 from types import SimpleNamespace
 
-from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
+from guy4ase.gui.application.persistent_jobs import (
+    PersistentJob,
+    PersistentJobRecovery,
+    PersistentJobSource,
+)
 
 
 class _State(str, Enum):
     RUNNING = "running"
+    FINISHING = "finishing"
     FINISHED = "finished"
 
 
@@ -190,6 +195,83 @@ def test_source_attach_forwards_output_listener_atomically():
         output_listener=lambda text, kind: replay.append((text, kind)),
     ) is runner
     assert replay == [("already written\n", "out")]
+
+
+def test_source_attach_forwards_completion_callback():
+    record = _record()
+    callback = object()
+    runner = object()
+
+    class Store:
+        @staticmethod
+        def runs():
+            return (record,)
+
+    class Manager:
+        store = Store()
+
+        @staticmethod
+        def attach(job_id, *, callback=None, output_listener=None):
+            assert job_id == record.id
+            assert callback is expected_callback
+            return runner
+
+    expected_callback = callback
+    source = PersistentJobSource(Manager())
+
+    assert source.attach(record.id, callback=callback) is runner
+
+
+def _finishing_job():
+    return PersistentJob.from_run_record(
+        _record(
+            state=_State.FINISHING,
+            endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+            reference=SimpleNamespace(
+                executor="local",
+                native_id="1234567890abcdef",
+                computer=None,
+            ),
+        )
+    )
+
+
+def test_recovery_retains_finishing_runner_until_completion():
+    job = _finishing_job()
+    runner = object()
+    callbacks = {}
+
+    class Source:
+        supports_attach = True
+
+        @staticmethod
+        def attach(job_id, *, callback=None, output_listener=None):
+            callbacks[job_id] = callback
+            return runner
+
+    recovery = PersistentJobRecovery(Source())
+    recovery.recover_finishing((job,))
+
+    assert recovery.active_ids == (job.id,)
+    callbacks[job.id](object())
+    assert recovery.active_ids == ()
+
+
+def test_recovery_handles_synchronous_completion_without_stale_runner():
+    job = _finishing_job()
+
+    class Source:
+        supports_attach = True
+
+        @staticmethod
+        def attach(job_id, *, callback=None, output_listener=None):
+            callback(object())
+            return object()
+
+    recovery = PersistentJobRecovery(Source())
+    recovery.recover_finishing((job,))
+
+    assert recovery.active_ids == ()
 
 
 def test_incomplete_manager_becomes_empty_source():

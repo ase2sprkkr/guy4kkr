@@ -11,7 +11,7 @@ class _State(str, Enum):
     FINISHED = "finished"
 
 
-def _record(*, result_files=None, artifacts=None):
+def _record(*, result_files=None):
     return SimpleNamespace(
         id="1234567890abcdef",
         state=_State.FINISHED,
@@ -26,14 +26,12 @@ def _record(*, result_files=None, artifacts=None):
         return_code=0,
         message=None,
         result_files=result_files,
-        artifacts=artifacts,
     )
 
 
-def test_result_files_name_is_preferred_over_legacy_artifacts():
+def test_result_file_state_is_exposed():
     record = _record(
         result_files=SimpleNamespace(state=SimpleNamespace(value="overwritten")),
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="current")),
     )
 
     job = PersistentJob.from_run_record(record)
@@ -42,23 +40,12 @@ def test_result_files_name_is_preferred_over_legacy_artifacts():
     assert not job.result_files_verified
 
 
-def test_legacy_artifacts_are_mapped_as_result_files():
-    record = _record(
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="current")),
-    )
-
-    job = PersistentJob.from_run_record(record)
-
-    assert job.result_files_state == "current"
-    assert job.artifact_state == "current"  # compatibility alias
-
-
 def test_explicit_result_file_check_marks_state_as_verified():
     stored = _record(
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="current")),
+        result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
     )
     checked = _record(
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="overwritten")),
+        result_files=SimpleNamespace(state=SimpleNamespace(value="overwritten")),
     )
 
     class Store:
@@ -89,9 +76,9 @@ def test_explicit_result_file_check_marks_state_as_verified():
     assert manager.checked == [stored.id]
 
 
-def test_result_file_check_supports_legacy_backend_name():
+def test_result_file_check_requires_backend_operation():
     record = _record(
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="current")),
+        result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
     )
 
     class Store:
@@ -99,14 +86,6 @@ def test_result_file_check_supports_legacy_backend_name():
         def runs():
             return (record,)
 
-    class Manager:
-        store = Store()
+    source = PersistentJobSource(SimpleNamespace(store=Store()))
 
-        def check_artifacts(self, run_id):
-            assert run_id == record.id
-            return record
-
-    source = PersistentJobSource(Manager())
-
-    assert source.supports_result_file_check
-    assert source.check_result_files(record.id).result_files_verified
+    assert not source.supports_result_file_check
