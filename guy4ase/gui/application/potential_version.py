@@ -4,6 +4,8 @@ import stat as stat_module
 from dataclasses import dataclass
 from pathlib import Path
 
+from ase2sprkkr.common.file_fingerprints import file_fingerprint
+
 
 @dataclass(frozen=True)
 class PotentialFileVersion:
@@ -21,17 +23,17 @@ class PotentialFileVersion:
     def capture(cls, path: str | Path) -> "PotentialFileVersion":
         resolved = Path(path).expanduser().absolute()
         try:
-            info = resolved.stat()
+            fingerprint = file_fingerprint(resolved)
         except OSError:
             return cls(resolved, False, None, None, None, None, None)
         return cls(
             resolved,
-            stat_module.S_ISREG(info.st_mode),
-            info.st_mtime_ns,
-            info.st_ctime_ns,
-            info.st_size,
-            info.st_dev,
-            info.st_ino,
+            stat_module.S_ISREG(fingerprint.mode),
+            fingerprint.mtime_ns,
+            fingerprint.ctime_ns,
+            fingerprint.size,
+            fingerprint.device,
+            fingerprint.inode,
         )
 
     @property
