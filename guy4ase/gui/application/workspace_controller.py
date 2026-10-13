@@ -7,12 +7,11 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
-from ase2sprkkr.potentials.potentials import Potential
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_loading import LoadedResult
+from guy4ase.gui.application.result_loading import LoadedResult, load_potential_atoms
 from guy4ase.gui.application.result_store import (
     CalculationStateRecord,
     ResultRecord,
@@ -494,7 +493,12 @@ class WorkspaceController(QObject):
             raise PotentialVersionChanged(
                 f"Potential file changed after it was presented: {version.path}"
             )
-        atoms = Potential.from_file(str(version.path)).atoms
+        try:
+            atoms = load_potential_atoms(version.path)
+        except OSError as exc:
+            raise PotentialVersionChanged(
+                f"Potential file changed while it was being read: {version.path}"
+            ) from exc
         after = version.current()
         if not after.available or after != version:
             raise PotentialVersionChanged(
