@@ -7,35 +7,9 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from ase2sprkkr.common.file_fingerprints import FileFingerprint, file_fingerprint
+
 _DIGEST_CHUNK_SIZE = 1024 * 1024
-
-
-@dataclass(frozen=True)
-class FileFingerprint:
-    """Cheap filesystem metadata used to avoid unnecessary content hashing."""
-
-    device: int
-    inode: int
-    mode: int
-    size: int
-    mtime_ns: int
-    ctime_ns: int
-
-    @classmethod
-    def capture(cls, path: str | Path) -> "FileFingerprint":
-        info = Path(path).stat()
-        return cls(
-            device=info.st_dev,
-            inode=info.st_ino,
-            mode=info.st_mode,
-            size=info.st_size,
-            mtime_ns=info.st_mtime_ns,
-            ctime_ns=info.st_ctime_ns,
-        )
-
-    @property
-    def is_file(self) -> bool:
-        return stat_module.S_ISREG(self.mode)
 
 
 class FileState(Enum):
@@ -45,6 +19,10 @@ class FileState(Enum):
     OVERWRITTEN = "overwritten"
     MISSING = "missing"
     UNAVAILABLE = "unavailable"
+
+
+def _is_file(fingerprint: FileFingerprint) -> bool:
+    return stat_module.S_ISREG(fingerprint.mode)
 
 
 def _file_digest(path: Path) -> str:
@@ -78,16 +56,16 @@ class FileVersion:
     ) -> "FileVersion":
         resolved = Path(path).expanduser().resolve()
         try:
-            fingerprint = FileFingerprint.capture(resolved)
+            fingerprint = file_fingerprint(resolved)
         except OSError:
             return cls(path=resolved, fingerprint=None)
 
-        if not digest or not fingerprint.is_file:
+        if not digest or not _is_file(fingerprint):
             return cls(path=resolved, fingerprint=fingerprint)
 
         try:
             content_digest = _file_digest(resolved)
-            after = FileFingerprint.capture(resolved)
+            after = file_fingerprint(resolved)
         except OSError:
             return cls(path=resolved, fingerprint=fingerprint)
 
@@ -103,7 +81,7 @@ class FileVersion:
 
     @property
     def available(self) -> bool:
-        return self.fingerprint is not None and self.fingerprint.is_file
+        return self.fingerprint is not None and _is_file(self.fingerprint)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FileVersion):
@@ -139,7 +117,7 @@ class FileVersion:
 
     def state(self) -> FileState:
         try:
-            fingerprint = FileFingerprint.capture(self.path)
+            fingerprint = file_fingerprint(self.path)
         except FileNotFoundError:
             return FileState.MISSING
         except OSError:
@@ -147,7 +125,7 @@ class FileVersion:
 
         if self.fingerprint is not None and fingerprint == self.fingerprint:
             return FileState.CURRENT
-        if not fingerprint.is_file:
+        if not _is_file(fingerprint):
             return FileState.OVERWRITTEN
         if self.digest is None:
             return FileState.OVERWRITTEN
@@ -159,3 +137,6 @@ class FileVersion:
         except OSError:
             return FileState.UNAVAILABLE
         return FileState.CURRENT if digest == self.digest else FileState.OVERWRITTEN
+
+
+__all__ = ["FileFingerprint", "FileState", "FileVersion"]
