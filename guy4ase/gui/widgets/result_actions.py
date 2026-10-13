@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.result_artifacts import ArtifactState
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
 
@@ -140,6 +141,11 @@ class ResultActionsWidget(QWidget):
         record_actions_layout.addStretch(1)
         self._record_actions.hide()
         layout.addWidget(self._record_actions)
+
+        self._artifact_warning = QLabel("", self)
+        self._artifact_warning.setWordWrap(True)
+        self._artifact_warning.hide()
+        layout.addWidget(self._artifact_warning)
 
         self._empty_label = QLabel(empty_text, self)
         self._empty_label.setWordWrap(True)
@@ -273,7 +279,7 @@ class ResultActionsWidget(QWidget):
 
         self._selector.setVisible(bool(records))
         selected_record = self._record_for_item(self._selector.currentItem())
-        self.set_result(selected_record.result if selected_record is not None else None)
+        self.set_record(selected_record)
         self._refresh_record_actions(selected_record)
 
     def _selected_result_id(self) -> int | None:
@@ -309,8 +315,7 @@ class ResultActionsWidget(QWidget):
         _previous: QTreeWidgetItem | None,
     ) -> None:
         record = self._record_for_item(current)
-        if record is not None:
-            self.set_result(record.result)
+        self.set_record(record)
         self._refresh_record_actions(record)
 
     def _refresh_record_actions(self, record: ResultRecord | None) -> None:
@@ -370,8 +375,18 @@ class ResultActionsWidget(QWidget):
             output_name = ""
         return " — ".join(part for part in (task, output_name) if part)
 
+    def set_record(self, record: ResultRecord | None) -> None:
+        self._render_result(record.result if record is not None else None, record)
+
     def set_result(self, result: Any | None) -> None:
+        """Render a live result without historical artifact provenance."""
+        self._render_result(result, None)
+
+    def _render_result(
+        self, result: Any | None, record: ResultRecord | None
+    ) -> None:
         self._clear()
+        self._artifact_warning.hide()
         if result is None:
             self._show_empty(self._empty_text)
             return
@@ -384,13 +399,69 @@ class ResultActionsWidget(QWidget):
             self._add_error_row("Output values could not be loaded", exc)
             items = ()
 
+        has_replaced_artifact = False
+        has_unavailable_artifact = False
         for key, value in items:
             try:
                 name = str(key)
             except Exception:
                 logger.exception("Failed to read an output value name")
                 name = "<unknown output>"
-            self._add_value(name, value)
+
+            shown_value = value
+            warning = None
+            disable_actions = False
+            artifact = record.artifacts.get(name) if record is not None else None
+            if artifact is not None:
+                state = artifact.state()
+                if state is ArtifactState.OVERWRITTEN:
+                    has_replaced_artifact = True
+                    current_value = (
+                        self._store.current_value_for_artifact(artifact)
+                        if self._store is not None
+                        else None
+                    )
+                    if current_value is not None:
+                        shown_value = current_value
+                    warning = (
+                        "The historical artifact was overwritten. Showing the current "
+                        f"contents of {artifact.path.name}; these are not the original "
+                        "data from the selected calculation."
+                    )
+                elif state is ArtifactState.MISSING:
+                    has_unavailable_artifact = True
+                    disable_actions = True
+                    warning = (
+                        "The historical artifact no longer exists, so its original "
+                        "contents are unavailable."
+                    )
+                elif state is ArtifactState.UNAVAILABLE:
+                    has_unavailable_artifact = True
+                    disable_actions = True
+                    warning = (
+                        "The historical artifact cannot currently be inspected, so "
+                        "its contents are unavailable."
+                    )
+
+            self._add_value(
+                name,
+                shown_value,
+                warning=warning,
+                disable_actions=disable_actions,
+            )
+
+        if has_replaced_artifact:
+            self._artifact_warning.setText(
+                "⚠ Historical result files were overwritten. Showing current contents "
+                "where available; these are not the original data from the selected "
+                "calculation."
+            )
+            self._artifact_warning.show()
+        elif has_unavailable_artifact:
+            self._artifact_warning.setText(
+                "⚠ Some historical result files are no longer available."
+            )
+            self._artifact_warning.show()
 
         if self._row_count:
             self._empty_label.hide()
@@ -398,7 +469,14 @@ class ResultActionsWidget(QWidget):
         else:
             self._show_empty("No actions available.")
 
-    def _add_value(self, key: str, value: Any) -> None:
+    def _add_value(
+        self,
+        key: str,
+        value: Any,
+        *,
+        warning: str | None = None,
+        disable_actions: bool = False,
+    ) -> None:
         try:
             fallback_name = getattr(value, "name", key)
             name = str(getattr(value, "display_name", fallback_name))
@@ -412,22 +490,34 @@ class ResultActionsWidget(QWidget):
             return
 
         try:
-            actions = tuple(str(action) for action in value.actions())
+            actions = () if disable_actions else tuple(str(action) for action in value.actions())
         except Exception as exc:
             logger.exception("Failed to load actions for output value %r", key)
+            action_warning = f"Actions could not be loaded: {exc}"
             self._add_row(
                 value,
                 (),
                 name=name,
                 info=info,
                 summary=summary,
-                warning=f"Actions could not be loaded: {exc}",
+                warning="\n\n".join(
+                    part for part in (warning, action_warning) if part
+                ),
             )
             return
 
         if not actions and not self._show_values_without_actions and not show_in_summary:
             return
-        self._add_row(value, actions, name=name, info=info, summary=summary)
+        if warning:
+            name = f"{name} ⚠"
+        self._add_row(
+            value,
+            actions,
+            name=name,
+            info=info,
+            summary=summary,
+            warning=warning,
+        )
 
     def _add_error_row(self, name: str, error: Exception | None = None) -> None:
         detail = f": {error}" if error else ""
@@ -468,7 +558,10 @@ class ResultActionsWidget(QWidget):
             button = QToolButton(buttons)
             button.setAutoRaise(True)
             button.setIcon(result_action_icon(self.style(), action))
-            button.setToolTip(_action_tooltip(action, info))
+            action_tooltip = _action_tooltip(action, info)
+            if warning:
+                action_tooltip = "\n\n".join((action_tooltip, warning))
+            button.setToolTip(action_tooltip)
             button.clicked.connect(
                 lambda _checked=False, v=value, a=action: self._action_handler(v, a)
             )

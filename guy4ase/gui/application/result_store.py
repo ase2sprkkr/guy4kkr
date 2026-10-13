@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.result_artifacts import (
+    ArtifactState,
+    ResultArtifactVersion,
+    capture_result_artifacts,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
 
@@ -84,6 +89,7 @@ class ResultRecord:
     atoms: Any | None
     input_parameters: Any | None
     directory: str | None
+    artifacts: Mapping[str, ResultArtifactVersion]
     restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
@@ -144,6 +150,25 @@ class ResultStore:
 
     def result(self, result_id: int) -> ResultRecord:
         return self._results[result_id]
+
+    def current_value_for_artifact(
+        self, artifact: ResultArtifactVersion
+    ) -> Any | None:
+        """Return the known result value that owns the file currently at this path."""
+        for record in self.results:
+            for name, candidate in record.artifacts.items():
+                if candidate.path != artifact.path:
+                    continue
+                if candidate.state() is not ArtifactState.CURRENT:
+                    continue
+                try:
+                    values = record.result.output_values
+                    for key, value in values.items():
+                        if str(key) == name:
+                            return value
+                except Exception:  # noqa: BLE001 - optional presentation metadata
+                    continue
+        return None
 
     def state_for_result(self, record: ResultRecord) -> CalculationStateRecord | None:
         state_id = record.output_state_id or record.input_state_id
@@ -355,6 +380,7 @@ class ResultStore:
             restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
+            artifacts=capture_result_artifacts(result),
         )
         self._results[result_id] = record
         state_id = output_state_id or input_state_id
