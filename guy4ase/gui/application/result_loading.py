@@ -9,6 +9,8 @@ from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
+from guy4ase.gui.application.file_version import FileFingerprint
+
 
 @dataclass(frozen=True)
 class LoadedResult:
@@ -20,7 +22,7 @@ class LoadedResult:
     atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
 
     ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
-    this result originated from a persistent execution.  It deliberately does
+    this result originated from a persistent execution. It deliberately does
     not duplicate the backend-specific run reference.
     """
 
@@ -35,19 +37,6 @@ class LoadedResult:
     persistent_ref: str | None = None
 
 
-def _potential_file_fingerprint(path: Path) -> tuple[int, int, int, int, int, int]:
-    """Return metadata that changes when a potential file is replaced/rewritten."""
-    info = path.stat()
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_mode,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
-
-
 def load_potential_atoms(file_path: str | Path) -> Any:
     """Load a stable POT file and attach that exact parsed potential to its atoms.
 
@@ -57,15 +46,15 @@ def load_potential_atoms(file_path: str | Path) -> Any:
     launch from atoms, so doing the attachment here makes atoms the single
     physical authority instead of relying on a parallel filename.
 
-    POTFIL may be rewritten by a running SCF calculation.  Fingerprinting the
+    POTFIL may be rewritten by a running SCF calculation. Fingerprinting the
     file immediately before and after parsing prevents publishing a structure
     reconstructed from a file that changed while it was being read.
     """
     path = Path(file_path).resolve()
-    before = _potential_file_fingerprint(path)
+    before = FileFingerprint.capture(path)
     potential = Potential.from_file(str(path))
     try:
-        after = _potential_file_fingerprint(path)
+        after = FileFingerprint.capture(path)
     except OSError as exc:
         raise RuntimeError(
             f"Potential file changed while it was being read: {path}"
@@ -105,9 +94,7 @@ def load_result(
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
     atoms, potential_error = _load_potential(potential)
-    input_parameters, input_parameters_error = _load_input_parameters(
-        result
-    )
+    input_parameters, input_parameters_error = _load_input_parameters(result)
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
         result=result,
@@ -122,9 +109,7 @@ def load_result(
     )
 
 
-def _load_input_parameters(
-    result: Any,
-) -> tuple[Any | None, Exception | None]:
+def _load_input_parameters(result: Any) -> tuple[Any | None, Exception | None]:
     try:
         return getattr(result, "input_parameters", None), None
     except Exception as exc:  # noqa: BLE001 - parser failures are data
@@ -170,7 +155,6 @@ def _result_artifacts(
         try:
             potential = getattr(result, "potential_filename", None)
         except ValueError:
-            # TaskResult uses ValueError for an unspecified POTFIL.
             potential = None
     potential = _resolve_path(potential, result, fallback_directory)
     return output, potential
