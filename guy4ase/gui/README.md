@@ -1,263 +1,213 @@
 # GUI organization
 
+This document describes the **canonical GUI architecture**. It is an
+architectural contract for new code and refactors, not a promise that every
+legacy compatibility surface has already been removed. Narrow compatibility
+shims may remain while the refactor is in progress; they are migration details,
+not architectural entry points, and new code must not depend on them.
+
 ## Packages
 
-- `dialogs`: finished application windows, including `MainWindow` and
-  `WorkflowWindow`. `dialogs.structures` contains structure-specific dialogs.
-  `guy4ase.main` remains the application entry point.
-- `widgets`: reusable controls. `widgets.input_parameters` contains editors for
-  ase2sprkkr `InputParameters`; these are shared by guided and expert editing.
-  Task-only composite controls live in modules such as
-  `widgets.input_parameters.bsf`; structure-specific controls live in
-  `widgets.structures`.
-- `input_parameters`: editing state, backend bindings, energy/BSF operations,
-  keyword choices and help text. It contains no finished dialogs or widgets.
-- `input_parameters.specs`: Qt-independent declarations of the guided layouts.
-  `schema` defines fields/groups/pages, `shared` contains common definitions,
-  individual task modules expose `build_spec`, and `registry.task_dialog_spec`
-  selects and validates a layout.
-- `plots`: Matplotlib rendering. Pure lattice queries and transformations,
-  including supported bulk/layered classification derived from periodicity
-  and SPR-KKR regions, belong in `guy4ase.physics.lattice`, not in the GUI.
+- `dialogs`: finished application windows and modal workflows, including
+  `MainWindow`, `WorkflowWindow`, and structure-specific dialogs under
+  `dialogs.structures`.
+- `widgets`: reusable Qt controls. `widgets.input_parameters` contains the
+  concrete value editors shared by guided and expert parameter editing;
+  structure-specific controls live in `widgets.structures`.
+- `input_parameters`: parameter-editing state and Qt-independent model helpers.
+  It contains the editing session, field bindings, task semantics, validation,
+  tooltips, and declarative task specifications. It does not own finished
+  application windows.
+- `input_parameters.specs`: declarative guided-layout definitions. `schema`
+  defines fields/groups/pages, individual task modules build their layouts, and
+  `registry.task_dialog_spec` selects a task specification.
+- `application`: application/document state and provenance. `WorkspaceState`
+  represents the mutable draft prepared for the next calculation;
+  `ResultStore` owns calculation history independently of that draft;
+  `WorkspaceController` is the mutation/signalling boundary between them and
+  the GUI. Persistent application state such as recent files and settings also
+  lives here.
+- `flows`: stateless shared Qt workflows composed from application state and
+  leaf dialogs. They may show modal UI and call public controller transitions,
+  but they do not own application state or top-level windows.
+- `plots`: GUI plotting/rendering. Pure physical/lattice queries and
+  transformations belong in `guy4ase.physics`, not in the GUI layer.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.
 - `style`: the small palette-aware visual vocabulary shared by dialogs and
-  renderers: spacing, relative heading fonts, tinting, rounded panels and
-  primary/secondary action states. Semantic colors and layout remain with the
-  window or task that owns their meaning; this is intentionally not a theme
-  manager.
-- `application`: shared observable/document state, kept separate from windows
-  and reusable widgets. `application.workspace.WorkspaceState` is the
-  Qt-independent current document. `WorkspaceController` is not a bag of
-  setters: it is the single mutation/signalling boundary and owns semantic
-  document transitions and result adoption. Concrete file actions call public
-  ASE/ASE2SPRKKR APIs directly in their owning flow; `result_loading` provides
-  reusable functions for result-artifact interpretation. The controller
-  guarantees consistency between structure, calculation setup, potential
-  provenance and the current result. `RecentFiles` is observable persistent
-  application state. None of these objects knows file choosers, messages or
-  concrete windows.
-- `flows`: stateless shared Qt workflows composed from application state and
-  leaf dialogs. `structures`, `files` and `calculation` are modules of ordinary
-  functions, not service objects. They may show modal UI and publish changes
-  through `WorkspaceController`, but never import `MainWindow` or
-  `WorkflowWindow`. Window-specific orchestration remains with its owning
-  dialog.
+  renderers. Semantic state and task-specific presentation stay with the
+  component that owns their meaning.
 
-`guy4ase.main.GuiApplication` is the single composition root. It creates and
-owns one `WorkspaceController` and one `RecentFiles`, then injects those same
-instances into the sibling `WorkflowWindow` and `MainWindow` views. It also
-owns their top-level lifetime and lazy expert-window creation. Neither window
-constructs application state or another top-level window. Shared behavior does
-not require an injected operations namespace; windows call the appropriate
-stateless flow function directly.
+`guy4ase.main.GuiApplication` is the composition root. It owns one
+`WorkspaceController`, one `ActiveRunRegistry`, one `RecentFiles`, and one
+`ApplicationSettings`, and injects the same shared objects into the workflow
+and expert top-level windows. The windows do not construct another application
+state or another top-level window. Result selection is presentation state; the
+composition root wires explicit result-selection intent separately from result
+history updates.
 
-Package `__init__.py` files intentionally do not eagerly import dialogs or
-re-export their internals. Import concrete modules directly. The former flat
-module paths and `calculation_setup` package have no compatibility wrappers.
+Package `__init__.py` files should stay lightweight and should not become
+alternate import APIs for dialog/widget internals. Canonical imports use the
+concrete modules documented by the current package layout. Some legacy
+compatibility surfaces may still exist elsewhere; their presence is temporary
+and must not be used as precedent for new wrappers or dependencies.
 
-### Workspace lifecycle
+## Workspace, results, and provenance
 
-Windows and flows use named `WorkspaceController` transitions rather than
-assigning workspace facets independently. `replace_structure()` invalidates the
-current result and drops potential provenance unless a new source is explicit;
-`replace_input_parameters()` invalidates the result while retaining structure.
-File-loading transitions also select the source file's directory.
+`WorkspaceState` is the draft for the **next** calculation. Results deliberately
+do not live in it. Its `structure_id` identifies the user-visible structure and
+`state_id` identifies the exact calculation state from which the next task will
+start.
 
-File flows load or parse each document once, then use Qt waiting only around a
-short revision-sensitive controller transition. `adopt_external_result()`
-installs an output opened by the user. Its atoms and potential source therefore
-come only from that result; if its potential is missing or unreadable, old
-unrelated atoms are cleared. Existing input parameters may remain as an
-independent editable setup, but are not considered the provenance of the
-external result. In contrast, `adopt_calculation_result()` accepts a loaded
-result just produced from the current workspace. If no converged potential can
-be read, the current atoms and their potential provenance remain valid. Both
-operations return `ResultAdoption`; views decide how to present its non-fatal
-potential error.
+`WorkspaceState.atoms` is the sole physical authority for the active structure,
+including an attached SPR-KKR potential when one exists. `potential_path` is
+artifact/provenance metadata only; calculation launch must not silently use it
+as a second physical source of truth.
+
+`ResultStore` owns result history and calculation-state provenance independently
+of the mutable workspace. A result may refer to an input state and, for tasks
+such as SCF, to an output state. Historical states retain enough provenance to
+reconstruct a reusable calculation input from the recorded POTFIL version or a
+structure snapshot when necessary. Activating historical state is always an
+explicit transition.
+
+Windows and flows mutate the draft through named `WorkspaceController`
+operations rather than assigning workspace facets independently. The important
+result-adoption semantics are:
+
+- `adopt_external_result()` **records** an output imported by the user or another
+  external source. It does not implicitly replace the current workspace draft.
+  The imported result's atoms, potential, and input parameters belong to that
+  result's provenance, not to the active draft. `select_result=True` expresses
+  only explicit presentation intent to select that result in the UI.
+- `adopt_calculation_result()` records a result produced from a calculation
+  request. Only an SCF result finishing from the exact currently active input
+  state may fast-forward the workspace to its produced state. A result from an
+  older branch is recorded in that branch and cannot silently overwrite a
+  newer user choice.
+- `use_result_state()` is the explicit operation for activating a reusable
+  historical state (or an explicitly approved current version of its POTFIL).
+- `use_for_new_calculation()` creates a new calculation branch from the active
+  state instead of rewriting historical provenance.
+
+The distinction between **recording a result**, **selecting a result for
+presentation**, and **activating a result state for a future calculation** is
+intentional. Do not collapse these operations into one implicit transition.
 
 ## Parameter editing
 
-`input_parameters.session.InputParametersSession` owns the working parameters,
-initial snapshot, Undo/Redo and generic non-serialized field state. Small
-Qt-independent transaction plugins may adjust a candidate and that dormant
-state before one atomic history command is created. Concrete SPR-KKR semantics,
-such as the optional second single-site contour, live in their own plugin and
-are explicitly composed by the guided dialog. Widgets must not keep a second
-authoritative parameter model. Invalid or incomplete input may remain in a
-widget's draft until committed or discarded.
+`input_parameters.session.InputParametersSession` owns an isolated working copy
+of `InputParameters`, Undo/Redo history, and non-serialized editing state.
+Edits go through session transactions; callers may inspect
+`working_parameters` but must not mutate it directly. `result()` returns an
+independently mutable copy. Transaction plugins may adjust a candidate and its
+dormant state atomically before one history command is installed.
 
 `input_parameters.bindings.InputParameterPath` is a tuple such as
-`("ENERGY", "EMIN")`. It is an option address, not a file-system path.
+`("ENERGY", "EMIN")`; it is an option address, not a filesystem path. Shared
+option resolution/value comparison also lives in `input_parameters.bindings`.
 
-`InputParametersBinding` is a direct read/write adapter, not another session. It
-accepts a parameter getter and a change callback. The expert dialog supplies its
-isolated parameter copy and updates its tree presentation after a commit.
-The guided dialog uses the session's corresponding access methods, preserving
-Undo/Redo. The getter follows replacement of the object after loading text input.
+Guided fields are connected to the session by
+`input_parameters.field_binding`:
 
-The expert dialog also edits a copy: Cancel never modifies its caller's input.
-`dialogs.expert_input.InputParametersDialog` owns that draft, input-file
-workflow, overall validation, and modal acceptance. The reusable
-`widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
-search/filter UI, session-change orchestration, changed-only presentation and
-focus restoration. `expert_tree_structure` provides the Qt-free structural
-`ValueShape` contract used to decide whether a branch may refresh in place;
-`expert_tree_renderer` owns recursive grammar/value rendering and editor/action
-installation; `expert_tree_runtime` owns live option rows/shapes, editor
-dependencies and validation errors. None of these layers owns a second
-parameter model: all reads and writes go through the dialog-owned
-`InputParametersSession`.
-Specialized expert fields are declared without Qt in
-`input_parameters.expert_fields`; their paths, registered editor names, related
-options and presentation metadata do not leak into the generic tree renderer.
-Ordinary scalar controls use `widgets.input_parameters.commit.EditorCommit`
-internally to contain validation exceptions and avoid writing unchanged,
-rounded display values back into the model. It is an implementation helper,
-not a protocol inspected by either dialog. Both dialogs use
-`input_parameters.validation` for completion checks, without requiring
-calculator-supplied files such as POTFIL.
+- `SessionFieldBinding` binds an ordinary option to its authoritative session
+  value.
+- `ProjectedFieldBinding` exposes a composable view into part of a structured
+  parent value while reconstruction still happens through the parent binding.
+- specialized draft/index helpers are presentation adapters; they must not
+  become a second parameter model.
 
-Implicit backend defaults appear as placeholders (`Default: …`) in text and
-numeric inputs. They are not presets and are not stored by focusing a control.
-Spin controls retain the effective default for stepping; clearing an explicit
-value restores the backend default where one exists. The layout schema does
-not duplicate defaults. Energy widgets convert placeholder values with display
-units and use the shared ase2sprkkr absolute/relative default rules.
+`widgets.input_parameters.parameter.ParameterEditor` is the presentation shell
+for one declarative field. It owns tooltip/validation presentation and delegates
+value editing to a registered `ParameterValueEditor` control. It does not
+implement type-specific editing semantics itself.
 
-`InputParametersSession.editApplied` distinguishes changed option paths from
-full replacement/history restoration. Unrelated commits preserve local drafts;
-undo/redo and explicit replacement discard them. A change to a draft's own
-option or a mode on which it depends refreshes it from the model.
+All guided value editors implement the explicit
+`widgets.input_parameters.value_editor.ParameterValueEditor` lifecycle:
+`refresh()`, `commit()`, and `focus_for_history()`. Optional capabilities such as
+`dependencies`, `full_width`, `help_text`, and tooltip application have formal
+defaults; surrounding code must not discover editor contracts by probing
+arbitrary attributes with `getattr`.
 
-Task preparation and atomic BSF mode changes live in `input_parameters.tasks`
-and `input_parameters.bsf`. A widget requests modal K-path editing via a signal;
-the guided dialog owns the modal operation and its parent window. Shared group
-selection uses stable IDs, never translated/user-facing titles.
+`widgets.input_parameters.registry.EDITORS` is the single name-to-editor
+registry. `create_editor()` is the construction path. A field declaration
+normally chooses its editor explicitly; `editor="auto"` alone invokes the
+registered grammar-type MRO fallback in `editor_for_type()`.
 
-### Conditional guided fields
+Task-specific parameter semantics belong outside generic widgets. For example,
+atomic BSF mode/path changes live in `input_parameters.bsf`, and the
+single-site-contour transaction behavior lives in its dedicated plugin.
+Generic renderers and scalar controls must not duplicate those rules.
 
-Presentation rules live beside a task's field declarations and receive a
-Qt-independent `PresentationContext`. Keep them as named functions when they
-express domain meaning:
+### Guided specifications and presentation rules
 
-```python
-def broyden_enabled(context: PresentationContext) -> bool:
-    return context.value("SCF", "ALG") == "BROYDEN2"
+Guided layouts are declarative. A `FieldPlacement` identifies the parameter
+path, editor, related paths, and presentation metadata. Conditional behavior is
+expressed by named rules in the task specification and receives a
+Qt-independent presentation context. Rules may inspect parameter state but must
+not mutate `InputParameters` or invoke Qt actions.
 
-GroupSpec("Potential mixing", (
-    ALG,
-    field("SCF", "ISTBRY", "Start Broyden after:", "integer",
-          enabled_when=broyden_enabled),
-))
-```
+Fields may define dynamic visibility/enabling/labels/help and required state;
+groups may define dynamic visibility, titles, notes, and layout. Programmatic
+identity uses stable IDs, never translated/user-visible titles.
 
-Fields support `visible_when`, `enabled_when`, `label_when`, `tooltip_when`,
-`disabled_reason_when` and `required_when`. Groups support visibility, dynamic
-titles and notes. Use `layout="paired"` for a two-column group and `GroupSpec.id`
-for stable programmatic identity; displayed titles are not identifiers. Rules
-must only inspect the context. They must not mutate `InputParameters` or invoke
-Qt code—the renderer reapplies them after every session replacement, including
-Undo/Redo, loaded input and accepted expert edits.
+The renderer reapplies presentation rules after session changes, including
+Undo/Redo and parameter replacement. Unrelated edits preserve a control's local
+draft; replacement/history restoration or changes to that control's own
+parameter/dependencies refresh it from the model.
 
-Task-specific controls are selected by `FieldPlacement.editor`, never
-by a page or group ID:
+### Expert editing
 
-```python
-field("TASK", "KA", "Path segments:", editor="bsf_vectors",
-      related_paths=(("TASK", "KE"),))
-```
+`dialogs.expert_input.InputParametersDialog` edits an isolated
+`InputParametersSession` fork. Cancel therefore cannot mutate the caller's
+session. The accepted result is returned as the fork/current parameter copy.
 
-All implementations are collected in the single `EDITORS` mapping in
-`widgets.input_parameters.registry`. Scalar, energy, vector and task-specific
-controls all implement the single
-`ParameterValueEditor` lifecycle. `ParameterValueEditorWidget` is only a
-convenient QWidget base for controls composed from child widgets; it is not a
-separate editor category. The contract supplies defaults for optional
-capabilities. Task-specific
-implementations such as BSF mode, path selection and path vectors live in
-`widgets.input_parameters.bsf`; shared binding adapters for energy bounds and
-relativistic scaling live in `widgets.input_parameters.common`. Such a control
-implements `refresh()`, `commit()` and `focus_for_history(path, index)`, emits
-`validationChanged(str)`, and may declare `dependencies` and `full_width`.
-Task-specific modal controls, such as the BSF custom K-path editor, handle
-their action in the registered widget and mutate the session for Undo/Redo.
-`input_parameters.field_binding.SessionFieldBinding` maps a scalar or whole
-option to its value, default and atomic session write. An explicitly indexed
-placement uses `IndexedFieldBinding`; the option's array type alone does not
-imply indexing because fields such as `MSPIN` edit the whole array. Energy-unit
-conversion belongs to the energy value editor rather than the storage binding.
-The field declaration selects a presentation explicitly with, for example,
-`editor="energy"`. Only `editor="auto"` invokes the deterministic grammar-MRO
-mapping in `editor_for_type()`.
-Dormant indexed values remain owned and snapshotted by the session; the
-single-site contour plugin alone decides when its second mesh is active.
-`ParameterEditor` remains the
-session/tooltip/presentation shell and delegates `refresh()`, `commit()` and
-history focus without knowing any concrete Qt value-editor type.
+`widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns expert-tree
+presentation and pending editor commits, while the dialog owns modal workflow,
+validation, loading/editing input files, and acceptance. The expert tree and
+guided form share the same session model; neither owns a second authoritative
+parameter object.
 
-`widgets.input_parameters.form.GuidedFormRenderer` owns the rendered anatomy of
-the guided form. Its `PageView`, `GroupView` and `FieldView` objects keep an
-editor together with its label, mirror link, auxiliary widgets, collapsed-group
-toggle and validation state. `GuidedInputParametersDialog` owns workflow and
-navigation only. Its `NavigationView` keeps each list item, label and tint
-together; these shell widgets are not stored in renderer-owned `PageView`s.
-Adding field decorations or another group layout belongs in the renderer rather
-than in the dialog.
-
-The smallest new editor therefore only needs the lifecycle methods:
-
-```python
-class MyEditor(ParameterValueEditorWidget):
-    def __init__(self, binding, placement, atoms=None, parent=None): ...
-    def refresh(self): ...
-    def commit(self) -> bool: ...
-```
-
-`create_editor(binding, placement, ...)` is the only construction path. It
-resolves `placement.editor`, looks up `EDITORS`, and calls the common
-`from_binding()` constructor. The factory contains no widget-specific setup.
-
-Override `focus_for_history()`, `set_editor_tooltip()`, `dependencies`,
-`full_width` or `help_text` only when their defaults are insufficient.
-
-The shared `EnergyEditor` receives read/apply callbacks. Backend-specific
-absolute/relative option mapping lives in `input_parameters.energy`.
-`RelativisticScalingEditor` edits global and per-atomic-type `MODE.C`/`MODE.SOC`;
-its numeric delegate lives in `widgets.numeric_table`, independently of K-paths.
-
-`dialogs.input_file.InputFileEditor` stays independent of both the guided session
-and expert tree. Additional validation/application is passed through its
-`apply_parameters` callback. A failed callback leaves the draft open.
+Implicit backend defaults are presentation placeholders, not GUI-created
+presets. Focusing or refreshing a control must not turn an implicit default into
+an explicit stored value.
 
 ## Dependency rules
 
-- Dialogs compose widgets and parameter-editing services.
-- Windows render `WorkspaceController` changes; they do not assign document
-  fields directly. Calculation completion is delivered through an explicit
-  callback rather than by inspecting a parent window for a named method.
-- `application` does not import dialogs, widgets or flows. Flows may compose
-  application state and leaf dialogs, but never import either top-level window.
-- `RecentFiles.changed` directly refreshes interested views; no forwarding
-  service signal or transient-window registry exists.
-- Widgets may use parameter services and small helpers, but never import
-  concrete application dialogs. Use signals or callbacks to request actions.
-- `input_parameters` must not import `dialogs` or `widgets`.
-- Task specifications must not import the Qt session or GUI controls.
-- `misc` and `plots` must not depend on dialogs or parameter editors.
+- `guy4ase.main.GuiApplication` is the composition root for shared application
+  state and top-level windows.
+- `application` does not import dialogs, widgets, or flows.
+- Windows render controller state and invoke flows/controller transitions; they
+  do not assign workspace fields directly.
+- `flows` may compose application state and leaf dialogs, but must not import
+  `MainWindow` or `WorkflowWindow`.
+- Widgets may use parameter services and small helpers, but must not import
+  concrete application dialogs. Use signals/callbacks for actions owned by a
+  higher layer.
+- `input_parameters` must not depend on concrete dialogs or widgets.
+- `input_parameters.specs` must remain independent of Qt session/widget
+  implementations.
+- `misc` and `plots` must not become dependencies on top-level dialogs or
+  parameter editors.
+- Domain logic that can be expressed without Qt belongs outside the GUI package
+  where practical.
 
-The dependency checks in `tests/test_gui_architecture.py` protect these rules,
-including the absence of circular GUI imports and import-time window loading.
+The checks in `tests/test_gui_architecture.py` protect the broad layer
+directions, acyclic GUI imports, and lightweight import boundaries. Tests should
+protect invariants and public contracts, not freeze incidental implementation
+layout.
 
-## Common imports
+## Common canonical imports
 
 ```python
+from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
-from guy4ase.gui.dialogs.object_view import ReadOnlyObjectDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
+from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
-from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
-from guy4ase.gui.widgets.input_parameters.relativistic_scaling import RelativisticScalingEditor
+from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```
