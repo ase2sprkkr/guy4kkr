@@ -6,7 +6,6 @@ import pytest
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -68,8 +67,8 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         calculation_flow.run_calculation(
             controller,
             RecentFiles(),
-            ActiveRunRegistry(),
             None,
+            select_profile=False,
         )
 
 
@@ -86,8 +85,8 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     )
     monkeypatch.setattr(
         calculation_flow.SprkkrRunWindow,
-        "_start",
-        lambda _window, _request: None,
+        "_start_worker",
+        lambda _window: None,
     )
 
     def broken_adoption(_loaded, *, request):
@@ -104,8 +103,8 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     window = calculation_flow.run_calculation(
         controller,
         RecentFiles(),
-        ActiveRunRegistry(),
         None,
+        select_profile=False,
     )
     assert window is not None
 
@@ -137,49 +136,49 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = ActiveRunRegistry()
-
-    def capture_start(window, request):
-        window._test_request = request
+    request = controller.create_calculation_request()
 
     monkeypatch.setattr(
         calculation_flow.SprkkrRunWindow,
-        "_start",
-        capture_start,
+        "_start_worker",
+        lambda _window: None,
     )
 
     load_calls = []
 
-    def fake_load_result(result, *, fallback_directory):
-        load_calls.append((result, fallback_directory))
+    def fake_load_result(result, *, fallback_directory, persistent_ref=None):
+        load_calls.append((result, fallback_directory, persistent_ref))
         assert result is backend_result
         return loaded
 
     monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
 
     class Runner:
+        reference = None
+        id = "run-1"
+
         def wait(self):
             return backend_result
 
     window = calculation_flow.run_calculation(
         controller,
         history,
-        active_runs,
         None,
+        select_profile=False,
     )
     assert window is not None
 
-    worker = run_dialog._SprkkrRunWorker(window._test_request)
+    worker = run_dialog._SprkkrRunWorker(request)
     monkeypatch.setattr(worker, "_launch", lambda _calculator: Runner())
     worker.finished.connect(window._on_finished)
     worker.run()
 
-    assert load_calls == [(backend_result, str(tmp_path))]
+    assert load_calls == [(backend_result, str(tmp_path), "run-1")]
     assert controller.result is backend_result
-    assert len(controller.result_history) == 1
-    record = controller.result_history[0]
+    assert len(controller.result_store.results) == 1
+    record = controller.result_store.results[0]
     assert record.result is backend_result
-    assert record.input_state_id == window._test_request.state_id
+    assert record.input_state_id == request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)
 
     window.close()
