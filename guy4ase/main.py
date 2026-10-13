@@ -80,6 +80,14 @@ class GuiApplication(QObject):
             )
             widget.set_results(self.controller.result_store)
 
+        def select_result(result_id: int) -> None:
+            # Selection is a presentation concern. ResultActionsWidget deliberately
+            # keeps normal refreshes sticky, so an explicit user import selects by
+            # id only after resultChanged has rebuilt the selector.
+            item = widget._find_result_item(result_id)
+            if item is not None:
+                widget._selector.setCurrentItem(item)
+
         widget.useStateRequested.connect(self.controller.use_result_state)
         widget.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
@@ -92,6 +100,7 @@ class GuiApplication(QObject):
         )
         self.controller.structureChanged.connect(refresh_result_context)
         self.controller.resultChanged.connect(refresh_result_context)
+        self.controller.resultSelectionRequested.connect(select_result)
         self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
 

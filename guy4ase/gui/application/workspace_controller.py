@@ -86,6 +86,7 @@ class WorkspaceController(QObject):
     inputParametersChanged = pyqtSignal(object)
     directoryChanged = pyqtSignal(object)
     resultChanged = pyqtSignal(object)
+    resultSelectionRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -330,8 +331,18 @@ class WorkspaceController(QObject):
             record=record,
         )
 
-    def adopt_external_result(self, loaded: LoadedResult) -> ResultAdoption:
-        """Record an imported result without implicitly replacing the draft."""
+    def adopt_external_result(
+        self,
+        loaded: LoadedResult,
+        *,
+        select_result: bool = False,
+    ) -> ResultAdoption:
+        """Record an imported result without implicitly replacing the draft.
+
+        ``select_result`` carries explicit presentation intent from a user-driven
+        import. Background/programmatic imports leave the current result selection
+        untouched.
+        """
         produces_state = loaded.atoms is not None and _result_is_scf(loaded.result)
         record = self._results.add_external_result(
             loaded.result,
@@ -343,6 +354,8 @@ class WorkspaceController(QObject):
             produces_state=produces_state,
         )
         self.resultChanged.emit(loaded.result)
+        if select_result:
+            self.resultSelectionRequested.emit(record.id)
         return self._result_adoption(loaded, record=record)
 
     def adopt_calculation_result(

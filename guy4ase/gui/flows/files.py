@@ -184,7 +184,7 @@ def load_output(
         )
         return False
 
-    adoption = controller.adopt_external_result(loaded)
+    adoption = controller.adopt_external_result(loaded, select_result=True)
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
     _show_input_parameters_warning(adoption, parent)
