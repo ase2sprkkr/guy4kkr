@@ -264,6 +264,15 @@ class ResultStore:
         output_potential_path: str | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
     ) -> ResultRecord:
+        if input_state_id is not None:
+            input_state = self.state(input_state_id)
+            if input_state.structure_id != structure_id:
+                raise AssertionError(
+                    "Result provenance mismatch: input state "
+                    f"{input_state_id} belongs to structure "
+                    f"{input_state.structure_id}, not {structure_id}."
+                )
+
         result_id = self._next_result_id
         self._next_result_id += 1
 

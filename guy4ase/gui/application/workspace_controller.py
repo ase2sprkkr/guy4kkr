@@ -63,8 +63,8 @@ class CalculationRequest:
     input_parameters: Any
     directory: str
     generation: Generation
-    structure_id: int = 0
-    state_id: int = 0
+    structure_id: int
+    state_id: int
 
 
 @dataclass(frozen=True)
