@@ -153,7 +153,7 @@ class CalculationHistoryDialog(QDialog):
         self.finished_value = QLabel("—", details)
         self.updated_value = QLabel("—", details)
         self.return_code_value = QLabel("—", details)
-        self.artifacts_value = QLabel("—", details)
+        self.result_files_value = QLabel("—", details)
         for label, widget in (
             ("Status", self.status_value),
             ("Task", self.task_value),
@@ -164,7 +164,7 @@ class CalculationHistoryDialog(QDialog):
             ("Finished", self.finished_value),
             ("Last update", self.updated_value),
             ("Return code", self.return_code_value),
-            ("Artifacts", self.artifacts_value),
+            ("Result files", self.result_files_value),
         ):
             self.detail_form.addRow(f"{label}:", widget)
         details_layout.addLayout(self.detail_form)
@@ -222,6 +222,26 @@ class CalculationHistoryDialog(QDialog):
         else:
             self.backend_notice.hide()
         self._populate_tree()
+
+    def _replace_job(self, job: PersistentJob) -> None:
+        self._jobs_by_id[job.id] = job
+        self._jobs = tuple(job if current.id == job.id else current for current in self._jobs)
+
+    def _verified_result_files(self, job: PersistentJob) -> PersistentJob:
+        if (
+            not job.is_final
+            or job.result_files_verified
+            or not self._source.supports_result_file_check
+        ):
+            return job
+        try:
+            checked = self._source.check_result_files(job.id)
+        except (OSError, RuntimeError, ValueError):
+            # Selection should remain usable if a historical filesystem record
+            # cannot be checked. The stored state is shown explicitly as such.
+            return job
+        self._replace_job(checked)
+        return checked
 
     def _group_for(self, job: PersistentJob) -> str:
         return _GROUPS[self.group_by.currentIndex()][1](job)
@@ -305,7 +325,7 @@ class CalculationHistoryDialog(QDialog):
                 self.finished_value,
                 self.updated_value,
                 self.return_code_value,
-                self.artifacts_value,
+                self.result_files_value,
             ):
                 widget.setText("—")
             self.message_value.hide()
@@ -313,6 +333,7 @@ class CalculationHistoryDialog(QDialog):
             self.load_result_button.hide()
             return
 
+        job = self._verified_result_files(job)
         self._selected_job_id = job.id
         self.detail_title.setText(job.dataset or f"Calculation {job.id[:12]}")
         self.status_value.setText(_status_label(job.state))
@@ -327,9 +348,13 @@ class CalculationHistoryDialog(QDialog):
         self.return_code_value.setText(
             "—" if job.return_code is None else str(job.return_code)
         )
-        self.artifacts_value.setText(
-            _status_label(job.artifact_state) if job.artifact_state else "—"
-        )
+        if not job.is_final or not job.result_files_state:
+            result_files_label = "—"
+        else:
+            result_files_label = _status_label(job.result_files_state)
+            if not job.result_files_verified:
+                result_files_label += " (stored, not checked)"
+        self.result_files_value.setText(result_files_label)
         self.message_value.setText(job.message or "")
         self.message_value.setVisible(bool(job.message))
         self.monitor_button.setVisible(
@@ -368,7 +393,7 @@ class CalculationHistoryDialog(QDialog):
         def finished(result) -> None:
             # The manager finalizes the persistent record before wait() returns.
             # Reload metadata first, then keep the completed result visible for
-            # the selected job without forcing a second artifact parse.
+            # the selected job without forcing a second result-file parse.
             self._load_metadata()
             if self._selected_job_id == job_id:
                 self.result_widget.set_result(result)
@@ -396,12 +421,20 @@ class CalculationHistoryDialog(QDialog):
                 self,
                 lambda: self._source.load_result(job_id),
                 title="Loading Calculation Result",
-                label="Loading result artifacts…",
+                label="Loading result files…",
             )
         except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
             QMessageBox.warning(self, "Result Load Failed", str(exc))
             return
         if self._selected_job_id == job_id:
+            record = getattr(result, "run_record", None)
+            if record is not None:
+                checked = PersistentJob.from_run_record(
+                    record,
+                    result_files_verified=True,
+                )
+                self._replace_job(checked)
+                self._show_job(checked)
             self.result_widget.set_result(result)
 
     def _item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
