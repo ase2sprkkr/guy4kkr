@@ -7,12 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.file_version import FileState, FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_artifacts import (
-    ArtifactState,
-    ResultArtifactVersion,
-    capture_result_artifacts,
-)
+from guy4ase.gui.application.result_files import capture_result_files
 from guy4ase.gui.application.structure_snapshot import StructureSnapshot
 from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
@@ -111,7 +108,8 @@ class ResultRecord:
     output_state_id: int | None
     input_parameters: Any | None
     directory: str | None
-    artifacts: Mapping[str, ResultArtifactVersion]
+    result_files: Mapping[str, FileVersion]
+    persistent_ref: str | None = None
     restart_scf: bool = False
     output_path: Path | None = None
     potential_path: Path | None = None
@@ -195,15 +193,15 @@ class ResultStore:
     def result(self, result_id: int) -> ResultRecord:
         return self._results[result_id]
 
-    def current_value_for_artifact(
-        self, artifact: ResultArtifactVersion
+    def current_value_for_result_file(
+        self, result_file: FileVersion
     ) -> Any | None:
         """Return the known result value that owns the file currently at this path."""
         for record in self.results:
-            for name, candidate in record.artifacts.items():
-                if candidate.path != artifact.path:
+            for name, candidate in record.result_files.items():
+                if candidate.path != result_file.path:
                     continue
-                if candidate.state() is not ArtifactState.CURRENT:
+                if candidate.state() is not FileState.CURRENT:
                     continue
                 try:
                     values = record.result.output_values
@@ -416,6 +414,7 @@ class ResultStore:
         input_state_id: int | None,
         input_parameters: Any | None,
         directory: str | None,
+        persistent_ref: str | None = None,
         restart_scf: bool = False,
         output_path: Path | None = None,
         potential_path: Path | None = None,
@@ -494,10 +493,11 @@ class ResultStore:
             output_state_id=output_state_id,
             input_parameters=_snapshot_input_parameters(input_parameters),
             directory=directory,
+            result_files=capture_result_files(result),
+            persistent_ref=persistent_ref,
             restart_scf=restart_scf,
             output_path=output_path,
             potential_path=potential_path,
-            artifacts=capture_result_artifacts(result),
             imported=imported,
         )
         self._results[result_id] = record
@@ -522,6 +522,7 @@ class ResultStore:
         output_path: Path | None,
         potential_path: Path | None,
         produces_state: bool,
+        persistent_ref: str | None = None,
     ) -> ResultRecord:
         if atoms is None:
             return self.add_result(
@@ -530,6 +531,7 @@ class ResultStore:
                 input_state_id=None,
                 input_parameters=input_parameters,
                 directory=directory,
+                persistent_ref=persistent_ref,
                 output_path=output_path,
                 potential_path=potential_path,
                 imported=True,
@@ -542,6 +544,7 @@ class ResultStore:
                 input_state_id=None,
                 input_parameters=input_parameters,
                 directory=directory,
+                persistent_ref=persistent_ref,
                 output_path=output_path,
                 potential_path=potential_path,
                 output_atoms=atoms,
@@ -559,6 +562,7 @@ class ResultStore:
             input_state_id=state_id,
             input_parameters=input_parameters,
             directory=directory,
+            persistent_ref=persistent_ref,
             output_path=output_path,
             potential_path=potential_path,
             imported=True,
