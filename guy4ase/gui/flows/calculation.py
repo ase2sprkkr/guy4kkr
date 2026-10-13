@@ -237,10 +237,7 @@ def recompute_result(
     result never silently switches calculation lineage.
     """
     record = controller.result_store.result(result_id)
-    try:
-        task = str(record.result.task_name).strip().lower()
-    except (AttributeError, TypeError, ValueError):
-        return None
+    task = record.task_name
     if not task or record.input_parameters is None:
         return None
 
