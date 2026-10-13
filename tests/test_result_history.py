@@ -68,8 +68,8 @@ def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
         adoption = controller.adopt_calculation_result(_loaded(result), request=request)
         assert not adoption.workspace_updated
 
-    assert _results(controller.result_history) == tuple(reversed(results))
-    assert len(controller.result_history) == 12
+    assert _results(controller.result_store.results) == tuple(reversed(results))
+    assert len(controller.result_store.results) == 12
 
 
 def test_input_and_structure_changes_do_not_delete_results(tmp_path):
@@ -82,8 +82,8 @@ def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     controller.replace_input_parameters(_Parameters(2))
     controller.replace_structure(Atoms("Ni"))
 
-    assert _results(controller.result_history) == (result,)
-    assert controller.result_history[0].structure_id == first_structure_id
+    assert _results(controller.result_store.results) == (result,)
+    assert controller.result_store.results[0].structure_id == first_structure_id
     assert controller.structure_id != first_structure_id
 
 
@@ -106,9 +106,9 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
     assert not adoption.workspace_updated
     assert controller.atoms is original_atoms
     assert controller.state_id == original_state_id
-    assert controller.result_history[0].result is external
-    assert controller.result_history[0].output_state_id is not None
-    assert controller.result_history[0].imported
+    assert controller.result_store.results[0].result is external
+    assert controller.result_store.results[0].output_state_id is not None
+    assert controller.result_store.results[0].imported
 
 
 def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_path):
@@ -232,7 +232,7 @@ def test_empty_spheres_is_result_transition_within_same_structure(tmp_path):
         parameters={"radius": 1.25},
     )
 
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
@@ -256,7 +256,7 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
         parameters={"method": "probe"},
     )
 
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=0)
     assert record.input_state_id == input_state_id
@@ -279,7 +279,7 @@ def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
         expected_generation=controller.generation,
         parameters={"radius": 1.5, "grid": 24},
     )
-    empty_spheres_record = controller.result_history[0]
+    empty_spheres_record = controller.result_store.results[0]
     empty_spheres_state_id = controller.state_id
 
     controller.replace_structure(Atoms("Ni"), potential_path="Ni.pot")
