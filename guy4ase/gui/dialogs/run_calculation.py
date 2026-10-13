@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
+from dataclasses import replace
 from threading import Thread
 from typing import Any
 
@@ -26,6 +27,22 @@ logger = logging.getLogger(__name__)
 _RunCancellation = RunCancellation
 
 
+def _execution_request(request: CalculationRequest) -> CalculationRequest:
+    """Return a request whose atoms can be mutated freely by ASE2SPRKKR.
+
+    Worker construction happens on the GUI thread, before the QObject is moved to
+    its QThread.  Copying here therefore creates the thread boundary explicitly:
+    lazy promotion, site initialization and other backend bookkeeping can mutate
+    the execution copy without touching the authoritative workspace structure.
+    """
+    copier = getattr(request.atoms, "copy", None)
+    if not callable(copier):
+        # CalculationRequest is also used by small unit-test doubles. Real
+        # calculation atoms are ASE Atoms and always provide copy().
+        return request
+    return replace(request, atoms=copier())
+
+
 class _SprkkrRunWorker(QObject):
     output = pyqtSignal(str, str)  # (text, kind)
     status = pyqtSignal(str)
@@ -44,7 +61,7 @@ class _SprkkrRunWorker(QObject):
         launch_lock=None,
     ):
         super().__init__()
-        self._request = request
+        self._request = _execution_request(request)
         self._profile_name = profile_name
         self._cancellation = cancellation or RunCancellation()
         del run_registry, launch_lock

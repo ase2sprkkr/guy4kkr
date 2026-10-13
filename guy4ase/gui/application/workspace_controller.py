@@ -61,10 +61,12 @@ class CalculationRequest:
     ``state_id``. An SCF output may advance the workspace only while that exact
     input state is still active.
 
-    ``atoms`` is the sole physical authority for the input potential; potential
-    paths are provenance/artifact metadata only. SPR-KKR preparation may lazily
-    populate non-structural bookkeeping on the workspace object, while structural
-    edits still go through controller transitions.
+    ``atoms`` identifies the authoritative launch input and is the sole physical
+    authority for its potential; potential paths are provenance/artifact metadata
+    only. The request may still reference the workspace object, but the run worker
+    copies it at the GUI-thread execution boundary before ASE2SPRKKR sees it.
+    Lazy promotion, site initialization and backend bookkeeping therefore affect
+    only the execution copy. Structural edits remain controller transitions.
 
     ``restart_scf`` snapshots the pending workspace execution intent. It asks
     ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
