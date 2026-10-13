@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ase2sprkkr.common.file_fingerprints import file_fingerprint
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+
+class PotentialFileChanged(RuntimeError):
+    """A potential file changed while a stable version was being parsed."""
 
 
 @dataclass(frozen=True)
@@ -30,50 +34,34 @@ class LoadedResult:
     input_parameters_error: Exception | None = None
 
 
-def _potential_file_fingerprint(path: Path) -> tuple[int, int, int, int, int, int]:
-    """Return metadata that changes when a potential file is replaced/rewritten."""
-    info = path.stat()
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_mode,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
-
-
 def load_potential_atoms(file_path: str | Path) -> Any:
-    """Load a stable POT file and attach that exact parsed potential to its atoms.
+    """Load one stable POT file and return the atoms owned by that potential.
 
-    ASE2SPRKKR reconstructs the atomic/site state while parsing a potential, but
-    ``Potential.from_file(...).atoms`` does not currently attach the parsed
-    ``Potential`` back to the returned ``SPRKKRAtoms``. Guy4ASE calculations
-    launch from atoms, so doing the attachment here makes atoms the single
-    physical authority instead of relying on a parallel filename.
+    ``Potential.from_file`` is the authority for reconstructing SPR-KKR atoms and
+    for attaching the parsed potential to them. Guy4ASE deliberately does not
+    promote the returned atoms or rewrite their potential relationship.
 
-    POTFIL may be rewritten by a running SCF calculation.  Fingerprinting the
-    file immediately before and after parsing prevents publishing a structure
-    reconstructed from a file that changed while it was being read.
+    POTFIL may be rewritten by a running SCF calculation. Fingerprinting the file
+    immediately before and after parsing prevents publishing a structure rebuilt
+    from a file that changed while it was being read.
     """
     path = Path(file_path).resolve()
-    before = _potential_file_fingerprint(path)
+    before = file_fingerprint(path)
     potential = Potential.from_file(str(path))
     try:
-        after = _potential_file_fingerprint(path)
+        after = file_fingerprint(path)
     except OSError as exc:
-        raise RuntimeError(
+        raise PotentialFileChanged(
             f"Potential file changed while it was being read: {path}"
         ) from exc
     if after != before:
-        raise RuntimeError(f"Potential file changed while it was being read: {path}")
+        raise PotentialFileChanged(
+            f"Potential file changed while it was being read: {path}"
+        )
 
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
-    atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
-    atoms._potential = potential
-    potential.atoms = atoms
     return atoms
 
 
