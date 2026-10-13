@@ -22,7 +22,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_store import (
+    PotentialFileVersion,
+    ResultRecord,
+    ResultStore,
+)
 from guy4ase.gui.misc.resources import icon_path
 
 
@@ -91,7 +95,7 @@ class ElidedValueLabel(QLabel):
 class ResultActionsWidget(QWidget):
     """Browse a flat SCF-oriented projection of exact result provenance."""
 
-    useStateRequested = pyqtSignal(int)
+    useStateRequested = pyqtSignal(int, object)
     recomputeRequested = pyqtSignal(int)
 
     def __init__(
@@ -112,6 +116,7 @@ class ResultActionsWidget(QWidget):
         self._records: dict[int, ResultRecord] = {}
         self._current_structure_id: int | None = None
         self._current_state_id: int | None = None
+        self._use_state_potential_version: PotentialFileVersion | None = None
         self._history_dialog = None
 
         layout = QVBoxLayout(self)
@@ -343,6 +348,7 @@ class ResultActionsWidget(QWidget):
     def _refresh_record_actions(self, record: ResultRecord | None) -> None:
         store = self._store
         if record is None or store is None:
+            self._use_state_potential_version = None
             self._record_actions.hide()
             return
 
@@ -369,6 +375,7 @@ class ResultActionsWidget(QWidget):
             and current_potential.available
             and (different_state or potential_changed)
         )
+        self._use_state_potential_version = current_potential if can_use else None
         self._use_state_button.setVisible(can_use)
         if can_use:
             self._use_state_button.setText(
@@ -396,8 +403,16 @@ class ResultActionsWidget(QWidget):
 
     def _use_selected_state(self) -> None:
         result_id = self._selected_result_id()
-        if result_id is not None:
-            self.useStateRequested.emit(result_id)
+        expected = self._use_state_potential_version
+        if result_id is None or expected is None:
+            return
+        current = expected.current()
+        if not current.available or current != expected:
+            self._refresh_record_actions(
+                self._record_for_item(self._selector.currentItem())
+            )
+            return
+        self.useStateRequested.emit(result_id, expected)
 
     def _recompute_selected(self) -> None:
         result_id = self._selected_result_id()
