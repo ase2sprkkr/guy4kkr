@@ -3,10 +3,8 @@ from __future__ import annotations
 from ase import Atoms
 
 from guy4ase.gui.application import sprkkr_execution as execution_module
-from guy4ase.gui.application.sprkkr_execution import (
-    ExecutionCancelled,
-    SprkkrExecution,
-)
+from guy4ase.gui.application.execution_cancellation import ExecutionCancelled
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace import Generation
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 

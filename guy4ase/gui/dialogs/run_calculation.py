@@ -6,11 +6,11 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from guy4ase.gui.application.execution_cancellation import RunCancellation
-from guy4ase.gui.application.sprkkr_execution import (
+from guy4ase.gui.application.execution_cancellation import (
     ExecutionCancelled,
-    SprkkrExecution,
+    RunCancellation,
 )
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
 
@@ -32,15 +32,14 @@ class _SprkkrRunWorker(QObject):
     def __init__(
         self,
         request: CalculationRequest,
-        cancellation: RunCancellation | None = None,
+        cancellation: RunCancellation,
         *,
         profile_name: str | None = None,
     ) -> None:
         super().__init__()
-        self._cancellation = cancellation or RunCancellation()
         self._execution = SprkkrExecution(
             request,
-            self._cancellation,
+            cancellation,
             profile_name=profile_name,
             output=self.output.emit,
             status=self.status.emit,

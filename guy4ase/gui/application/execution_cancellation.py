@@ -1,12 +1,17 @@
-"""Thread-safe cancellation state shared by calculation execution adapters."""
+"""Thread-safe cancellation contract shared by backend execution services."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from threading import Lock, Thread
 from typing import Any, Protocol
 
 
 logger = logging.getLogger(__name__)
+
+
+class ExecutionCancelled(Exception):
+    """Execution was cancelled before a result could be delivered."""
 
 
 class Cancellation(Protocol):
@@ -16,6 +21,30 @@ class Cancellation(Protocol):
     def requested(self) -> bool: ...
 
     def register(self, runner: Any) -> bool: ...
+
+
+def register_runner(cancellation: Cancellation, runner: Any) -> None:
+    """Register a runner or cancel it when cancellation was already latched."""
+    if cancellation.register(runner):
+        return
+    runner.cancel()
+    raise ExecutionCancelled
+
+
+def wait_for_runner(cancellation: Cancellation, runner: Any) -> Any:
+    """Wait for a runner while normalizing backend cancellation semantics."""
+    try:
+        result = runner.wait()
+    except asyncio.CancelledError as exc:
+        raise ExecutionCancelled from exc
+    except Exception as exc:
+        if cancellation.requested:
+            raise ExecutionCancelled from exc
+        raise
+
+    if cancellation.requested:
+        raise ExecutionCancelled
+    return result
 
 
 class RunCancellation:

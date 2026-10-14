@@ -1,7 +1,6 @@
 """Backend execution service for one SPR-KKR calculation request."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import warnings
 from dataclasses import replace
@@ -10,16 +9,17 @@ from typing import Any, Callable
 from ase2sprkkr.execution import MpiNotFoundWarning
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 
-from guy4ase.gui.application.execution_cancellation import Cancellation
+from guy4ase.gui.application.execution_cancellation import (
+    Cancellation,
+    ExecutionCancelled,
+    register_runner,
+    wait_for_runner,
+)
 from guy4ase.gui.application.result_loading import LoadedResult, load_result
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
 
 logger = logging.getLogger(__name__)
-
-
-class ExecutionCancelled(Exception):
-    """The calculation was cancelled before a result could be adopted."""
 
 
 class SprkkrExecution:
@@ -105,9 +105,7 @@ class SprkkrExecution:
 
     def _submit(self, calculator: SPRKKR):
         runner = self._create_runner(calculator)
-        if not self.cancellation.register(runner):
-            runner.cancel()
-            raise ExecutionCancelled
+        register_runner(self.cancellation, runner)
 
         try:
             self._with_mpi_warnings(runner.submit)
@@ -135,19 +133,10 @@ class SprkkrExecution:
             self._status("Running…")
 
         try:
-            result = runner.wait()
-        except asyncio.CancelledError as exc:
-            raise ExecutionCancelled from exc
-        except Exception as exc:
-            if self.cancellation.requested:
-                raise ExecutionCancelled from exc
-            raise
+            result = wait_for_runner(self.cancellation, runner)
         finally:
             # PersistentRunner.wait() finalizes its RunRecord in a finally block.
             self._notify_persistent_job_changed(runner)
-
-        if self.cancellation.requested:
-            raise ExecutionCancelled
 
         self._status("Loading result…")
         loaded = load_result(
