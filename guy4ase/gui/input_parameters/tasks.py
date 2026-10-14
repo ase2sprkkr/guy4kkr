@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 
 from .specs import arpes, bsf, dos, jxc, scf, xas
 from .specs.schema import TaskDialogSpec
@@ -11,13 +12,20 @@ from .specs.schema import TaskDialogSpec
 SpecBuilder = Callable[[bool], TaskDialogSpec]
 
 
+class WorkflowStage(Enum):
+    """Semantic stage in which a task is presented by the Guided workflow."""
+
+    SCF = "scf"
+    POST_SCF = "post-scf"
+
+
 @dataclass(frozen=True)
 class WorkflowTaskPresentation:
-    """Presentation and recommendation metadata for one Guided workflow task."""
+    """Presentation metadata for one Guided workflow task."""
 
     label: str
     description: str
-    after_converged_scf: bool = False
+    stage: WorkflowStage
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Converge SCF",
                 "Prepare and run a self-consistent calculation",
+                WorkflowStage.SCF,
             ),
         ),
         GuidedTaskDefinition(
@@ -56,7 +65,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Calculate XAS",
                 "X-ray absorption spectroscopy",
-                after_converged_scf=True,
+                WorkflowStage.POST_SCF,
             ),
         ),
         GuidedTaskDefinition(
@@ -65,7 +74,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Calculate ARPES",
                 "Angle-resolved photoemission spectroscopy",
-                after_converged_scf=True,
+                WorkflowStage.POST_SCF,
             ),
         ),
         GuidedTaskDefinition(
@@ -74,7 +83,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Calculate DOS",
                 "Electronic density of states",
-                after_converged_scf=True,
+                WorkflowStage.POST_SCF,
             ),
         ),
         GuidedTaskDefinition(
@@ -83,7 +92,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Calculate BSF",
                 "Bloch spectral function along an E–k path or on a k–k plane",
-                after_converged_scf=True,
+                WorkflowStage.POST_SCF,
             ),
         ),
         GuidedTaskDefinition(
@@ -92,7 +101,7 @@ _GUIDED_TASKS = {
             WorkflowTaskPresentation(
                 "Calculate JXC",
                 "Exchange coupling and Dzyaloshinskii–Moriya interactions",
-                after_converged_scf=True,
+                WorkflowStage.POST_SCF,
             ),
         ),
     )
