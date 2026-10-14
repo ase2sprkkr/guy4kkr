@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton
 
 from guy4ase.gui.application.recent_files import RecentFiles
@@ -22,6 +23,27 @@ from guy4ase.gui.workflow.model import (
 
 def _app():
     return QApplication.instance() or QApplication([])
+
+
+def _single_action_plan(*, group="Group", title="Action", category="neutral"):
+    return WorkflowPlan(
+        "subtitle",
+        (
+            AvailableActionGroup(
+                WorkflowSection.OTHER,
+                group,
+                (
+                    AvailableAction(
+                        StartOver(),
+                        title,
+                        "Description",
+                        category,
+                        ActionIcon.RESET,
+                    ),
+                ),
+            ),
+        ),
+    )
 
 
 def test_renderer_preserves_plan_group_order_and_presentation(tmp_path):
@@ -142,4 +164,47 @@ def test_continue_recent_uses_menu_button_and_emits_recent_command(tmp_path):
     button.click()
 
     assert emitted == [command]
+    widget.close()
+
+
+def test_group_labels_follow_application_palette(tmp_path):
+    application = _app()
+    original_palette = application.palette()
+    try:
+        for window_color, text_color in (
+            (QColor("#202020"), QColor("#ffffff")),
+            (QColor("#ffffff"), QColor("#202020")),
+        ):
+            palette = QPalette(original_palette)
+            palette.setColor(QPalette.ColorRole.Window, window_color)
+            palette.setColor(QPalette.ColorRole.WindowText, text_color)
+            application.setPalette(palette)
+            widget = WorkflowActionsWidget(RecentFiles(tmp_path / "recent.json"))
+            widget.set_plan(_single_action_plan())
+
+            label = widget.findChild(QLabel, "workflowActionGroupLabel")
+            assert label is not None
+            assert label.palette().color(QPalette.ColorRole.WindowText) == text_color
+            widget.close()
+    finally:
+        application.setPalette(original_palette)
+
+
+def test_replacing_plan_retires_old_groups(tmp_path):
+    application = _app()
+    widget = WorkflowActionsWidget(RecentFiles(tmp_path / "recent.json"))
+    widget.set_plan(_single_action_plan(group="Old", title="Old action"))
+    old_group = widget.findChild(QLabel, "workflowActionGroupLabel").parentWidget()
+
+    widget.set_plan(_single_action_plan(group="New", title="New action"))
+
+    assert old_group.isHidden()
+    application.processEvents()
+    assert widget.plan is not None
+    visible_labels = [
+        label.text()
+        for label in widget.findChildren(QLabel, "workflowActionGroupLabel")
+        if not label.isHidden()
+    ]
+    assert visible_labels == ["New"]
     widget.close()
