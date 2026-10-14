@@ -12,8 +12,13 @@ from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_capture import (
+    capture_result,
+    capture_structure,
+    resolve_potential_version,
+)
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.result_presentation import present_result_tree
-from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -61,9 +66,18 @@ def _widget(*, show_values_without_actions=True):
     )
 
 
-def _set_store(
+def _captured(result, parameters=None):
+    return capture_result(
+        result,
+        input_parameters=parameters,
+        output_path=None,
+        potential_path=None,
+    )
+
+
+def _set_history(
     widget: ResultActionsWidget,
-    store: ResultStore,
+    history: ResultHistory,
     *,
     structure_id: int | None,
     state_id: int | None,
@@ -71,7 +85,7 @@ def _set_store(
 ) -> None:
     widget.set_model(
         present_result_tree(
-            store,
+            history,
             current_structure_id=structure_id,
             current_state_id=state_id,
             selected_result_id=selected_result_id,
@@ -173,25 +187,24 @@ def test_empty_spheres_result_is_visible_without_actions():
 
 def test_result_from_other_structure_offers_structure_reuse():
     _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    first_structure, first_state = store.new_structure_state(
-        Atoms("Fe"), potential_path="Fe.pot"
+    history = ResultHistory()
+    first_structure, first_state = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path="Fe.pot")
     )
-    current_structure, current_state = store.new_structure_state(
-        Atoms("Cu"), potential_path="Cu.pot"
+    current_structure, current_state = history.add_structure_state(
+        capture_structure(Atoms("Cu"), potential_path="Cu.pot")
     )
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
-    record = store.add_result(
-        result,
+    record = history.add_result(
+        _captured(result, object()),
         structure_id=first_structure,
         input_state_id=first_state,
-        input_parameters=object(),
         directory=None,
     )
     widget = _widget()
-    _set_store(
+    _set_history(
         widget,
-        store,
+        history,
         structure_id=current_structure,
         state_id=current_state,
         selected_result_id=record.id,
@@ -214,22 +227,31 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_pa
     for path in (p0, p1, p2):
         path.write_text(path.name)
 
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=str(p0))
-    historical_state = store.new_child_state(root, potential_path=str(p1))
-    current_state = store.new_child_state(historical_state, potential_path=str(p2))
+    history = ResultHistory()
+    structure_id, root = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path=p0)
+    )
+    historical_state = history.add_child_state(
+        root,
+        potential_path=str(p1),
+        potential_version=resolve_potential_version(p1),
+    )
+    current_state = history.add_child_state(
+        historical_state,
+        potential_path=str(p2),
+        potential_version=resolve_potential_version(p2),
+    )
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
-    record = store.add_result(
-        result,
+    record = history.add_result(
+        _captured(result, object()),
         structure_id=structure_id,
         input_state_id=historical_state,
-        input_parameters=object(),
         directory=None,
     )
     widget = _widget()
-    _set_store(
+    _set_history(
         widget,
-        store,
+        history,
         structure_id=structure_id,
         state_id=current_state,
         selected_result_id=record.id,
@@ -242,19 +264,20 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_pa
 
 def test_empty_spheres_is_not_presented_as_recomputable_task():
     _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    record = store.add_result(
-        EmptySpheresResult(found=2),
+    history = ResultHistory()
+    structure_id, state_id = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path=None)
+    )
+    record = history.add_result(
+        _captured(EmptySpheresResult(found=2), {"min_radius": 0.8}),
         structure_id=structure_id,
         input_state_id=state_id,
-        input_parameters={"min_radius": 0.8},
         directory=None,
     )
     widget = _widget(show_values_without_actions=False)
-    _set_store(
+    _set_history(
         widget,
-        store,
+        history,
         structure_id=structure_id,
         state_id=state_id,
         selected_result_id=record.id,
