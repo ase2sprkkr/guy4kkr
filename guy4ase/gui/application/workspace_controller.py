@@ -22,12 +22,12 @@ from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
-_POST_SCF_TASKS = frozenset({"xas", "arpes", "dos", "bsf", "jxc"})
 
 
-def _result_is_scf(result: Any) -> bool:
+def _result_produces_potential(result: Any) -> bool:
+    """Return backend-declared potential-production semantics for a result."""
     try:
-        return str(result.task_name).strip().lower() == "scf"
+        return bool(result.produces_potential)
     except (AttributeError, TypeError, ValueError):
         return False
 
@@ -189,21 +189,8 @@ class WorkspaceController(QObject):
         return task or None
 
     def can_calculate(self) -> bool:
-        if not self._workspace.is_calculation_input_complete():
-            return False
-        task = self.current_task()
-        return task is None or self.can_run_task(task)
-
-    def can_run_task(self, task: str) -> bool:
-        """Return whether the active workspace satisfies ``task`` prerequisites."""
-        if self.atoms is None:
-            return False
-        task = str(task).strip().lower()
-        if task == "scf":
-            return True
-        if task in _POST_SCF_TASKS:
-            return self.is_scf_converged()
-        return False
+        """Return generic launch readiness, independent of Guided workflow policy."""
+        return self._workspace.is_calculation_input_complete()
 
     def can_build_2d(self) -> bool:
         return self.structure_kind() == "3d"
@@ -386,7 +373,9 @@ class WorkspaceController(QObject):
         import. Background/programmatic imports leave the current result selection
         untouched.
         """
-        produces_state = loaded.atoms is not None and _result_is_scf(loaded.result)
+        produces_state = (
+            loaded.atoms is not None and _result_produces_potential(loaded.result)
+        )
         record = self._results.add_external_result(
             loaded.result,
             atoms=loaded.atoms,
@@ -414,8 +403,17 @@ class WorkspaceController(QObject):
         a write barrier. Results finishing from an older state remain in their
         original branch and can become active only through an explicit action.
         """
-        is_scf = _result_is_scf(loaded.result)
-        output_atoms = loaded.atoms if is_scf and loaded.atoms is not None else None
+        produces_potential = _result_produces_potential(loaded.result)
+        output_atoms = (
+            loaded.atoms
+            if produces_potential and loaded.atoms is not None
+            else None
+        )
+        output_potential_path = (
+            str(loaded.potential_path)
+            if produces_potential and loaded.potential_path is not None
+            else None
+        )
         record = self._results.add_result(
             loaded.result,
             structure_id=request.structure_id,
@@ -427,16 +425,12 @@ class WorkspaceController(QObject):
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             output_atoms=output_atoms,
-            output_potential_path=(
-                str(loaded.potential_path)
-                if loaded.potential_path is not None
-                else None
-            ),
+            output_potential_path=output_potential_path,
         )
 
         workspace_updated = False
         if (
-            is_scf
+            produces_potential
             and output_atoms is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
