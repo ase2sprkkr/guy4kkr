@@ -7,6 +7,7 @@ import pytest
 from ase import Atoms
 
 from guy4ase.gui.application import workspace_controller as controller_module
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_capture import capture_result, capture_structure
 from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.structure_provenance import StructureProvenance
@@ -32,9 +33,7 @@ def _captured_result(task="dos", parameters=None):
 
 
 def _add_structure(history: ResultHistory, symbol: str = "Fe"):
-    return history.add_structure_state(
-        capture_structure(Atoms(symbol), potential_path=None)
-    )
+    return history.add_structure_state(capture_structure(Atoms(symbol)))
 
 
 def _assert_result_edges_exist(history: ResultHistory) -> None:
@@ -113,7 +112,7 @@ def test_add_result_rejects_cross_structure_input_state_atomically():
 def test_prepared_output_state_and_result_commit_together():
     history = ResultHistory()
     structure_id, state_id = _add_structure(history)
-    output = capture_structure(Atoms("Fe"), potential_path=None)
+    output = capture_structure(Atoms("Fe"))
 
     record = history.add_result(
         _captured_result("scf"),
@@ -146,18 +145,18 @@ def test_state_result_edges_can_only_be_created_by_atomic_result_commit():
     assert state.potential_source_result_id is None
 
 
-def test_captured_potential_path_is_canonical(tmp_path, monkeypatch):
+def test_captured_potential_path_comes_only_from_explicit_version(tmp_path, monkeypatch):
     directory = tmp_path / "run"
     directory.mkdir()
     potential = directory / "Fe.pot"
     potential.write_text("potential", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
+    version = PotentialFileVersion.capture(Path("run/Fe.pot"))
 
-    captured = capture_structure(Atoms("Fe"), potential_path=Path("run/Fe.pot"))
+    captured = capture_structure(Atoms("Fe"), potential_version=version)
 
     assert captured.potential_path == potential.resolve()
-    assert captured.potential_version is not None
-    assert captured.potential_version.path == potential.resolve()
+    assert captured.potential_version is version
 
 
 def test_capture_failure_happens_before_history_mutation(monkeypatch):
