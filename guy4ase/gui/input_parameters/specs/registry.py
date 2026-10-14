@@ -21,6 +21,7 @@ class GuidedTaskDefinition:
     """Guy4ASE-owned metadata for one backend task with a Guided setup."""
 
     task: str
+    parameter_task: str
     spec_builder: Callable[[bool], TaskDialogSpec]
     workflow_stage: WorkflowStage
     workflow_label: str
@@ -28,16 +29,13 @@ class GuidedTaskDefinition:
 
     def build_spec(self, *, is_2d: bool = False) -> TaskDialogSpec:
         spec = self.spec_builder(is_2d)
-        if spec.task.lower() != self.task:
-            raise ValueError(
-                f"Guided task {self.task!r} built a spec for {spec.task!r}."
-            )
         spec.primary_pages()
         return spec
 
 
 _TASKS = (
     GuidedTaskDefinition(
+        "scf",
         "scf",
         scf.build_spec,
         WorkflowStage.SCF,
@@ -46,12 +44,14 @@ _TASKS = (
     ),
     GuidedTaskDefinition(
         "xas",
+        "xas",
         xas.build_spec,
         WorkflowStage.POST_SCF,
         "Calculate XAS",
         "X-ray absorption spectroscopy",
     ),
     GuidedTaskDefinition(
+        "arpes",
         "arpes",
         arpes.build_spec,
         WorkflowStage.POST_SCF,
@@ -60,6 +60,7 @@ _TASKS = (
     ),
     GuidedTaskDefinition(
         "dos",
+        "dos",
         dos.build_spec,
         WorkflowStage.POST_SCF,
         "Calculate DOS",
@@ -67,12 +68,14 @@ _TASKS = (
     ),
     GuidedTaskDefinition(
         "bsf",
+        "bsf",
         bsf.build_spec,
         WorkflowStage.POST_SCF,
         "Calculate BSF",
         "Bloch spectral function along an E–k path or on a k–k plane",
     ),
     GuidedTaskDefinition(
+        "jxc",
         "jxc",
         jxc.build_spec,
         WorkflowStage.POST_SCF,
