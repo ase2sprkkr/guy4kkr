@@ -111,7 +111,7 @@ def capture_structure(
 ) -> CapturedStructure:
     """Capture all external structure state required by the provenance graph."""
     version = resolve_potential_version(potential_path, potential_version)
-    path = str(version.path) if version is not None else None
+    path = str(potential_path) if potential_path is not None else None
     snapshot = (
         StructureSnapshot.capture(atoms)
         if version is None or not version.available
