@@ -633,7 +633,7 @@ class WorkflowWindow(QMainWindow):
         structure_flows.update_empty_spheres(self.controller, self)
 
     def _use_for_new_calculation(self) -> None:
-        generation = self.controller.generation
+        state_id = self.controller.state_id
         answer = QMessageBox.question(
             self,
             "Use for New Calculation?",
@@ -645,7 +645,7 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         change = self.controller.use_for_new_calculation(
-            expected_generation=generation,
+            expected_state_id=state_id,
         )
         document_change_applied(self, change)
 
