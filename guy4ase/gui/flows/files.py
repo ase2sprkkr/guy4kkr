@@ -14,7 +14,7 @@ from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.result_loading import (
     LoadedResult,
     PotentialVersionChanged,
-    load_potential_atoms,
+    load_potential_materialized,
     load_result_file,
 )
 from guy4ase.gui.application.workspace_controller import ResultAdoption, WorkspaceController
@@ -31,9 +31,9 @@ _POTENTIAL_SUFFIXES = {".pot", ".pot_new"}
 
 
 def _read_structure_file(path: Path):
-    """Read a structure, keeping a POT file's potential authoritative in atoms."""
+    """Read a structure and bind POTFIL atoms to the exact source version."""
     if path.suffix.lower() in _POTENTIAL_SUFFIXES and path.exists():
-        return load_potential_atoms(path)
+        return load_potential_materialized(path)
     return ase_read(path)
 
 
@@ -79,19 +79,17 @@ def load_structure(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
-    generation = controller.generation
+    expected = controller.structure_provenance
     path = Path(file_path).resolve()
     candidate = load_structure_candidate(path, parent, reader=_read_structure_file)
     if candidate is None:
         return False
     atoms = candidate.atoms
 
-    potential_path = str(path) if path.suffix.lower() in _POTENTIAL_SUFFIXES else None
     change = controller.replace_structure(
-        atoms,
-        potential_path=potential_path,
+        candidate.structure,
         directory=str(path.parent),
-        expected_generation=generation,
+        expected_provenance=expected,
     )
     if not document_change_applied(parent, change):
         return False
@@ -199,7 +197,6 @@ def load_output(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
-    """Import an output into result history without changing the workspace."""
     loaded = _read_output(file_path, parent)
     if loaded is None:
         return False
@@ -214,7 +211,6 @@ def continue_output(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
-    """Import or reuse an output and make its reusable calculation state active."""
     loaded = _read_output(file_path, parent)
     if loaded is None:
         return False
@@ -345,7 +341,6 @@ def continue_recent(
     file_path: str | Path,
     parent: QWidget,
 ) -> bool:
-    """Continue from a recent item instead of merely reopening an output."""
     if not Path(file_path).exists():
         QMessageBox.warning(parent, "Missing File", f"File not found:\n{file_path}")
         recent_files.forget(kind, file_path)
