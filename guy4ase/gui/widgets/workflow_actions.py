@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.presentation import RecentLaunch
+from guy4ase.gui.presentation import RecentLaunch, RecentLaunchKind
 from guy4ase.gui.style import SPACE_LG, SPACE_SM, heading_font
 from guy4ase.gui.widgets.action_card import configure_action_card
 from guy4ase.gui.widgets.recent_launcher import build_recent_launch_menu
@@ -22,7 +22,6 @@ from guy4ase.gui.workflow.model import (
     ActionIcon,
     AvailableAction,
     ContinueRecent,
-    WorkflowCommand,
     WorkflowPlan,
 )
 
@@ -108,7 +107,7 @@ class WorkflowActionsWidget(QWidget):
         )
         return button
 
-    def _recent_requested(self, kind: str, path: str) -> None:
+    def _recent_requested(self, kind: RecentLaunchKind, path: str) -> None:
         self.commandRequested.emit(ContinueRecent(RecentLaunch(kind, path)))
 
     def _icon(self, icon: ActionIcon) -> QIcon:
