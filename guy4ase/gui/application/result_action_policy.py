@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_history import ResultHistory, ResultRecord
 
 
 @dataclass(frozen=True)
@@ -24,15 +24,17 @@ class ResultActionAvailability:
 
 
 def result_action_availability(
-    store: ResultStore,
+    history: ResultHistory,
     record: ResultRecord,
     *,
     current_structure_id: int | None,
     current_state_id: int | None,
 ) -> ResultActionAvailability:
     """Resolve restore/recompute actions for the current workspace state."""
-    state = store.state_for_result(record)
-    active_state = store.state(current_state_id) if current_state_id is not None else None
+    state = history.state_for_result(record)
+    active_state = (
+        history.state(current_state_id) if current_state_id is not None else None
+    )
     different_state = state is not None and state.id != current_state_id
     different_structure = (
         record.structure_id is not None
