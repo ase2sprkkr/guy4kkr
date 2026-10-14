@@ -66,6 +66,11 @@ def snapshot_input_parameters(parameters: Any | None) -> Any | None:
     return deepcopy(parameters)
 
 
+def capture_file_version(path: str | Path | None) -> FileVersion | None:
+    """Capture one optional filesystem source for provenance identity."""
+    return FileVersion.capture(path) if path is not None else None
+
+
 def capture_result_files(result: Any) -> Mapping[str, FileVersion]:
     """Capture path-backed output values without making recording fragile."""
     try:
@@ -139,6 +144,7 @@ def capture_result(
     input_parameters: Any | None,
     output_path: str | Path | None,
     potential_path: str | Path | None,
+    output_version: FileVersion | None = None,
 ) -> CapturedResult:
     """Capture result provenance that may inspect mutable objects or files."""
     resolved_output = Path(output_path) if output_path is not None else None
@@ -150,7 +156,9 @@ def capture_result(
         result_files=capture_result_files(result),
         output_path=resolved_output,
         output_version=(
-            FileVersion.capture(resolved_output) if resolved_output is not None else None
-        ),
+            output_version
+            if resolved_output is not None
+            else None
+        ) if output_version is not None else capture_file_version(resolved_output),
         potential_path=resolved_potential,
     )
