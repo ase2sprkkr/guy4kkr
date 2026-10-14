@@ -47,8 +47,8 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
     recent = RecentFiles(tmp_path / "recent.json")
 
     assert file_flows.continue_output(controller, recent, output, None)
-    assert len(controller.result_store.results) == 1
-    record = controller.result_store.results[0]
+    assert len(controller.result_history.results) == 1
+    record = controller.result_history.results[0]
     assert controller.state_id == record.output_state_id
     assert controller.atoms is not None
     assert controller.directory == str(tmp_path)
@@ -56,7 +56,7 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
 
     generation = controller.generation
     assert file_flows.continue_output(controller, recent, output, None)
-    assert len(controller.result_store.results) == 1
+    assert len(controller.result_history.results) == 1
     assert controller.state_id == record.output_state_id
     assert controller.generation == generation
 
@@ -116,4 +116,4 @@ def test_overwritten_output_path_creates_new_result(tmp_path):
 
     assert second is not None
     assert second.id != first.id
-    assert len(controller.result_store.results) == 2
+    assert len(controller.result_history.results) == 2
