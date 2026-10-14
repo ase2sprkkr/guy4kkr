@@ -36,11 +36,9 @@ def _workflow(tmp_path, *, workspace=None):
 
 
 def _commands(window):
-    plan = window._actions.plan
-    assert plan is not None
     return tuple(
         action.command
-        for group in plan.groups
+        for group in window.workflow_plan.groups
         for action in group.actions
     )
 
@@ -149,7 +147,7 @@ def test_typed_commands_are_dispatched_without_title_interpretation(
         StartOver(),
     )
     for command in commands:
-        window._actions.commandRequested.emit(command)
+        window.execute_workflow_command(command)
 
     assert events == [
         ("task", "scf"),
