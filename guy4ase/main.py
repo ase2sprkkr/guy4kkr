@@ -7,6 +7,9 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_action_policy import result_action_availability
+from guy4ase.gui.application.result_loading import PotentialVersionChanged
+from guy4ase.gui.application.result_presentation import present_result_tree
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -73,19 +76,56 @@ class GuiApplication(QObject):
         )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
-        """Connect explicit result actions and one authoritative result store."""
+        """Resolve result policy outside widgets and connect explicit user intents."""
         widget = window.result_actions_widget
         if widget is None:
             return
 
-        def refresh_result_context(*_args) -> None:
-            widget.set_workspace_state(
-                self.controller.structure_id,
-                self.controller.state_id,
+        def refresh_result_context(
+            *_args,
+            selected_result_id: int | None = None,
+        ) -> None:
+            selected = (
+                widget.selected_result_id
+                if selected_result_id is None
+                else selected_result_id
             )
-            widget.set_results(self.controller.result_store)
+            widget.set_model(
+                present_result_tree(
+                    self.controller.result_store,
+                    current_structure_id=self.controller.structure_id,
+                    current_state_id=self.controller.state_id,
+                    selected_result_id=selected,
+                )
+            )
 
-        widget.useStateRequested.connect(self.controller.use_result_state)
+        def select_result(result_id: int) -> None:
+            refresh_result_context(selected_result_id=result_id)
+
+        def use_result_state(result_id: int) -> None:
+            store = self.controller.result_store
+            record = store.result(result_id)
+            action = result_action_availability(
+                store,
+                record,
+                current_structure_id=self.controller.structure_id,
+                current_state_id=self.controller.state_id,
+            ).use_state
+            if action is None:
+                refresh_result_context(selected_result_id=result_id)
+                return
+            try:
+                self.controller.use_result_state(
+                    result_id,
+                    action.expected_potential,
+                )
+            except PotentialVersionChanged:
+                # The controller remains the final TOCTOU boundary. If the file
+                # changed after policy evaluation, refresh the offered action.
+                refresh_result_context(selected_result_id=result_id)
+
+        widget.selectionRequested.connect(select_result)
+        widget.useStateRequested.connect(use_result_state)
         widget.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
@@ -94,9 +134,10 @@ class GuiApplication(QObject):
                 result_id,
             )
         )
+        widget.historyRequested.connect(self.show_calculation_jobs)
         self.controller.structureChanged.connect(refresh_result_context)
         self.controller.resultChanged.connect(refresh_result_context)
-        self.controller.resultSelectionRequested.connect(widget.select_result)
+        self.controller.resultSelectionRequested.connect(select_result)
         self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
 
