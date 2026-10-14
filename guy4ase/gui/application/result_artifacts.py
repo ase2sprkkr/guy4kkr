@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from guy4ase.gui.application.file_version import FileState, FileVersion
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_history import ResultHistory, ResultRecord
 
 
 @dataclass(frozen=True)
@@ -19,12 +20,36 @@ class ResolvedResultValue:
     unavailable: bool = False
 
 
+def find_existing_external_result(
+    history: ResultHistory,
+    output_path: str | Path | None,
+    *,
+    persistent_ref: str | None = None,
+) -> ResultRecord | None:
+    """Resolve a previously imported source against its current file version."""
+    if persistent_ref is not None:
+        existing = history.result_for_persistent_ref(persistent_ref)
+        if existing is not None:
+            return existing
+
+    if output_path is None:
+        return None
+    path = Path(output_path).expanduser().resolve()
+    for record in history.results:
+        version = record.output_version
+        if version is None or version.path != path:
+            continue
+        if version.state() is FileState.CURRENT:
+            return record
+    return None
+
+
 def current_value_for_result_file(
-    store: ResultStore,
+    history: ResultHistory,
     result_file: FileVersion,
 ) -> Any | None:
     """Return the known output value that owns the file currently at this path."""
-    for record in store.results:
+    for record in history.results:
         for name, candidate in record.result_files.items():
             if candidate.path != result_file.path:
                 continue
@@ -41,7 +66,7 @@ def current_value_for_result_file(
 
 
 def resolve_result_value(
-    store: ResultStore | None,
+    history: ResultHistory | None,
     record: ResultRecord | None,
     key: str,
     value: Any,
@@ -54,8 +79,8 @@ def resolve_result_value(
     state = result_file.state()
     if state is FileState.OVERWRITTEN:
         current_value = (
-            current_value_for_result_file(store, result_file)
-            if store is not None
+            current_value_for_result_file(history, result_file)
+            if history is not None
             else None
         )
         return ResolvedResultValue(
