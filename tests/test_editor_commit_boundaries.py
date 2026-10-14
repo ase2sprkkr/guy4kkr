@@ -1,4 +1,6 @@
+import gc
 import os
+import weakref
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -52,3 +54,24 @@ def test_editor_commit_does_not_hide_apply_programming_error(application):
 
     assert commit.error == ""
     assert widget.toolTip() == ""
+
+
+def test_editor_commit_does_not_retain_bound_callback_target(application):
+    class CallbackOwner:
+        def read_value(self):
+            return "old"
+
+        def apply_value(self, _draft):
+            pass
+
+    widget = QWidget()
+    owner = CallbackOwner()
+    owner_ref = weakref.ref(owner)
+    commit = EditorCommit(widget, owner.read_value, owner.apply_value)
+
+    del owner
+    gc.collect()
+
+    assert owner_ref() is None
+    with pytest.raises(RuntimeError, match="callback target no longer exists"):
+        commit.refresh()

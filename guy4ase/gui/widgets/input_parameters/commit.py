@@ -1,5 +1,6 @@
 """Common draft/commit boundary for ordinary parameter controls."""
 from copy import deepcopy
+import weakref
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -10,6 +11,22 @@ class EditorValidationError(ValueError):
     """A user-editable draft failed local conversion or validation."""
 
 
+def _weak_callable(callback):
+    """Keep bound callback targets out of the Qt ownership graph."""
+    try:
+        reference = weakref.WeakMethod(callback)
+    except TypeError:
+        return callback
+
+    def call(*args, **kwargs):
+        target = reference()
+        if target is None:
+            raise RuntimeError("Editor callback target no longer exists")
+        return target(*args, **kwargs)
+
+    return call
+
+
 class EditorCommit(QObject):
     """Keep presentation drafts separate from storage and report input errors.
 
@@ -18,17 +35,27 @@ class EditorCommit(QObject):
     refresh. ``apply_value`` errors are programming/model failures and therefore
     propagate; only explicit ``EditorValidationError`` instances are presented
     as invalid user input.
+
+    Qt owns this helper through the editor parent. Bound callbacks are weak so
+    the helper does not create a Python cycle back to that parent; otherwise
+    cyclic GC may tear down wrapped Qt objects in an unsafe order.
     """
 
     validationChanged = pyqtSignal(str)
 
     def __init__(self, widget, read_value, apply_value):
         super().__init__(widget)
-        self.widget = widget
-        self.read_value = read_value
-        self.apply_value = apply_value
+        self.read_value = _weak_callable(read_value)
+        self.apply_value = _weak_callable(apply_value)
         self.error = ''
-        self._shown = deepcopy(read_value())
+        self._shown = deepcopy(self.read_value())
+
+    @property
+    def widget(self):
+        widget = self.parent()
+        if widget is None:
+            raise RuntimeError("Editor widget no longer exists")
+        return widget
 
     def refresh(self):
         self._shown = deepcopy(self.read_value())
@@ -36,8 +63,9 @@ class EditorCommit(QObject):
 
     def _set_error(self, message):
         self.error = message
-        self.widget.setStyleSheet('border: 2px solid palette(highlight);' if message else '')
-        self.widget.setToolTip(message)
+        widget = self.widget
+        widget.setStyleSheet('border: 2px solid palette(highlight);' if message else '')
+        widget.setToolTip(message)
         self.validationChanged.emit(message)
 
     def commit(self, *_args):
