@@ -18,6 +18,8 @@ def guided_task_is_recommended(
     """
     if not has_structure:
         return False
+    if definition.workflow.stage is WorkflowStage.SCF:
+        return not scf_converged
     if definition.workflow.stage is WorkflowStage.POST_SCF:
         return scf_converged
-    return True
+    raise ValueError(f"Unknown workflow stage {definition.workflow.stage!r}.")
