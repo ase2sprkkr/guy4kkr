@@ -1,7 +1,7 @@
 """Transactional editing state for the guided input-parameter dialog."""
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -50,6 +50,26 @@ def _parameters_equal(left: InputParameters, right: InputParameters) -> bool:
     left_values = left.as_dict(only_changed=False, generated=False, copy=True)
     right_values = right.as_dict(only_changed=False, generated=False, copy=True)
     return values_equal(left_values, right_values)
+
+
+def _option_values_equal(value_type: Any, left: Any, right: Any) -> bool:
+    """Compare complete option values without feeding occurrence maps to a type.
+
+    ``Option(..., all_values=True)`` returns a mapping for numbered/defaulted
+    options.  A grammar type comparator describes one occurrence, not that
+    wrapper mapping, so compare matching occurrences independently while still
+    delegating leaf semantics (and errors) to the grammar type itself.
+    """
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        if left.keys() != right.keys():
+            return False
+        return all(
+            _option_values_equal(value_type, left[key], right[key])
+            for key in left
+        )
+    return bool(value_type.is_the_same_value(left, right))
 
 
 def _changed_values(before: InputParameters, after: InputParameters) -> dict:
@@ -233,7 +253,7 @@ class InputParametersSession(QObject):
         left = resolve_option(self._initial, path)(all_values=True)
         current = resolve_option(self._working, path)
         right = current(all_values=True)
-        return not current._definition.type.is_the_same_value(right, left)
+        return not _option_values_equal(current._definition.type, right, left)
 
     def changed_paths(self, paths: Iterable[InputParameterPath]) -> set[InputParameterPath]:
         return {path for path in paths if self.is_changed(path)}

@@ -17,3 +17,9 @@ def test_is_changed_propagates_type_comparator_errors(monkeypatch):
 
     with pytest.raises(RuntimeError, match="broken type comparator"):
         session.is_changed(path)
+
+
+def test_is_changed_compares_numbered_values_per_occurrence():
+    session = InputParametersSession(InputParameters.create("arpes"))
+
+    assert not session.is_changed(("SPEC_EL", "THETA"))
