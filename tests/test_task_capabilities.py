@@ -10,10 +10,16 @@ from ase import Atoms
 from ase2sprkkr import SPRKKRAtoms
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.calculation_policy import guided_task_is_recommended
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import calculation as calculation_flow
+from guy4ase.gui.input_parameters.tasks import (
+    WorkflowStage,
+    guided_task_definition,
+    guided_task_definitions,
+)
 from guy4ase.main import GuiApplication
 
 
@@ -54,26 +60,18 @@ def _calculate_actions(window):
     ]
 
 
-def test_controller_owns_task_capability_policy():
+def test_controller_calculation_readiness_is_task_agnostic(tmp_path):
     controller = WorkspaceController()
+    assert not controller.can_calculate()
 
-    assert not controller.can_run_task("scf")
-    assert not controller.can_run_task("dos")
+    controller.replace_structure(Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
+    controller.change_directory(str(tmp_path))
+    controller.replace_input_parameters(_Parameters("torque"))
 
-    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    controller.replace_structure(atoms)
-
-    assert controller.can_run_task("SCF")
-    assert not controller.can_run_task("dos")
-    assert not controller.can_run_task("xas")
-    assert not controller.can_run_task("unknown")
-
-    controller.is_scf_converged = lambda: True
-    for task in ("xas", "arpes", "dos", "bsf", "jxc"):
-        assert controller.can_run_task(task)
+    assert controller.can_calculate()
 
 
-def test_use_for_new_calculation_disables_post_scf_current_task():
+def test_use_for_new_calculation_does_not_block_backend_task():
     controller = WorkspaceController(
         WorkspaceState(
             atoms=_scf_atoms(),
@@ -82,17 +80,15 @@ def test_use_for_new_calculation_disables_post_scf_current_task():
         )
     )
 
-    assert controller.can_run_task("dos")
     assert controller.can_calculate()
 
     controller.use_for_new_calculation(expected_generation=controller.generation)
 
     assert controller.scf_status() == "START"
-    assert not controller.can_run_task("dos")
-    assert not controller.can_calculate()
+    assert controller.can_calculate()
 
 
-def test_run_calculation_enforces_task_capability_at_launch_boundary(
+def test_run_calculation_does_not_apply_guided_recommendation_at_launch_boundary(
     monkeypatch, tmp_path
 ):
     controller = WorkspaceController(
@@ -102,32 +98,30 @@ def test_run_calculation_enforces_task_capability_at_launch_boundary(
             directory=str(tmp_path),
         )
     )
-    messages = []
     constructed = []
-    monkeypatch.setattr(
-        calculation_flow.QMessageBox,
-        "information",
-        lambda parent, title, message: messages.append((title, message)),
-    )
-    monkeypatch.setattr(
-        calculation_flow,
-        "SprkkrRunWindow",
-        lambda **kwargs: constructed.append(kwargs),
-    )
 
-    assert calculation_flow.run_calculation(
+    class FakeRunWindow:
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+
+        def show(self) -> None:
+            pass
+
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", FakeRunWindow)
+
+    window = calculation_flow.run_calculation(
         controller,
         RecentFiles(tmp_path / "recent.json"),
         object(),
         select_profile=False,
-    ) is None
-    assert constructed == []
-    assert messages == [
-        ("Task Not Available", "DOS cannot be run with the current workspace state.")
-    ]
+    )
+
+    assert isinstance(window, FakeRunWindow)
+    assert len(constructed) == 1
+    assert constructed[0]["request"].input_parameters.task_name == "dos"
 
 
-def test_expert_run_action_uses_current_task_capability(tmp_path):
+def test_expert_run_action_accepts_backend_task_without_guided_registration(tmp_path):
     application = QApplication.instance() or QApplication([])
     gui = GuiApplication(
         workspace=WorkspaceState(),
@@ -138,19 +132,56 @@ def test_expert_run_action_uses_current_task_capability(tmp_path):
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     expert.controller.change_directory(str(tmp_path))
-    expert.controller.replace_input_parameters(_Parameters("dos"))
-    application.processEvents()
-
-    assert not expert.run_calculation_action.isEnabled()
-
-    expert.controller.replace_input_parameters(_Parameters("scf"))
+    expert.controller.replace_input_parameters(_Parameters("torque"))
     application.processEvents()
 
     assert expert.run_calculation_action.isEnabled()
     expert.close()
 
 
-def test_workflow_filters_each_task_through_controller_capability(tmp_path):
+def test_guided_task_registry_owns_workflow_metadata():
+    definitions = guided_task_definitions()
+
+    assert tuple(definition.task for definition in definitions) == (
+        "scf",
+        "xas",
+        "arpes",
+        "dos",
+        "bsf",
+        "jxc",
+    )
+    assert guided_task_definition("DOS").workflow.label == "Calculate DOS"
+    assert guided_task_definition("scf").workflow.stage is WorkflowStage.SCF
+    assert guided_task_definition("dos").workflow.stage is WorkflowStage.POST_SCF
+
+
+def test_guided_policy_interprets_workflow_stage():
+    scf = guided_task_definition("scf")
+    dos = guided_task_definition("dos")
+
+    assert not guided_task_is_recommended(
+        scf,
+        has_structure=False,
+        scf_converged=False,
+    )
+    assert guided_task_is_recommended(
+        scf,
+        has_structure=True,
+        scf_converged=False,
+    )
+    assert not guided_task_is_recommended(
+        dos,
+        has_structure=True,
+        scf_converged=False,
+    )
+    assert guided_task_is_recommended(
+        dos,
+        has_structure=True,
+        scf_converged=True,
+    )
+
+
+def test_workflow_uses_guided_registry_and_recommendation_policy(tmp_path):
     application = QApplication.instance() or QApplication([])
     gui = GuiApplication(
         workspace=WorkspaceState(),
@@ -160,17 +191,23 @@ def test_workflow_filters_each_task_through_controller_capability(tmp_path):
     window.controller.replace_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
-    window.controller.is_scf_converged = lambda: False
-    window.controller.can_run_task = lambda task: str(task).lower() in {"scf", "dos"}
 
+    window.controller.is_scf_converged = lambda: False
     window._refresh()
     application.processEvents()
     actions = _calculate_actions(window)
-
     assert "Converge SCF" in actions
-    assert "Calculate DOS" in actions
-    assert "Calculate XAS" not in actions
-    assert "Calculate ARPES" not in actions
-    assert "Calculate BSF" not in actions
-    assert "Calculate JXC" not in actions
+    for definition in guided_task_definitions():
+        if definition.workflow.stage is WorkflowStage.POST_SCF:
+            assert definition.workflow.label not in actions
+
+    window.controller.is_scf_converged = lambda: True
+    window._refresh()
+    application.processEvents()
+    actions = _calculate_actions(window)
+    assert "Converge SCF" not in actions
+    for definition in guided_task_definitions():
+        if definition.workflow.stage is WorkflowStage.POST_SCF:
+            assert definition.workflow.label in actions
+
     window.close()
