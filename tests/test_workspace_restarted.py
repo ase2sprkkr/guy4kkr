@@ -31,7 +31,10 @@ def _scf_atoms(status="CONVERGED"):
 
 def _loaded_result(task, atoms):
     return LoadedResult(
-        result=SimpleNamespace(task_name=task),
+        result=SimpleNamespace(
+            task_name=task,
+            produces_potential=task.lower() == "scf",
+        ),
         output_path=None,
         potential_path=Path("Fe.pot"),
         atoms=atoms,

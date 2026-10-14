@@ -1,15 +1,14 @@
-"""Select a task's declarative guided layout."""
-from . import arpes, bsf, dos, jxc, scf, xas
-from .schema import TaskDialogSpec
+"""Layout-only lookup backed by the Guided task registry.
 
-_BUILDERS = {"scf": scf.build_spec, "bsf": bsf.build_spec, "dos": dos.build_spec,
-             "xas": xas.build_spec, "arpes": arpes.build_spec, "jxc": jxc.build_spec}
+Task identity and workflow metadata are owned by :mod:`..tasks`; this module
+provides the declarative-spec lookup API without maintaining another registry.
+"""
+
+from __future__ import annotations
+
+from ..tasks import guided_task_definition
 
 
-def task_dialog_spec(task: str, *, is_2d: bool = False) -> TaskDialogSpec:
-    builder = _BUILDERS.get(task.lower())
-    if builder is None:
-        raise ValueError(f"No guided setup is defined for task {task.upper()}.")
-    spec = builder(is_2d)
-    spec.primary_pages()
-    return spec
+def task_dialog_spec(task: str, *, is_2d: bool = False):
+    """Return the declarative Guided layout for *task*."""
+    return guided_task_definition(task).build_spec(is_2d=is_2d)

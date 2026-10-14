@@ -30,6 +30,13 @@ class _FailingParameters:
         raise ValueError("parameter snapshot failed")
 
 
+def _result(task_name: str, *, produces_potential: bool = False):
+    return SimpleNamespace(
+        task_name=task_name,
+        produces_potential=produces_potential,
+    )
+
+
 def test_calculation_request_requires_structure_and_state_ids():
     common = dict(
         atoms=Atoms("Fe"),
@@ -53,7 +60,7 @@ def test_add_result_rejects_partial_provenance(structure_id, input_state_id):
 
     with pytest.raises(ValueError, match="requires structure_id and input_state_id together"):
         store.add_result(
-            SimpleNamespace(task_name="dos"),
+            _result("dos"),
             structure_id=structure_id,
             input_state_id=input_state_id,
             input_parameters=None,
@@ -71,7 +78,7 @@ def test_add_result_rejects_cross_structure_input_state_atomically():
     second_structure, second_state = store.new_structure_state(
         Atoms("Cu"), potential_path=None
     )
-    result = SimpleNamespace(task_name="dos")
+    result = _result("dos")
 
     with pytest.raises(AssertionError, match="Result provenance mismatch"):
         store.add_result(
@@ -100,7 +107,7 @@ def test_add_result_snapshot_failure_does_not_commit_state_or_result():
     structure_id, state_id = store.new_structure_state(
         Atoms("Fe"), potential_path=None
     )
-    result = SimpleNamespace(task_name="scf")
+    result = _result("scf", produces_potential=True)
 
     with pytest.raises(ValueError, match="parameter snapshot failed"):
         store.add_result(
@@ -136,26 +143,24 @@ def test_add_external_result_snapshot_failure_does_not_commit_structure():
 
     with pytest.raises(ValueError, match="parameter snapshot failed"):
         store.add_external_result(
-            SimpleNamespace(task_name="dos"),
+            _result("dos"),
             atoms=Atoms("Fe"),
             input_parameters=_FailingParameters(),
             directory=None,
             output_path=None,
             potential_path=None,
-            produces_state=False,
         )
 
     assert store.structures == ()
     assert len(store) == 0
 
     record = store.add_external_result(
-        SimpleNamespace(task_name="dos"),
+        _result("dos"),
         atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
         output_path=None,
         potential_path=None,
-        produces_state=False,
     )
     assert record.id == 1
     assert record.structure_id == 1
@@ -251,7 +256,7 @@ def test_result_record_snapshots_task_name_and_input_parameters():
         Atoms("Fe"), potential_path=None
     )
     parameters = _Parameters(task_name="dos", value=7)
-    result = SimpleNamespace(task_name=parameters.task_name)
+    result = _result(parameters.task_name)
 
     record = store.add_result(
         result,
@@ -283,7 +288,7 @@ def test_result_record_deep_copies_generic_mapping_parameters():
     parameters = {"mesh": [10, 20, 30]}
 
     record = store.add_result(
-        SimpleNamespace(task_name="empty-spheres"),
+        _result("empty-spheres"),
         structure_id=structure_id,
         input_state_id=state_id,
         input_parameters=parameters,

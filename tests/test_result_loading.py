@@ -170,6 +170,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
     result = SimpleNamespace(
         files={"output": output.name, "converged": missing.name},
         directory=str(tmp_path),
+        produces_potential=True,
     )
     result.path_to = lambda key: result.files[key]
     monkeypatch.setattr(

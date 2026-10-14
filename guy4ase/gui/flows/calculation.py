@@ -12,6 +12,7 @@ from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
+from guy4ase.gui.dialogs.expert_input import edit_input_parameters
 from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
     select_guided_input_parameters,
@@ -21,6 +22,7 @@ from guy4ase.gui.dialogs.profiles import (
     profile_description,
 )
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
+from guy4ase.gui.input_parameters.tasks import is_guided_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
@@ -85,15 +87,6 @@ def run_calculation(
     stay independent. ``persistent_job_changed`` is an application observer of
     stable persistent run ids; it never receives a parallel lifecycle snapshot.
     """
-    task = controller.current_task()
-    if task is not None and not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            f"{task.upper()} cannot be run with the current workspace state.",
-        )
-        return None
-
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -154,14 +147,6 @@ def configure_and_run_task(
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
-        if not controller.can_run_task(task):
-            QMessageBox.information(
-                parent,
-                "Task Not Available",
-                f"{str(task).upper()} cannot be run with the current workspace state.",
-            )
-            return None
-
         if (
             not controller.directory
             and not choose_working_directory(
@@ -233,17 +218,6 @@ def recompute_result(
     if not task or record.input_parameters is None:
         return None
 
-    if not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            (
-                f"{task.upper()} cannot be run with the potential currently active "
-                "in the workspace."
-            ),
-        )
-        return None
-
     if not controller.directory and not choose_working_directory(
         controller,
         parent,
@@ -260,19 +234,30 @@ def recompute_result(
         parameters = record.input_parameters.copy(copy_values=True)
     except AttributeError:
         return None
-    dialog = GuidedInputParametersDialog(
-        task,
-        parameters,
-        parent=parent,
-        atoms=atoms,
-    )
-    if dialog.exec() != dialog.DialogCode.Accepted:
-        return None
+
+    position_like_window: str
+    if is_guided_task(task):
+        dialog = GuidedInputParametersDialog(
+            task,
+            parameters,
+            parent=parent,
+            atoms=atoms,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+        parameters = dialog.parameters()
+        position_like_window = "guided-input"
+    else:
+        edited = edit_input_parameters(parameters, parent=parent, atoms=atoms)
+        if edited is None:
+            return None
+        parameters = edited
+        position_like_window = "expert-input"
 
     if not document_change_applied(
         parent,
         controller.replace_input_parameters(
-            dialog.parameters(),
+            parameters,
             expected_generation=generation,
         ),
     ):
@@ -281,6 +266,6 @@ def recompute_result(
         controller,
         recent_files,
         parent,
-        position_like_window="guided-input",
+        position_like_window=position_like_window,
         persistent_job_changed=persistent_job_changed,
     )

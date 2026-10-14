@@ -129,7 +129,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     controller.replace_input_parameters(object())
     assert workspace.empty_spheres is state
 
-    result = SimpleNamespace(task_name="dos")
+    result = SimpleNamespace(task_name="dos", produces_potential=False)
     controller.adopt_calculation_result(
         LoadedResult(
             result=result,

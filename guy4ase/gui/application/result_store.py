@@ -604,7 +604,7 @@ class ResultStore:
         result_id = self._next_result_id
         potential_source_result_id = (
             result_id
-            if task_name == "scf" and output_potential_path is not None
+            if result.produces_potential and output_potential_path is not None
             else None
         )
 
@@ -683,7 +683,6 @@ class ResultStore:
         directory: str | None,
         output_path: Path | None,
         potential_path: Path | None,
-        produces_state: bool,
         persistent_ref: str | None = None,
     ) -> ResultRecord:
         existing = self.result_for_external_source(
@@ -706,7 +705,7 @@ class ResultStore:
                 imported=True,
             )
 
-        if produces_state:
+        if result.produces_potential:
             return self.add_result(
                 result,
                 structure_id=None,

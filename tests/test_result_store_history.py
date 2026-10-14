@@ -20,6 +20,13 @@ class _Parameters:
         return _Parameters(self.value)
 
 
+def _result(task_name: str):
+    return SimpleNamespace(
+        task_name=task_name,
+        produces_potential=task_name.lower() == "scf",
+    )
+
+
 def _loaded(
     result,
     *,
@@ -55,7 +62,7 @@ def _results(controller: WorkspaceController):
 
 def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
     controller = _controller(tmp_path)
-    results = [SimpleNamespace(task_name="dos") for _ in range(12)]
+    results = [_result("dos") for _ in range(12)]
 
     for result in results:
         request = controller.create_calculation_request()
@@ -69,7 +76,7 @@ def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
 def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     controller = _controller(tmp_path)
     first_structure_id = controller.structure_id
-    result = SimpleNamespace(task_name="dos")
+    result = _result("dos")
     request = controller.create_calculation_request()
     controller.adopt_calculation_result(_loaded(result), request=request)
 
@@ -86,7 +93,7 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
     original_atoms = controller.atoms
     original_state_id = controller.state_id
     external_atoms = Atoms("Fe")
-    external = SimpleNamespace(task_name="scf")
+    external = _result("scf")
 
     adoption = controller.adopt_external_result(
         _loaded(
@@ -111,7 +118,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     request_a = controller.create_calculation_request()
     request_b = controller.create_calculation_request()
 
-    result_b = SimpleNamespace(task_name="scf")
+    result_b = _result("scf")
     atoms_b = Atoms("Fe")
     adoption_b = controller.adopt_calculation_result(
         _loaded(result_b, atoms=atoms_b, potential_path=tmp_path / "pb.pot_new"),
@@ -121,7 +128,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     state_b = controller.state_id
 
     request_c = controller.create_calculation_request()
-    result_c = SimpleNamespace(task_name="scf")
+    result_c = _result("scf")
     atoms_c = Atoms("Fe")
     adoption_c = controller.adopt_calculation_result(
         _loaded(result_c, atoms=atoms_c, potential_path=tmp_path / "pc.pot_new"),
@@ -132,7 +139,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     assert state_c != state_b
     assert controller.result is result_c
 
-    result_a = SimpleNamespace(task_name="scf")
+    result_a = _result("scf")
     atoms_a = Atoms("Fe")
     adoption_a = controller.adopt_calculation_result(
         _loaded(result_a, atoms=atoms_a, potential_path=tmp_path / "pa.pot_new"),
@@ -164,7 +171,7 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     assert restart_branch != old_branch
     assert controller.potential_path == "p0.pot"
 
-    late_result = SimpleNamespace(task_name="scf")
+    late_result = _result("scf")
     late = controller.adopt_calculation_result(
         _loaded(late_result, atoms=Atoms("Fe"), potential_path=tmp_path / "old.pot_new"),
         request=old_request,
@@ -177,7 +184,7 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     assert controller.result_store.branch_id_for_result(late.record) == old_branch
 
     new_request = controller.create_calculation_request()
-    new_result = SimpleNamespace(task_name="scf")
+    new_result = _result("scf")
     new = controller.adopt_calculation_result(
         _loaded(new_result, atoms=Atoms("Fe"), potential_path=tmp_path / "new.pot_new"),
         request=new_request,
@@ -190,8 +197,8 @@ def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
     request_a = controller.create_calculation_request()
     request_b = controller.create_calculation_request()
-    result_a = SimpleNamespace(task_name="scf")
-    result_b = SimpleNamespace(task_name="scf")
+    result_a = _result("scf")
+    result_b = _result("scf")
 
     a = controller.adopt_calculation_result(
         _loaded(result_a, atoms=Atoms("Fe"), potential_path=tmp_path / "pa.pot_new"),

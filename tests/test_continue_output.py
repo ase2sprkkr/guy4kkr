@@ -14,7 +14,11 @@ from guy4ase.main import GuiApplication
 
 def _loaded_scf(path, *, atoms=None) -> LoadedResult:
     return LoadedResult(
-        result=SimpleNamespace(task_name="scf", output_values={}),
+        result=SimpleNamespace(
+            task_name="scf",
+            produces_potential=True,
+            output_values={},
+        ),
         output_path=path,
         potential_path=None,
         atoms=atoms if atoms is not None else Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
@@ -52,7 +56,6 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
     assert controller.state_id == record.output_state_id
     assert controller.atoms is not None
     assert controller.directory == str(tmp_path)
-    assert controller.can_run_task("scf")
 
     generation = controller.generation
     assert file_flows.continue_output(controller, recent, output, None)
@@ -75,7 +78,6 @@ def test_restart_after_continue_keeps_scf_action_available(tmp_path, monkeypatch
 
     assert controller.restarted
     assert controller.scf_status() == "START"
-    assert controller.can_run_task("scf")
 
 
 def test_workflow_shows_scf_action_after_continue_and_restart(tmp_path, monkeypatch):

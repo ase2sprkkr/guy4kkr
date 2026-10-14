@@ -25,6 +25,10 @@ class _Parameters:
         return self
 
 
+def _result(task_name: str):
+    return SimpleNamespace(task_name=task_name, produces_potential=False)
+
+
 def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypatch):
     path = tmp_path / "Fe.pot"
     path.touch()
@@ -135,7 +139,7 @@ def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_p
         produced_by_result_id=None,
     )
     result = controller.result_store.add_result(
-        SimpleNamespace(task_name="scf"),
+        _result("scf"),
         structure_id=controller.structure_id,
         input_state_id=child,
         input_parameters=_Parameters(),
@@ -173,7 +177,7 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
     state = controller.result_store.state(state_id)
     assert state.structure_snapshot is None
     result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+        _result("dos"),
         structure_id=controller.structure_id,
         input_state_id=state_id,
         input_parameters=_Parameters(),
@@ -215,7 +219,7 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
     assert structure_id is not None
     assert historical_state_id is not None
     result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+        _result("dos"),
         structure_id=structure_id,
         input_state_id=historical_state_id,
         input_parameters=_Parameters(),
@@ -281,7 +285,7 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     assert historical_version is not None
 
     result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+        _result("dos"),
         structure_id=structure_id,
         input_state_id=historical_state_id,
         input_parameters=_Parameters(),

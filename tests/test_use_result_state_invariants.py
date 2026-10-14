@@ -30,7 +30,11 @@ def _atoms_with_potential(marker: str, *, x: float = 0.0):
 
 def _loaded_scf(atoms, potential_path: str | Path | None = None):
     return LoadedResult(
-        result=SimpleNamespace(task_name="scf", output_values={}),
+        result=SimpleNamespace(
+            task_name="scf",
+            produces_potential=True,
+            output_values={},
+        ),
         output_path=None,
         potential_path=(Path(potential_path) if potential_path is not None else None),
         atoms=atoms,

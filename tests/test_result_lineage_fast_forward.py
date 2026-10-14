@@ -34,7 +34,7 @@ def test_scf_does_not_fast_forward_across_use_for_new_calculation():
     assert controller.potential_path == "P0.pot"
 
     loaded = LoadedResult(
-        result=SimpleNamespace(task_name="scf"),
+        result=SimpleNamespace(task_name="scf", produces_potential=True),
         output_path=None,
         potential_path=Path("P1.pot"),
         atoms=Atoms("Fe"),

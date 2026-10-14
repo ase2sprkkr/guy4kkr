@@ -17,9 +17,15 @@ alternate APIs.
   It contains the editing session, field bindings, task semantics, validation,
   DATASET naming, tooltips, and declarative task specifications. It does not own
   finished application windows.
+- `input_parameters.tasks`: Guy4ASE's closed set of backend tasks that have a
+  Guided editor, together with their workflow presentation metadata and the
+  layout builder they use. This registry controls Guided UX only; it is not a
+  whitelist of backend tasks that Expert mode may execute.
 - `input_parameters.specs`: declarative guided-layout definitions. `schema`
   defines fields/groups/pages, individual task modules build their layouts, and
-  `registry.task_dialog_spec` selects a task specification.
+  `registry.task_dialog_spec` selects a layout specification. Specs describe
+  layout and presentation only; backend task identity and workflow policy do not
+  belong here.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
   next calculation; `ResultStore` owns calculation history independently of
@@ -70,11 +76,17 @@ artifact/provenance metadata only; calculation launch must not silently use it
 as a second physical source of truth.
 
 `ResultStore` owns result history and calculation-state provenance independently
-of the mutable workspace. A result may refer to an input state and, for tasks
-such as SCF, to an output state. Historical states retain enough provenance to
-reconstruct a reusable calculation input from the recorded POTFIL version or a
-structure snapshot when necessary. Activating historical state is always an
-explicit transition.
+of the mutable workspace. A result may refer to an input state and, when the
+backend result declares that it produces a new potential, to an output state.
+Historical states retain enough provenance to reconstruct a reusable calculation
+input from the recorded POTFIL version or a structure snapshot when necessary.
+Activating historical state is always an explicit transition.
+
+Potential production is a result capability defined by ASE2SPRKKR result types,
+not inferred in Guy4ASE from a task-name string or from the input-parameter
+definition. GUI-internal operation results implement the same small capability
+contract explicitly. `ResultStore` derives potential provenance from the result
+it records rather than accepting duplicate caller-supplied policy booleans.
 
 Windows and flows mutate the draft through named `WorkspaceController`
 operations rather than assigning workspace facets independently. The important
@@ -87,10 +99,11 @@ result-adoption semantics are:
   only explicit presentation intent to select that result in the UI.
 - `adopt_calculation_result()` records a result produced from its mandatory
   captured `CalculationRequest`. It never reconstructs launch provenance from
-  whatever happens to be active when the result finishes. Only an SCF result
-  finishing from the exact currently active input state may fast-forward the
-  workspace to its produced state. A result from an older branch is recorded in
-  that branch and cannot silently overwrite a newer user choice.
+  whatever happens to be active when the result finishes. Only a
+  potential-producing result finishing from the exact currently active input
+  state may fast-forward the workspace to its produced state. A result from an
+  older branch is recorded in that branch and cannot silently overwrite a newer
+  user choice.
 - `use_result_state()` is the explicit operation for activating a reusable
   historical state (or an explicitly approved current version of its POTFIL).
 - `use_for_new_calculation()` creates a new calculation branch from the active
@@ -195,8 +208,11 @@ an explicit stored value.
   concrete application dialogs. Use signals/callbacks for actions owned by a
   higher layer.
 - `input_parameters` must not depend on concrete dialogs or widgets.
+- `input_parameters.tasks` may depend on declarative specs but not on concrete
+  dialogs/widgets; workflow metadata here is presentation policy, not execution
+  permission.
 - `input_parameters.specs` must remain independent of Qt session/widget
-  implementations.
+  implementations and of workflow/task identity policy.
 - `misc` and `plots` must not become dependencies on top-level dialogs or
   parameter editors.
 - Domain logic that can be expressed without Qt belongs outside the GUI package
@@ -221,6 +237,7 @@ from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```
