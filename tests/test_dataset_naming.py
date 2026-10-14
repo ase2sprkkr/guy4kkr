@@ -7,7 +7,7 @@ from ase import Atoms
 
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import Generation
+from guy4ase.gui.application.structure_provenance import StructureProvenance
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.input_parameters.dataset import (
     apply_default_dataset,
@@ -24,11 +24,12 @@ class _Cancellation:
 
 
 def _execution(parameters) -> SprkkrExecution:
+    atoms = Atoms("Fe")
     request = CalculationRequest(
-        atoms=Atoms("Fe"),
+        atoms=atoms,
+        structure_provenance=StructureProvenance.capture(atoms),
         input_parameters=parameters,
         directory=".",
-        generation=Generation(),
         structure_id=1,
         state_id=1,
     )
