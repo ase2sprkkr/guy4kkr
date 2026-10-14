@@ -284,11 +284,14 @@ class WorkspaceController(QObject):
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        structure_id, state_id = self._results.new_structure_state(
-            atoms,
-            potential_path=potential_path,
-            empty_spheres=None,
-        )
+        if atoms is None:
+            structure_id = state_id = None
+        else:
+            structure_id, state_id = self._results.new_structure_state(
+                atoms,
+                potential_path=potential_path,
+                empty_spheres=None,
+            )
         self._workspace.atoms = atoms
         self._workspace.potential_path = potential_path
         self._workspace.structure_id = structure_id
