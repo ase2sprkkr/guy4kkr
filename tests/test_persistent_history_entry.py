@@ -38,19 +38,30 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
         def connect(self, callback) -> None:
             self._callbacks.append(callback)
 
-        def emit(self) -> None:
+        def emit(self, *args) -> None:
             for callback in tuple(self._callbacks):
-                callback()
+                callback(*args)
 
     class FakeProjectBrowserDialog:
         instances: list["FakeProjectBrowserDialog"] = []
 
-        def __init__(self, repository, job_source) -> None:
+        def __init__(
+            self,
+            repository,
+            job_source,
+            *,
+            active_project_id=None,
+        ) -> None:
             self.repository = repository
             self.job_source = job_source
+            self.active_project_id = active_project_id
             self.destroyed = _Signal()
+            self.activeProjectRequested = _Signal()
             self.delete_on_close = False
             type(self).instances.append(self)
+
+        def set_active_project(self, project_id) -> None:
+            self.active_project_id = project_id
 
         def setAttribute(self, attribute) -> None:
             self.delete_on_close = attribute == main_module.Qt.WidgetAttribute.WA_DeleteOnClose
@@ -86,6 +97,7 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
     assert len(FakeProjectBrowserDialog.instances) == 1
     assert first_dialog.repository is repository
     assert first_dialog.job_source is job_source
+    assert first_dialog.active_project_id is None
     assert first_dialog.delete_on_close
     assert [name for name, _dialog in events] == [
         "show",

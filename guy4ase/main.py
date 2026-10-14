@@ -144,6 +144,7 @@ class GuiApplication(QObject):
         project_id = self._active_project_id
         if job is None or project_id is None:
             return
+        persistent_ref = job.id
 
         # This is a concrete idempotent application operation, not repository
         # merge policy. If another instance edits the project concurrently, read
@@ -158,15 +159,15 @@ class GuiApplication(QObject):
                 logger.exception(
                     "Cannot load active project %s for persistent run %s",
                     project_id,
-                    job_id,
+                    persistent_ref,
                 )
                 return
 
-            if job_id in project.persistent_refs:
+            if persistent_ref in project.persistent_refs:
                 return
             try:
                 self.projects.save(
-                    project.add_run(job_id),
+                    project.add_run(persistent_ref),
                     expected_generation=project.generation,
                 )
                 return
@@ -176,12 +177,12 @@ class GuiApplication(QObject):
                 logger.warning(
                     "Active project %s changed repeatedly while assigning run %s",
                     project_id,
-                    job_id,
+                    persistent_ref,
                 )
             except (ProjectRepositoryError, KeyError, ValueError):
                 logger.exception(
                     "Cannot assign persistent run %s to active project %s",
-                    job_id,
+                    persistent_ref,
                     project_id,
                 )
                 return

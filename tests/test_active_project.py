@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -38,7 +39,7 @@ class _JobSource:
 
     def job_changed(self, job_id):
         self.changed.append(job_id)
-        return object()
+        return SimpleNamespace(id=str(job_id))
 
     @staticmethod
     def refresh():
