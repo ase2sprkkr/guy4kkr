@@ -347,14 +347,6 @@ class WorkflowWindow(QMainWindow):
                 f"Could not open the working directory in the system file manager:\n{path}",
             )
 
-    def _refresh_result_actions(self) -> None:
-        store = self.controller.result_store
-        self._result_actions_widget.set_workspace_state(
-            self.controller.structure_id,
-            self.controller.state_id,
-        )
-        self._result_actions_widget.set_results(store)
-
     def _add_action(
         self,
         title: str,
@@ -417,7 +409,6 @@ class WorkflowWindow(QMainWindow):
 
     def _refresh(self) -> None:
         self._clear_actions()
-        self._refresh_result_actions()
         atoms = self.controller.atoms
         if atoms is None:
             self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")

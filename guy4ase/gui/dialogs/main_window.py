@@ -107,7 +107,6 @@ class MainWindow(QMainWindow):
             self.controller.input_parameters
         )
         self._workspace_directory_changed()
-        self._refresh_result_panel()
 
     @property
     def result_actions_widget(self) -> Optional[ResultActionsWidget]:
@@ -129,9 +128,6 @@ class MainWindow(QMainWindow):
         )
         self.controller.directoryChanged.connect(
             lambda _directory: self._workspace_directory_changed()
-        )
-        self.controller.resultChanged.connect(
-            lambda _result: self._refresh_result_panel()
         )
 
     def _workspace_structure_changed(self, _atoms: Any) -> None:
@@ -768,9 +764,6 @@ class MainWindow(QMainWindow):
             self,
             persistent_job_changed=self._persistent_job_changed,
         )
-
-    def _refresh_result_panel(self) -> None:
-        self._result_actions_widget.set_results(self.controller.result_store)
 
     def _on_about(self) -> None:
         """Show about dialog."""
