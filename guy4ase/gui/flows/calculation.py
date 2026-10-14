@@ -29,13 +29,8 @@ def choose_working_directory(
     *,
     title: str = "Select Calculation Directory",
 ) -> bool:
-    """Choose and publish the workspace calculation directory."""
     start_directory = controller.directory or str(Path.home())
-    directory = QFileDialog.getExistingDirectory(
-        parent,
-        title,
-        start_directory,
-    )
+    directory = QFileDialog.getExistingDirectory(parent, title, start_directory)
     if not directory:
         return False
     controller.change_directory(str(directory))
@@ -43,7 +38,6 @@ def choose_working_directory(
 
 
 def _position_like_window(window: QWidget, window_id: str | None) -> None:
-    """Reuse another managed window's top-left corner, not its size."""
     if window_id is None:
         return
     placement = window_placement(
@@ -59,7 +53,6 @@ def _select_profile(
     *,
     position_like_window: str | None = None,
 ) -> tuple[bool, str | None]:
-    """Run the post-parameter execution step and preserve automatic profiles."""
     dialog = ProfileSelectionDialog(parent)
     _position_like_window(dialog, position_like_window)
     if dialog.exec() != dialog.DialogCode.Accepted:
@@ -76,12 +69,6 @@ def run_calculation(
     profile_name: str | None = None,
     position_like_window: str | None = None,
 ) -> SprkkrRunWindow | None:
-    """Choose execution, run a task and record its immutable provenance.
-
-    ``position_like_window`` optionally reuses another managed window's
-    top-left corner for the profile picker and the run window. Their own sizes
-    stay independent.
-    """
     task = controller.current_task()
     if task is not None and not controller.can_run_task(task):
         QMessageBox.information(
@@ -116,10 +103,7 @@ def run_calculation(
             )
 
     def finished(loaded) -> None:
-        adoption = controller.adopt_calculation_result(
-            loaded,
-            request=request,
-        )
+        adoption = controller.adopt_calculation_result(loaded, request=request)
         adoption_completed(adoption)
 
     try:
@@ -147,7 +131,6 @@ def configure_and_run_task(
     *,
     dataset_default_mode: str,
 ) -> SprkkrRunWindow | None:
-    """Configure one Guided task, commit it, choose execution, and run it."""
     try:
         if not controller.can_run_task(task):
             QMessageBox.information(
@@ -170,11 +153,7 @@ def configure_and_run_task(
         generation = controller.generation
         atoms = controller.atoms
         if atoms is None:
-            QMessageBox.information(
-                parent,
-                "No Structure",
-                "Load or create a structure first.",
-            )
+            QMessageBox.information(parent, "No Structure", "Load or create a structure first.")
             return None
 
         parameters = select_guided_input_parameters(
@@ -214,13 +193,8 @@ def recompute_result(
     parent: QWidget,
     result_id: int,
 ) -> SprkkrRunWindow | None:
-    """Re-run historical settings on the state active in the workspace.
-
-    Historical input parameters are only an editable starting point. Structure
-    and potential always come from the current workspace, so selecting an old
-    result never silently switches calculation lineage.
-    """
-    record = controller.result_store.result(result_id)
+    """Re-run historical settings on the state active in the workspace."""
+    record = controller.result_history.result(result_id)
     task = record.task_name
     if not task or record.input_parameters is None:
         return None
