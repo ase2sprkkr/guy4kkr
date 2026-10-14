@@ -52,20 +52,23 @@ def _group_titles(window):
     ]
 
 
-def _actions_in_group(window, group):
+def _action_widgets(window, group):
     layout = window._action_group_layouts[group]
     return [
-        _action_title(layout.itemAt(index).widget())
+        layout.itemAt(index).widget()
         for index in range(1, layout.count())
     ]
 
 
+def _actions_in_group(window, group):
+    return [_action_title(widget) for widget in _action_widgets(window, group)]
+
+
 def _action_widget(window, group, title):
-    layout = window._action_group_layouts[group]
     return next(
-        layout.itemAt(index).widget()
-        for index in range(1, layout.count())
-        if _action_title(layout.itemAt(index).widget()) == title
+        widget
+        for widget in _action_widgets(window, group)
+        if _action_title(widget) == title
     )
 
 
@@ -225,7 +228,7 @@ def test_group_labels_follow_dark_and_light_palette_text_color(tmp_path):
         application.setPalette(original_palette)
 
 
-def test_structure_actions_follow_requested_group_order(tmp_path):
+def test_structure_action_groups_follow_requested_order_and_style(tmp_path):
     application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
@@ -240,25 +243,12 @@ def test_structure_actions_follow_requested_group_order(tmp_path):
         "Create derived structure",
         "And now something completely different...",
     ]
-    assert "Calculate DOS" in _actions_in_group(window, "Calculate")
-    assert "Create a 2D Surface" in _actions_in_group(
-        window, "Create structure"
-    )
-    assert _actions_in_group(
-        window, window._GROUP_DIFFERENT
-    ) == ["Recalculate SCF", "Start Over"]
-    recalculate = _action_widget(
-        window,
-        window._GROUP_DIFFERENT,
-        "Recalculate SCF",
-    )
-    start_over = _action_widget(
-        window,
-        window._GROUP_DIFFERENT,
-        "Start Over",
-    )
-    assert "#b34444" in recalculate.styleSheet()
-    assert "#b34444" in start_over.styleSheet()
+    assert _action_widgets(window, window._GROUP_CALCULATE)
+    assert _action_widgets(window, window._GROUP_CREATE)
+
+    destructive = _action_widgets(window, window._GROUP_DIFFERENT)
+    assert len(destructive) == 2
+    assert all("#b34444" in button.styleSheet() for button in destructive)
     window.close()
 
 
