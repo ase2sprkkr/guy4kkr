@@ -33,11 +33,12 @@ class GuidedTaskDefinition:
     """Guy4ASE support for one backend task.
 
     Backend task existence and execution semantics remain owned by ASE2SPRKKR;
-    this descriptor only states that Guy4ASE has a Guided editor and how that
-    task is presented in the Guided workflow.
+    this descriptor only maps one Guided action to its backend task, its dialog
+    layout and its Guided-workflow presentation.
     """
 
     task: str
+    backend_task: str
     spec_builder: SpecBuilder
     workflow: WorkflowTaskPresentation
 
@@ -52,6 +53,7 @@ _GUIDED_TASKS = {
     for definition in (
         GuidedTaskDefinition(
             "scf",
+            "scf",
             scf.build_spec,
             WorkflowTaskPresentation(
                 "Converge SCF",
@@ -60,6 +62,7 @@ _GUIDED_TASKS = {
             ),
         ),
         GuidedTaskDefinition(
+            "xas",
             "xas",
             xas.build_spec,
             WorkflowTaskPresentation(
@@ -70,6 +73,7 @@ _GUIDED_TASKS = {
         ),
         GuidedTaskDefinition(
             "arpes",
+            "arpes",
             arpes.build_spec,
             WorkflowTaskPresentation(
                 "Calculate ARPES",
@@ -78,6 +82,7 @@ _GUIDED_TASKS = {
             ),
         ),
         GuidedTaskDefinition(
+            "dos",
             "dos",
             dos.build_spec,
             WorkflowTaskPresentation(
@@ -88,6 +93,7 @@ _GUIDED_TASKS = {
         ),
         GuidedTaskDefinition(
             "bsf",
+            "bsf",
             bsf.build_spec,
             WorkflowTaskPresentation(
                 "Calculate BSF",
@@ -96,6 +102,7 @@ _GUIDED_TASKS = {
             ),
         ),
         GuidedTaskDefinition(
+            "jxc",
             "jxc",
             jxc.build_spec,
             WorkflowTaskPresentation(
