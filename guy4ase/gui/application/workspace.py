@@ -9,20 +9,28 @@ from typing import Any
 
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
+from guy4ase.gui.application.materialized import Materialized
+from guy4ase.gui.application.structure_provenance import (
+    StructureProvenance,
+    materialize_structure,
+)
 from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 
 @dataclass(frozen=True)
 class Generation:
-    """Monotonic revision of the mutable workspace draft."""
+    """Revision of non-structural mutable workspace draft state.
+
+    Structure concurrency is deliberately not represented by this counter;
+    exact ``StructureProvenance`` identities are used for that purpose.
+    """
 
     value: int = 0
 
-    def next(self) -> Generation:
+    def next(self) -> "Generation":
         return Generation(self.value + 1)
 
-    def next_major(self) -> Generation:
-        """Advance the draft revision after a semantic workspace change."""
+    def next_major(self) -> "Generation":
         return self.next()
 
 
@@ -45,31 +53,64 @@ class EmptySpheresState:
         )
 
 
-@dataclass
 class WorkspaceState:
     """Inputs prepared for the next calculation and facts derived from them.
 
-    Results deliberately do not live here. ``structure_id`` identifies the
-    user-visible structure and ``state_id`` the exact structure/potential input
-    from which the next task will start. ``atoms`` is the sole physical
-    authority for that state, including an attached SPR-KKR potential when one
-    exists. ``potential_path`` is provenance metadata only and is never
-    consulted to construct a calculation input.
+    The physical structure is one ``Materialized`` owner. Its provenance is the
+    authoritative identity of the logical structure state; its ``Atoms`` object is
+    merely a mutable runtime realization which may be discarded and reconstructed.
+    Potential path/version therefore never live as independent workspace state.
 
-    Derived queries describe what the current draft *is*. Workflow capabilities
-    and decisions about what the application may do with it belong to
-    ``WorkspaceController``.
+    ``atoms`` and ``potential_path`` are compatibility read views only. New code
+    should reason about ``structure`` / ``structure_provenance``.
     """
 
-    atoms: Any | None = None
-    input_parameters: Any | None = None
-    directory: str | None = None
-    potential_path: str | None = None
-    structure_id: int | None = None
-    state_id: int | None = None
-    empty_spheres: EmptySpheresState | None = None
-    restarted: bool = False
-    generation: Generation = Generation()
+    def __init__(
+        self,
+        *,
+        structure: Materialized[Any, StructureProvenance] | None = None,
+        atoms: Any | None = None,
+        input_parameters: Any | None = None,
+        directory: str | None = None,
+        potential_path: str | None = None,
+        structure_id: int | None = None,
+        state_id: int | None = None,
+        empty_spheres: EmptySpheresState | None = None,
+        restarted: bool = False,
+        generation: Generation = Generation(),
+    ) -> None:
+        if structure is not None and (atoms is not None or potential_path is not None):
+            raise ValueError(
+                "Pass either a materialized structure or legacy atoms/potential_path, not both."
+            )
+        if structure is None and atoms is not None:
+            structure = materialize_structure(atoms, potential_path=potential_path)
+        elif atoms is None and potential_path is not None:
+            raise ValueError("A potential path without a structure is invalid.")
+
+        self.structure = structure
+        self.input_parameters = input_parameters
+        self.directory = directory
+        self.structure_id = structure_id
+        self.state_id = state_id
+        self.empty_spheres = empty_spheres
+        self.restarted = restarted
+        self.generation = generation
+
+    @property
+    def atoms(self) -> Any | None:
+        return self.structure.get() if self.structure is not None else None
+
+    @property
+    def structure_provenance(self) -> StructureProvenance | None:
+        return self.structure.provenance if self.structure is not None else None
+
+    @property
+    def potential_path(self) -> str | None:
+        provenance = self.structure_provenance
+        if provenance is None or provenance.potential_path is None:
+            return None
+        return str(provenance.potential_path)
 
     @property
     def empty_spheres_added(self) -> int | None:
@@ -83,20 +124,20 @@ class WorkspaceState:
     def is_calculation_input_complete(self) -> bool:
         """Return whether all generic inputs required to launch a task exist."""
         return (
-            self.atoms is not None
+            self.structure is not None
             and self.input_parameters is not None
             and bool(self.directory)
         )
 
     def scf_status(self) -> str | None:
         """Return the normalized SCFSTATUS of the active workspace potential."""
+        if self.restarted:
+            return "START" if self.structure is not None else None
         atoms = self.atoms
         if not isinstance(atoms, SPRKKRAtoms):
             return None
         if not atoms.has_potential():
             return None
-        if self.restarted:
-            return "START"
         status = atoms.potential.SCF_INFO.SCFSTATUS()
         if status is None:
             return None
@@ -114,10 +155,9 @@ class WorkspaceState:
         return bool(callable(checker) and checker())
 
     def has_vacuum_sites(self) -> bool:
-        if self.atoms is None:
+        atoms = self.atoms
+        if atoms is None:
             return False
-        if isinstance(self.atoms, SPRKKRAtoms):
-            return any(site.is_vacuum() for site in self.atoms.sites)
-        return any(
-            int(number) == 0 for number in getattr(self.atoms, "numbers", ())
-        )
+        if isinstance(atoms, SPRKKRAtoms):
+            return any(site.is_vacuum() for site in atoms.sites)
+        return any(int(number) == 0 for number in getattr(atoms, "numbers", ()))
