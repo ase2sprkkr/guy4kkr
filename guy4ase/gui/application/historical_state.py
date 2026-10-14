@@ -54,12 +54,7 @@ def _state_for_result(
 
 
 def _restore_state_atoms(state: CalculationStateRecord) -> Any:
-    version = state.potential_version
-    if version is not None and version.available:
-        return load_potential_version(version)
-    if state.structure_snapshot is not None:
-        return state.structure_snapshot.to_atoms()
-    raise ValueError("The selected result no longer has a reusable calculation input.")
+    return state.structure_provenance.materialize()
 
 
 def resolve_historical_state(
