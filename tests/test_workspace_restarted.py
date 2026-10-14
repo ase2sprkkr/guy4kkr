@@ -70,7 +70,7 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
 
     change = controller.apply_structure_edit(
         lambda current: current,
-        expected_generation=controller.generation,
+        expected_provenance=controller.structure_provenance,
     )
 
     assert change is DocumentChange.APPLIED
@@ -84,7 +84,7 @@ def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(
-        expected_generation=controller.generation
+        expected_state_id=previous_state_id
     )
 
     assert change is DocumentChange.APPLIED
