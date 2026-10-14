@@ -9,7 +9,7 @@ from ase import Atoms
 from guy4ase.gui.application import workspace_controller as controller_module
 from guy4ase.gui.application.result_capture import capture_result, capture_structure
 from guy4ase.gui.application.result_history import ResultHistory
-from guy4ase.gui.application.workspace import Generation
+from guy4ase.gui.application.structure_provenance import StructureProvenance
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     WorkspaceController,
@@ -40,7 +40,7 @@ def _add_structure(history: ResultHistory, symbol: str = "Fe"):
 def _assert_result_edges_exist(history: ResultHistory) -> None:
     result_ids = {record.id for record in history.results}
     for structure in history.structures:
-        del structure  # structure enumeration is part of the public aggregate contract
+        del structure
     for record in history.results:
         state = history.state_for_result(record)
         if state is None:
@@ -52,11 +52,12 @@ def _assert_result_edges_exist(history: ResultHistory) -> None:
 
 
 def test_calculation_request_requires_structure_and_state_ids():
+    atoms = Atoms("Fe")
     common = dict(
-        atoms=Atoms("Fe"),
+        atoms=atoms,
+        structure_provenance=StructureProvenance.capture(atoms),
         input_parameters=object(),
         directory=".",
-        generation=Generation(),
     )
 
     with pytest.raises(TypeError, match="structure_id"):
@@ -125,6 +126,7 @@ def test_prepared_output_state_and_result_commit_together():
     assert record.id == 1
     assert record.output_state_id == state_id + 1
     state = history.state(record.output_state_id)
+    assert state.structure_provenance is output
     assert state.produced_by_result_id == record.id
     assert history.result(record.id) is record
     _assert_result_edges_exist(history)
@@ -192,9 +194,9 @@ def test_replace_structure_history_failure_keeps_workspace_unchanged(monkeypatch
     controller = WorkspaceController()
     original = Atoms("Fe")
     controller.replace_structure(original, directory="old", restarted=True)
+    original_provenance = controller.structure_provenance
     original_structure_id = controller.structure_id
     original_state_id = controller.state_id
-    original_generation = controller.generation
 
     def fail_add_structure_state(*_args, **_kwargs):
         raise ValueError("state preparation failed")
@@ -209,42 +211,42 @@ def test_replace_structure_history_failure_keeps_workspace_unchanged(monkeypatch
         controller.replace_structure(Atoms("Cu"), directory="new", restarted=False)
 
     assert controller.atoms is original
+    assert controller.structure_provenance is original_provenance
     assert controller.directory == "old"
     assert controller.structure_id == original_structure_id
     assert controller.state_id == original_state_id
     assert controller.restarted is True
-    assert controller.generation == original_generation
 
 
-def test_replace_structure_capture_failure_keeps_workspace_and_history_unchanged(
+def test_replace_structure_materialization_failure_keeps_workspace_and_history_unchanged(
     monkeypatch,
 ):
     controller = WorkspaceController()
     original = Atoms("Fe")
     controller.replace_structure(original, directory="old")
     history_size = len(controller.result_history.structures)
-    generation = controller.generation
+    provenance = controller.structure_provenance
 
-    def fail_capture(*_args, **_kwargs):
+    def fail_materialization(*_args, **_kwargs):
         raise ValueError("structure snapshot failed")
 
-    monkeypatch.setattr(controller_module, "capture_structure", fail_capture)
+    monkeypatch.setattr(controller_module, "materialize_structure", fail_materialization)
     with pytest.raises(ValueError, match="structure snapshot failed"):
         controller.replace_structure(Atoms("Cu"), directory="new")
 
     assert controller.atoms is original
+    assert controller.structure_provenance is provenance
     assert controller.directory == "old"
-    assert controller.generation == generation
     assert len(controller.result_history.structures) == history_size
 
 
-def test_apply_structure_edit_history_failure_keeps_workspace_unchanged(monkeypatch):
+def test_apply_structure_edit_history_failure_abandons_checked_out_draft(monkeypatch):
     controller = WorkspaceController()
     original = Atoms("Fe")
     controller.replace_structure(original)
+    original_provenance = controller.structure_provenance
     original_structure_id = controller.structure_id
     original_state_id = controller.state_id
-    original_generation = controller.generation
 
     def fail_add_structure_state(*_args, **_kwargs):
         raise ValueError("state preparation failed")
@@ -258,14 +260,16 @@ def test_apply_structure_edit_history_failure_keeps_workspace_unchanged(monkeypa
     with pytest.raises(ValueError, match="state preparation failed"):
         controller.apply_structure_edit(
             lambda atoms: atoms,
-            expected_generation=original_generation,
+            expected_provenance=original_provenance,
         )
 
-    assert controller.atoms is original
+    assert controller.structure is not None
+    assert not controller.structure.is_checked_out
+    assert controller.structure_provenance is original_provenance
+    assert controller.atoms.get_chemical_symbols() == ["Fe"]
     assert controller.structure_id == original_structure_id
     assert controller.state_id == original_state_id
     assert controller.restarted is False
-    assert controller.generation == original_generation
 
 
 def test_result_capture_detaches_task_and_generic_parameters():
