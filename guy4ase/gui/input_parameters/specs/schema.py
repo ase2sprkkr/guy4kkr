@@ -102,8 +102,8 @@ class PageSpec:
 
 @dataclass(frozen=True)
 class TaskDialogSpec:
-    task: str
-    parameter_task: str
+    """Presentation-only layout for one Guided input-parameter dialog."""
+
     title: str
     pages: tuple[PageSpec, ...]
     intro: str | None = None
