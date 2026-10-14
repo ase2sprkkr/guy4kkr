@@ -29,24 +29,59 @@ def test_result_history_is_the_inner_provenance_dependency():
     assert not any(name.startswith("PyQt6") for name in imports)
 
 
-def test_result_capture_depends_on_history_data_contracts_not_the_reverse():
+def test_structure_provenance_is_not_defined_by_result_history():
+    history_tree = ast.parse(
+        (APPLICATION / "result_history.py").read_text(encoding="utf-8")
+    )
+    class_names = {
+        node.name for node in history_tree.body if isinstance(node, ast.ClassDef)
+    }
+    imports = _imports(APPLICATION / "result_history.py")
+
+    assert "StructureProvenance" not in class_names
+    assert "CapturedStructure" not in class_names
+    assert "guy4ase.gui.application.structure_provenance" in imports
+
+
+def test_result_capture_uses_structure_provenance_contract():
     capture_tree = ast.parse(
         (APPLICATION / "result_capture.py").read_text(encoding="utf-8")
     )
-    imported_names = {
+    imported_history_names = {
         alias.name
         for node in ast.walk(capture_tree)
         if isinstance(node, ast.ImportFrom)
         and node.module == "guy4ase.gui.application.result_history"
         for alias in node.names
     }
-    class_names = {
-        node.name for node in capture_tree.body if isinstance(node, ast.ClassDef)
+    imported_structure_names = {
+        alias.name
+        for node in ast.walk(capture_tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "guy4ase.gui.application.structure_provenance"
+        for alias in node.names
     }
 
-    assert {"CapturedResult", "CapturedStructure"} <= imported_names
-    assert "CapturedResult" not in class_names
-    assert "CapturedStructure" not in class_names
+    assert "CapturedResult" in imported_history_names
+    assert "StructureProvenance" in imported_structure_names
+    assert "CapturedStructure" not in imported_history_names
+
+
+def test_workspace_stores_no_independent_potential_path():
+    workspace_tree = ast.parse(
+        (APPLICATION / "workspace.py").read_text(encoding="utf-8")
+    )
+    assignments = {
+        target.attr
+        for node in ast.walk(workspace_tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    }
+
+    assert "potential_path" not in assignments
 
 
 def test_result_action_policy_does_not_observe_file_versions_directly():
