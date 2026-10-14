@@ -271,7 +271,6 @@ class WorkspaceController(QObject):
         self,
         structure: Materialized[Any, StructureProvenance] | Any | None,
         *,
-        potential_path: str | None = None,
         directory: Any = _KEEP_DIRECTORY,
         expected_provenance: StructureProvenance | None | object = _ANY_STRUCTURE,
         restarted: bool = False,
@@ -285,7 +284,7 @@ class WorkspaceController(QObject):
             materialized = (
                 structure
                 if isinstance(structure, Materialized)
-                else materialize_structure(structure, potential_path=potential_path)
+                else materialize_structure(structure)
             )
             provenance = materialized.provenance
             structure_id, state_id = self._history.add_structure_state(provenance)
@@ -328,7 +327,7 @@ class WorkspaceController(QObject):
             return DocumentChange.STALE
 
         try:
-            provenance = capture_structure(atoms, potential_path=None)
+            provenance = capture_structure(atoms)
             structure_id, state_id = self._history.add_structure_state(provenance)
         except Exception:
             owner.abandon_mutation()
@@ -487,7 +486,6 @@ class WorkspaceController(QObject):
         if isinstance(resolution, NewHistoricalPotential):
             provenance = capture_structure(
                 atoms,
-                potential_path=resolution.potential_version.path,
                 potential_version=resolution.potential_version,
             )
             target_state_id = self._history.add_child_state(
@@ -578,12 +576,7 @@ class WorkspaceController(QObject):
                 output_path=None,
                 potential_path=None,
             )
-            output_provenance = (
-                capture_structure(updated, potential_path=None)
-                if structure_changed
-                else None
-            )
-
+            output_provenance = capture_structure(updated) if structure_changed else None
             record = self._history.add_result(
                 captured,
                 structure_id=structure_id,
