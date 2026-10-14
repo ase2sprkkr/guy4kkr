@@ -18,10 +18,11 @@ def _cleanup_qt_widgets(_qt_application: QApplication):
     """Destroy top-level widgets deterministically between GUI tests.
 
     PyQt wrappers can participate in Python reference cycles even though Qt owns
-    their underlying QObject tree.  Leaving top-level widgets for cyclic GC can
-    therefore run Qt destruction at an arbitrary point in a later test.  Queue
-    deletion while the session QApplication is certainly alive and flush the
-    deferred deletes before the next test starts.
+    their underlying QObject tree. Leaving top-level widgets for cyclic GC can
+    therefore run Qt destruction at an arbitrary point in a later test. Queue
+    deletion while the session QApplication is certainly alive and flush only
+    deferred-delete events; dispatching arbitrary queued GUI callbacks here can
+    invoke slots on a partially destroyed widget tree.
     """
     yield
 
@@ -29,4 +30,3 @@ def _cleanup_qt_widgets(_qt_application: QApplication):
         widget.close()
         widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    _qt_application.processEvents()
