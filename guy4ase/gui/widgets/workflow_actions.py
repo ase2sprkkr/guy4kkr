@@ -34,13 +34,20 @@ class WorkflowActionsWidget(QWidget):
     def __init__(self, recent_files: RecentFiles, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._recent_files = recent_files
+        self._plan: WorkflowPlan | None = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(SPACE_LG)
 
+    @property
+    def plan(self) -> WorkflowPlan | None:
+        """Return the semantic plan currently represented by this view."""
+        return self._plan
+
     def set_plan(self, plan: WorkflowPlan) -> None:
         """Replace the rendered actions with ``plan`` exactly as ordered."""
         self._clear()
+        self._plan = plan
         for group in plan.groups:
             group_widget = QWidget(self)
             group_layout = QVBoxLayout(group_widget)
