@@ -21,6 +21,7 @@ from guy4ase.gui.dialogs.profiles import (
     profile_description,
 )
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
+from guy4ase.gui.input_parameters.specs.registry import is_guided_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
@@ -85,15 +86,6 @@ def run_calculation(
     stay independent. ``persistent_job_changed`` is an application observer of
     stable persistent run ids; it never receives a parallel lifecycle snapshot.
     """
-    task = controller.current_task()
-    if task is not None and not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            f"{task.upper()} cannot be run with the current workspace state.",
-        )
-        return None
-
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -154,14 +146,6 @@ def configure_and_run_task(
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
-        if not controller.can_run_task(task):
-            QMessageBox.information(
-                parent,
-                "Task Not Available",
-                f"{str(task).upper()} cannot be run with the current workspace state.",
-            )
-            return None
-
         if (
             not controller.directory
             and not choose_working_directory(
@@ -233,14 +217,11 @@ def recompute_result(
     if not task or record.input_parameters is None:
         return None
 
-    if not controller.can_run_task(task):
+    if not is_guided_task(task):
         QMessageBox.information(
             parent,
             "Task Not Available",
-            (
-                f"{task.upper()} cannot be run with the potential currently active "
-                "in the workspace."
-            ),
+            f"No Guided setup is defined for {task.upper()}.",
         )
         return None
 
