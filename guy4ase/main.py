@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -7,7 +8,11 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
-from guy4ase.gui.application.projects import ProjectRepository
+from guy4ase.gui.application.projects import (
+    ProjectConflictError,
+    ProjectRepository,
+    ProjectRepositoryError,
+)
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -16,6 +21,8 @@ from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
+
+logger = logging.getLogger(__name__)
 
 
 class GuiApplication(QObject):
@@ -50,9 +57,14 @@ class GuiApplication(QObject):
             if project_repository is not None
             else ProjectRepository()
         )
+        self._active_project_id: str | None = None
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
+
+    @property
+    def active_project_id(self) -> str | None:
+        return self._active_project_id
 
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
@@ -115,9 +127,64 @@ class GuiApplication(QObject):
         self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
 
+    def set_active_project(self, project_id: str | None) -> None:
+        """Select the project that receives subsequently created persistent runs."""
+        if project_id is not None:
+            try:
+                project_id = self.projects.project(str(project_id)).id
+            except (KeyError, ProjectRepositoryError, ValueError):
+                project_id = None
+        self._active_project_id = project_id
+        if self._project_browser is not None:
+            self._project_browser.set_active_project(project_id)
+
     def _persistent_job_changed(self, job_id: str) -> None:
-        """Reload authoritative metadata after a live persistent-run change."""
-        self.persistent_jobs.job_changed(job_id)
+        """Reload a live job and idempotently assign it to the active project."""
+        job = self.persistent_jobs.job_changed(job_id)
+        project_id = self._active_project_id
+        if job is None or project_id is None:
+            return
+
+        # This is a concrete idempotent application operation, not repository
+        # merge policy. If another instance edits the project concurrently, read
+        # the new snapshot and retry this one add-run operation once.
+        for attempt in range(2):
+            try:
+                project = self.projects.project(project_id)
+            except KeyError:
+                self.set_active_project(None)
+                return
+            except (ProjectRepositoryError, ValueError):
+                logger.exception(
+                    "Cannot load active project %s for persistent run %s",
+                    project_id,
+                    job_id,
+                )
+                return
+
+            if job_id in project.persistent_refs:
+                return
+            try:
+                self.projects.save(
+                    project.add_run(job_id),
+                    expected_generation=project.generation,
+                )
+                return
+            except ProjectConflictError:
+                if attempt == 0:
+                    continue
+                logger.warning(
+                    "Active project %s changed repeatedly while assigning run %s",
+                    project_id,
+                    job_id,
+                )
+            except (ProjectRepositoryError, KeyError, ValueError):
+                logger.exception(
+                    "Cannot assign persistent run %s to active project %s",
+                    job_id,
+                    project_id,
+                )
+                return
 
     def show_workflow_window(self) -> None:
         """Show and activate the workflow view."""
@@ -133,7 +200,9 @@ class GuiApplication(QObject):
             dialog = ProjectBrowserDialog(
                 self.projects,
                 self.persistent_jobs,
+                active_project_id=self._active_project_id,
             )
+            dialog.activeProjectRequested.connect(self.set_active_project)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(self._project_browser_closed)
             self._project_browser = dialog

@@ -40,11 +40,15 @@ class _RepositorySignals(QObject):
 class ProjectBrowserDialog(QDialog):
     """Browse and edit project-owned persistent-run references."""
 
+    activeProjectRequested = pyqtSignal(object)
+
     def __init__(
         self,
         repository: ProjectRepository,
         job_source: PersistentJobSource,
         parent: QWidget | None = None,
+        *,
+        active_project_id: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Project Browser")
@@ -57,6 +61,7 @@ class ProjectBrowserDialog(QDialog):
         self._projects: tuple[Project, ...] = ()
         self._projects_by_id: dict[str, Project] = {}
         self._selected_project_id: str | None = None
+        self._active_project_id = active_project_id
 
         self._repository_signals = _RepositorySignals(self)
         self._repository_signals.changed.connect(self._repository_changed)
@@ -78,6 +83,19 @@ class ProjectBrowserDialog(QDialog):
         project_panel = QWidget(splitter)
         project_layout = QVBoxLayout(project_panel)
         project_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.active_project_label = QLabel(project_panel)
+        project_layout.addWidget(self.active_project_label)
+        active_buttons = QHBoxLayout()
+        self.set_active_project_button = QPushButton("Set active", project_panel)
+        self.set_active_project_button.clicked.connect(self._request_selected_active)
+        active_buttons.addWidget(self.set_active_project_button)
+        self.clear_active_project_button = QPushButton("Clear active", project_panel)
+        self.clear_active_project_button.clicked.connect(
+            lambda _checked=False: self.activeProjectRequested.emit(None)
+        )
+        active_buttons.addWidget(self.clear_active_project_button)
+        project_layout.addLayout(active_buttons)
 
         project_buttons = QHBoxLayout()
         self.new_project_button = QPushButton("New", project_panel)
@@ -127,6 +145,24 @@ class ProjectBrowserDialog(QDialog):
 
         self.reload_projects()
 
+    @property
+    def active_project_id(self) -> str | None:
+        return self._active_project_id
+
+    def set_active_project(self, project_id: str | None) -> None:
+        """Render the application-owned active project selection."""
+        if project_id is not None and project_id not in self._projects_by_id:
+            project_id = None
+        self._active_project_id = project_id
+        project = self._projects_by_id.get(project_id) if project_id is not None else None
+        self.active_project_label.setText(
+            "Active project: (none)"
+            if project is None
+            else f"Active project: {project.name}"
+        )
+        self.active_project_label.setToolTip("" if project is None else project.id)
+        self._refresh_action_availability()
+
     @pyqtSlot(str)
     def _repository_changed(self, _project_id: str) -> None:
         self.reload_projects()
@@ -150,12 +186,20 @@ class ProjectBrowserDialog(QDialog):
             self.project_notice.setText(f"Project repository unavailable: {exc}")
             self.project_notice.show()
             self.jobs.set_visible_refs(())
+            self.set_active_project(None)
             self._refresh_action_availability()
             return
 
         self._projects = projects
         self._projects_by_id = {project.id: project for project in projects}
+        if (
+            self._active_project_id is not None
+            and self._active_project_id not in self._projects_by_id
+        ):
+            self._active_project_id = None
+            self.activeProjectRequested.emit(None)
         self._refresh_project_projection()
+        self.set_active_project(self._active_project_id)
 
     def _refresh_project_projection(self) -> None:
         self._populate_project_tree()
@@ -274,11 +318,20 @@ class ProjectBrowserDialog(QDialog):
             return None
         return self._projects_by_id.get(project_id)
 
+    def _request_selected_active(self) -> None:
+        project = self._selected_project()
+        if project is not None:
+            self.activeProjectRequested.emit(project.id)
+
     def _refresh_action_availability(self) -> None:
         project = self._selected_project()
         self.rename_project_button.setEnabled(project is not None)
         self.move_project_button.setEnabled(project is not None)
         self.delete_project_button.setEnabled(project is not None)
+        self.set_active_project_button.setEnabled(
+            project is not None and project.id != self._active_project_id
+        )
+        self.clear_active_project_button.setEnabled(self._active_project_id is not None)
         selected_run = self.jobs.selected_persistent_ref
         self.add_run_button.setEnabled(selected_run is not None and bool(self._projects))
         self.remove_run_button.setEnabled(project is not None and selected_run is not None)
@@ -366,6 +419,8 @@ class ProjectBrowserDialog(QDialog):
         except (ProjectRepositoryError, KeyError) as exc:
             QMessageBox.warning(self, "Delete Project Failed", str(exc))
             return
+        if project.id == self._active_project_id:
+            self.activeProjectRequested.emit(None)
         self._selected_project_id = project.parent_id
         self.reload_projects()
 
@@ -408,6 +463,8 @@ class ProjectBrowserDialog(QDialog):
         edited: Project,
         title: str,
     ) -> Project | None:
+        if edited == original:
+            return original
         try:
             saved = self._repository.save(
                 edited,
