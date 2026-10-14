@@ -1,66 +1,28 @@
-"""Calculation-result provenance independent of the mutable workspace draft."""
+"""Stateful calculation history and provenance-graph invariants."""
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from guy4ase.gui.application.file_version import FileState, FileVersion
+from guy4ase.gui.application.file_version import FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_files import capture_result_files
+from guy4ase.gui.application.result_capture import (
+    CapturedResult,
+    CapturedStructure,
+    capture_result,
+    capture_structure,
+    capture_structure_snapshot,
+    resolve_potential_version,
+)
 from guy4ase.gui.application.structure_snapshot import StructureSnapshot
 from guy4ase.gui.application.workspace import EmptySpheresState
-from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
 _KEEP_EMPTY_SPHERES = object()
 _KEEP_POTENTIAL_SOURCE = object()
 _KEEP_STRUCTURE = object()
-
-
-def _task_name(result: Any) -> str:
-    """Capture a stable normalized task identity from a result."""
-    try:
-        return str(result.task_name).strip().lower()
-    except (AttributeError, TypeError, ValueError):
-        return type(result).__name__.lower()
-
-
-def _snapshot_input_parameters(parameters: Any | None) -> Any | None:
-    """Detach small mutable input provenance from its live source object."""
-    if parameters is None:
-        return None
-
-    copier = getattr(parameters, "copy", None)
-    if callable(copier):
-        try:
-            return copier(copy_values=True)
-        except TypeError:
-            pass
-
-    if isinstance(parameters, Mapping):
-        return deepcopy(dict(parameters))
-    return deepcopy(parameters)
-
-
-def _capture_potential(path: str | Path | None) -> PotentialFileVersion | None:
-    return PotentialFileVersion.capture(path) if path is not None else None
-
-
-def _resolve_potential_version(
-    path: str | Path | None,
-    version: PotentialFileVersion | None,
-) -> PotentialFileVersion | None:
-    if version is None:
-        return _capture_potential(path)
-    if path is None:
-        raise AssertionError("A captured potential version requires its potential path.")
-    resolved_path = Path(path).expanduser().absolute()
-    if version.path != resolved_path:
-        raise AssertionError("Captured potential version does not match potential path.")
-    return version
 
 
 def _snapshot_needed(version: PotentialFileVersion | None) -> bool:
@@ -119,7 +81,7 @@ class ResultRecord:
 
 @dataclass(frozen=True)
 class _PreparedState:
-    """A fully materialized state transition that has not mutated the store yet."""
+    """A fully materialized state transition that has not mutated history yet."""
 
     state: CalculationStateRecord
     structure: StructureRecord | None = None
@@ -127,7 +89,12 @@ class _PreparedState:
 
 
 class ResultStore:
-    """Own exact provenance independently of its user-facing tree projection."""
+    """Own the live in-session result history and its provenance graph.
+
+    Filesystem/backend capture happens before the private preparation/commit
+    boundary. Once a captured value enters ``_prepare_*`` or ``_commit_*``, the
+    remaining work is pure in-memory graph validation and mutation.
+    """
 
     def __init__(self) -> None:
         self._next_structure_id = 1
@@ -139,9 +106,6 @@ class ResultStore:
         self._results: dict[int, ResultRecord] = {}
         self._state_children: dict[int, list[int]] = {}
         self._result_ids_by_state: dict[int, list[int]] = {}
-        self._unstructured_result_ids: list[int] = []
-        self._structure_branches: dict[int, list[int]] = {}
-        self._imported_result_ids_by_directory: dict[str | None, list[int]] = {}
 
     def __len__(self) -> int:
         return len(self._results)
@@ -167,33 +131,6 @@ class ResultStore:
     def structures(self) -> tuple[StructureRecord, ...]:
         return tuple(self._structures.values())
 
-    @property
-    def import_directories(self) -> tuple[str | None, ...]:
-        """Return imported-result directories in first-import order."""
-        return tuple(self._imported_result_ids_by_directory)
-
-    @property
-    def unstructured_results(self) -> tuple[ResultRecord, ...]:
-        return tuple(
-            self._results[result_id]
-            for result_id in self._unstructured_result_ids
-        )
-
-    def imported_results(self, directory: str | None) -> tuple[ResultRecord, ...]:
-        """Return results explicitly imported from one source directory."""
-        return tuple(
-            self._results[result_id]
-            for result_id in self._imported_result_ids_by_directory.get(directory, ())
-        )
-
-    def structure_results(self, structure_id: int) -> tuple[ResultRecord, ...]:
-        """Return native results for one structure in recording order."""
-        return tuple(
-            record
-            for record in sorted(self._results.values(), key=lambda item: item.id)
-            if record.structure_id == structure_id and not record.imported
-        )
-
     def structure(self, structure_id: int) -> StructureRecord:
         return self._structures[structure_id]
 
@@ -205,48 +142,21 @@ class ResultStore:
 
     def result_for_external_source(
         self,
-        output_path: str | Path | None,
+        output_version: FileVersion | None,
         *,
         persistent_ref: str | None = None,
     ) -> ResultRecord | None:
-        """Return an already recorded result for the same persistent/source version.
-
-        A persistent run id is the strongest identity. Otherwise the exact
-        captured contents of the source output file identify an external result.
-        Re-importing an unchanged file therefore reuses its record, while a file
-        that was overwritten with new contents may legitimately create a new one.
-        """
+        """Return a result already recorded from the same captured source."""
         if persistent_ref is not None:
             for record in self.results:
                 if record.persistent_ref == persistent_ref:
                     return record
 
-        if output_path is None:
+        if output_version is None:
             return None
-        path = Path(output_path).expanduser().resolve()
         for record in self.results:
-            version = record.output_version
-            if version is None or version.path != path:
-                continue
-            if version.state() is FileState.CURRENT:
+            if record.output_version == output_version:
                 return record
-        return None
-
-    def current_value_for_result_file(self, result_file: FileVersion) -> Any | None:
-        """Return the known result value that owns the file currently at this path."""
-        for record in self.results:
-            for name, candidate in record.result_files.items():
-                if candidate.path != result_file.path:
-                    continue
-                if candidate.state() is not FileState.CURRENT:
-                    continue
-                try:
-                    values = record.result.output_values
-                    for key, value in values.items():
-                        if str(key) == name:
-                            return value
-                except Exception:  # noqa: BLE001 - optional presentation metadata
-                    continue
         return None
 
     def state_for_result(self, record: ResultRecord) -> CalculationStateRecord | None:
@@ -278,41 +188,6 @@ class ResultStore:
         state = self.state_for_result(record)
         return state.branch_id if state is not None else None
 
-    def branch_ids(self, structure_id: int) -> tuple[int, ...]:
-        """Return branches which currently contain at least one native result."""
-        used = {
-            branch_id
-            for record in self._results.values()
-            if record.structure_id == structure_id and not record.imported
-            for branch_id in (self.branch_id_for_result(record),)
-            if branch_id is not None
-        }
-        return tuple(
-            branch_id
-            for branch_id in self._structure_branches.get(structure_id, ())
-            if branch_id in used
-        )
-
-    def branch_number(self, structure_id: int, branch_id: int) -> int:
-        return self._structure_branches[structure_id].index(branch_id) + 1
-
-    def results_in_branch(
-        self, structure_id: int, branch_id: int
-    ) -> tuple[ResultRecord, ...]:
-        """Return one branch in calculation order."""
-        return tuple(
-            sorted(
-                (
-                    record
-                    for record in self._results.values()
-                    if record.structure_id == structure_id
-                    and not record.imported
-                    and self.branch_id_for_result(record) == branch_id
-                ),
-                key=lambda record: record.id,
-            )
-        )
-
     def results_for_state(self, state_id: int) -> tuple[ResultRecord, ...]:
         return tuple(
             self._results[result_id]
@@ -329,35 +204,27 @@ class ResultStore:
 
     def _prepare_structure_state(
         self,
-        atoms: Any,
+        captured: CapturedStructure,
         *,
-        potential_path: str | None,
-        potential_version: PotentialFileVersion | None = None,
         empty_spheres: EmptySpheresState | None = None,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> _PreparedState:
-        resolved_version = _resolve_potential_version(potential_path, potential_version)
-        formula = structure_formula(atoms) or type(atoms).__name__
-        snapshot = (
-            StructureSnapshot.capture(atoms)
-            if _snapshot_needed(resolved_version)
-            else None
-        )
         source_result_id = (
             potential_source_result_id
-            if resolved_version is not None and resolved_version.available
+            if captured.potential_version is not None
+            and captured.potential_version.available
             else None
         )
-        structure = StructureRecord(self._next_structure_id, formula)
+        structure = StructureRecord(self._next_structure_id, captured.formula)
         state = CalculationStateRecord(
             id=self._next_state_id,
             structure_id=structure.id,
             parent_id=None,
             branch_id=self._next_branch_id,
-            potential_path=potential_path,
-            potential_version=resolved_version,
-            structure_snapshot=snapshot,
+            potential_path=captured.potential_path,
+            potential_version=captured.potential_version,
+            structure_snapshot=captured.structure_snapshot,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=source_result_id,
@@ -387,10 +254,21 @@ class ResultStore:
             resolved_version = parent.potential_version
         else:
             resolved_path = potential_path
-            resolved_version = _resolve_potential_version(
-                resolved_path,
-                potential_version,
-            )
+            resolved_version = potential_version
+            if resolved_path is not None and resolved_version is None:
+                raise AssertionError(
+                    "An explicit potential path must be captured before history mutation."
+                )
+            if resolved_version is not None:
+                if resolved_path is None:
+                    raise AssertionError(
+                        "A captured potential version requires its potential path."
+                    )
+                if resolved_version.path != Path(resolved_path).expanduser().resolve():
+                    raise AssertionError(
+                        "Captured potential version does not match potential path."
+                    )
+
         resolved_source = (
             parent.potential_source_result_id
             if potential_source_result_id is _KEEP_POTENTIAL_SOURCE and reuses_potential
@@ -443,12 +321,12 @@ class ResultStore:
         state = prepared.state
         if state.id != self._next_state_id:
             raise AssertionError(
-                "Prepared state no longer matches the store state counter."
+                "Prepared state no longer matches the history state counter."
             )
         if prepared.structure is not None:
             if prepared.structure.id != self._next_structure_id:
                 raise AssertionError(
-                    "Prepared structure no longer matches the store structure counter."
+                    "Prepared structure no longer matches the history structure counter."
                 )
             if state.structure_id != prepared.structure.id:
                 raise AssertionError("Prepared state belongs to the wrong structure.")
@@ -456,7 +334,7 @@ class ResultStore:
             raise AssertionError("Prepared state belongs to an unknown structure.")
         if prepared.creates_branch and state.branch_id != self._next_branch_id:
             raise AssertionError(
-                "Prepared state no longer matches the store branch counter."
+                "Prepared state no longer matches the history branch counter."
             )
 
     def _commit_prepared_state(self, prepared: _PreparedState) -> None:
@@ -467,9 +345,6 @@ class ResultStore:
             self._structures[structure.id] = structure
             self._next_structure_id += 1
         if prepared.creates_branch:
-            self._structure_branches.setdefault(state.structure_id, []).append(
-                state.branch_id
-            )
             self._next_branch_id += 1
         self._states[state.id] = state
         self._next_state_id += 1
@@ -486,10 +361,13 @@ class ResultStore:
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> tuple[int, int]:
-        prepared = self._prepare_structure_state(
+        captured = capture_structure(
             atoms,
             potential_path=potential_path,
             potential_version=potential_version,
+        )
+        prepared = self._prepare_structure_state(
+            captured,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=potential_source_result_id,
@@ -510,10 +388,16 @@ class ResultStore:
         potential_source_result_id: int | None | object = _KEEP_POTENTIAL_SOURCE,
         new_branch: bool = False,
     ) -> int:
+        captured_version = potential_version
+        if potential_path is not _KEEP_POTENTIAL:
+            captured_version = resolve_potential_version(
+                potential_path,
+                potential_version,
+            )
         prepared = self._prepare_child_state(
             parent_id,
             potential_path=potential_path,
-            potential_version=potential_version,
+            potential_version=captured_version,
             structure_snapshot=structure_snapshot,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
@@ -531,7 +415,7 @@ class ResultStore:
     ) -> None:
         if record.id != self._next_result_id:
             raise AssertionError(
-                "Prepared result no longer matches the store result counter."
+                "Prepared result no longer matches the history result counter."
             )
         if prepared_state is not None:
             self._validate_prepared_state(prepared_state)
@@ -549,17 +433,98 @@ class ResultStore:
         self._next_result_id += 1
 
         state_id = record.output_state_id or record.input_state_id
-        if record.imported:
-            imported_ids = self._imported_result_ids_by_directory.setdefault(
-                record.directory, []
-            )
-            imported_ids.append(record.id)
-        elif state_id is None:
-            self._unstructured_result_ids.append(record.id)
-        else:
+        if state_id is not None:
             self._result_ids_by_state.setdefault(state_id, []).append(record.id)
-        if record.imported and state_id is not None:
-            self._result_ids_by_state.setdefault(state_id, []).append(record.id)
+
+    def _add_captured_result(
+        self,
+        captured: CapturedResult,
+        *,
+        structure_id: int | None,
+        input_state_id: int | None,
+        directory: str | None,
+        persistent_ref: str | None,
+        restart_scf: bool,
+        output_structure: CapturedStructure | None,
+        output_structure_snapshot: StructureSnapshot | None | object,
+        output_potential_path: str | None,
+        output_potential_version: PotentialFileVersion | None,
+        output_empty_spheres: EmptySpheresState | None | object,
+        imported: bool,
+    ) -> ResultRecord:
+        input_state = self.state(input_state_id) if input_state_id is not None else None
+        result_id = self._next_result_id
+        potential_source_result_id = (
+            result_id
+            if captured.task_name == "scf" and output_potential_path is not None
+            else None
+        )
+
+        prepared_state = None
+        output_state_id = None
+        produces_state = (
+            output_structure is not None
+            or output_structure_snapshot is not _KEEP_STRUCTURE
+            or output_empty_spheres is not _KEEP_EMPTY_SPHERES
+        )
+        if produces_state:
+            if structure_id is None:
+                if output_structure is None:
+                    raise ValueError("A new structure state requires atoms.")
+                root_empty_spheres = (
+                    None
+                    if output_empty_spheres is _KEEP_EMPTY_SPHERES
+                    else output_empty_spheres
+                )
+                prepared_state = self._prepare_structure_state(
+                    output_structure,
+                    empty_spheres=root_empty_spheres,
+                    produced_by_result_id=result_id,
+                    potential_source_result_id=potential_source_result_id,
+                )
+                assert prepared_state.structure is not None
+                structure_id = prepared_state.structure.id
+            else:
+                if input_state is None:
+                    raise ValueError("A derived result requires an input state.")
+                child_potential: str | None | object = output_potential_path
+                child_version = output_potential_version
+                if (
+                    output_structure_snapshot is _KEEP_STRUCTURE
+                    and output_potential_path == input_state.potential_path
+                ):
+                    child_potential = _KEEP_POTENTIAL
+                    child_version = None
+                prepared_state = self._prepare_child_state(
+                    input_state_id,
+                    potential_path=child_potential,
+                    potential_version=child_version,
+                    structure_snapshot=output_structure_snapshot,
+                    empty_spheres=output_empty_spheres,
+                    produced_by_result_id=result_id,
+                    potential_source_result_id=potential_source_result_id,
+                )
+            output_state_id = prepared_state.state.id
+
+        record = ResultRecord(
+            id=result_id,
+            result=captured.result,
+            task_name=captured.task_name,
+            structure_id=structure_id,
+            input_state_id=input_state_id,
+            output_state_id=output_state_id,
+            input_parameters=captured.input_parameters,
+            directory=directory,
+            result_files=captured.result_files,
+            persistent_ref=persistent_ref,
+            restart_scf=restart_scf,
+            output_path=captured.output_path,
+            output_version=captured.output_version,
+            potential_path=captured.potential_path,
+            imported=imported,
+        )
+        self._commit_result(record, prepared_state=prepared_state)
+        return record
 
     def add_result(
         self,
@@ -593,86 +558,55 @@ class ResultStore:
                     f"{input_state.structure_id}, not {structure_id}."
                 )
 
-        # Complete everything that can call user/backend code or inspect mutable
-        # files before committing any counters, states or indexes.
-        task_name = _task_name(result)
-        parameter_snapshot = _snapshot_input_parameters(input_parameters)
-        result_files = capture_result_files(result)
-        output_version = (
-            FileVersion.capture(output_path) if output_path is not None else None
-        )
-        result_id = self._next_result_id
-        potential_source_result_id = (
-            result_id
-            if task_name == "scf" and output_potential_path is not None
-            else None
+        # Capture everything that can call backend/user code or inspect mutable
+        # files before entering the in-memory history mutation boundary.
+        captured = capture_result(
+            result,
+            input_parameters=input_parameters,
+            output_path=output_path,
+            potential_path=potential_path,
         )
 
-        prepared_state = None
-        output_state_id = None
+        output_structure = None
+        output_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE
+        output_version = None
         produces_state = (
             output_atoms is not None
             or output_empty_spheres is not _KEEP_EMPTY_SPHERES
         )
         if produces_state:
             if structure_id is None:
-                root_empty_spheres = (
-                    None
-                    if output_empty_spheres is _KEEP_EMPTY_SPHERES
-                    else output_empty_spheres
-                )
                 if output_atoms is None:
                     raise ValueError("A new structure state requires atoms.")
-                prepared_state = self._prepare_structure_state(
+                output_structure = capture_structure(
                     output_atoms,
                     potential_path=output_potential_path,
-                    empty_spheres=root_empty_spheres,
-                    produced_by_result_id=result_id,
-                    potential_source_result_id=potential_source_result_id,
                 )
-                assert prepared_state.structure is not None
-                structure_id = prepared_state.structure.id
             else:
-                if input_state is None:
-                    raise ValueError("A derived result requires an input state.")
-                child_potential: str | None | object = output_potential_path
-                if (
-                    output_atoms is None
-                    and output_potential_path == input_state.potential_path
-                ):
-                    child_potential = _KEEP_POTENTIAL
-                child_snapshot: StructureSnapshot | None | object = _KEEP_STRUCTURE
                 if output_atoms is not None:
-                    child_snapshot = StructureSnapshot.capture(output_atoms)
-                prepared_state = self._prepare_child_state(
-                    input_state_id,
-                    potential_path=child_potential,
-                    structure_snapshot=child_snapshot,
-                    empty_spheres=output_empty_spheres,
-                    produced_by_result_id=result_id,
-                    potential_source_result_id=potential_source_result_id,
+                    output_snapshot = capture_structure_snapshot(output_atoms)
+                reuses_potential = (
+                    output_atoms is None
+                    and input_state is not None
+                    and output_potential_path == input_state.potential_path
                 )
-            output_state_id = prepared_state.state.id
+                if not reuses_potential:
+                    output_version = resolve_potential_version(output_potential_path)
 
-        record = ResultRecord(
-            id=result_id,
-            result=result,
-            task_name=task_name,
+        return self._add_captured_result(
+            captured,
             structure_id=structure_id,
             input_state_id=input_state_id,
-            output_state_id=output_state_id,
-            input_parameters=parameter_snapshot,
             directory=directory,
-            result_files=result_files,
             persistent_ref=persistent_ref,
             restart_scf=restart_scf,
-            output_path=output_path,
-            output_version=output_version,
-            potential_path=potential_path,
+            output_structure=output_structure,
+            output_structure_snapshot=output_snapshot,
+            output_potential_path=output_potential_path,
+            output_potential_version=output_version,
+            output_empty_spheres=output_empty_spheres,
             imported=imported,
         )
-        self._commit_result(record, prepared_state=prepared_state)
-        return record
 
     def add_external_result(
         self,
@@ -686,76 +620,72 @@ class ResultStore:
         produces_state: bool,
         persistent_ref: str | None = None,
     ) -> ResultRecord:
+        captured = capture_result(
+            result,
+            input_parameters=input_parameters,
+            output_path=output_path,
+            potential_path=potential_path,
+        )
         existing = self.result_for_external_source(
-            output_path,
+            captured.output_version,
             persistent_ref=persistent_ref,
         )
         if existing is not None:
             return existing
 
         if atoms is None:
-            return self.add_result(
-                result,
+            return self._add_captured_result(
+                captured,
                 structure_id=None,
                 input_state_id=None,
-                input_parameters=input_parameters,
                 directory=directory,
                 persistent_ref=persistent_ref,
-                output_path=output_path,
-                potential_path=potential_path,
+                restart_scf=False,
+                output_structure=None,
+                output_structure_snapshot=_KEEP_STRUCTURE,
+                output_potential_path=None,
+                output_potential_version=None,
+                output_empty_spheres=_KEEP_EMPTY_SPHERES,
                 imported=True,
             )
 
-        if produces_state:
-            return self.add_result(
-                result,
-                structure_id=None,
-                input_state_id=None,
-                input_parameters=input_parameters,
-                directory=directory,
-                persistent_ref=persistent_ref,
-                output_path=output_path,
-                potential_path=potential_path,
-                output_atoms=atoms,
-                output_potential_path=(str(potential_path) if potential_path else None),
-                imported=True,
-            )
-
-        task_name = _task_name(result)
-        parameter_snapshot = _snapshot_input_parameters(input_parameters)
-        result_files = capture_result_files(result)
-        output_version = (
-            FileVersion.capture(output_path) if output_path is not None else None
-        )
-        prepared_state = self._prepare_structure_state(
+        captured_structure = capture_structure(
             atoms,
             potential_path=(str(potential_path) if potential_path else None),
         )
+        if produces_state:
+            return self._add_captured_result(
+                captured,
+                structure_id=None,
+                input_state_id=None,
+                directory=directory,
+                persistent_ref=persistent_ref,
+                restart_scf=False,
+                output_structure=captured_structure,
+                output_structure_snapshot=_KEEP_STRUCTURE,
+                output_potential_path=(str(potential_path) if potential_path else None),
+                output_potential_version=captured_structure.potential_version,
+                output_empty_spheres=_KEEP_EMPTY_SPHERES,
+                imported=True,
+            )
+
+        prepared_state = self._prepare_structure_state(captured_structure)
         assert prepared_state.structure is not None
         record = ResultRecord(
             id=self._next_result_id,
-            result=result,
-            task_name=task_name,
+            result=captured.result,
+            task_name=captured.task_name,
             structure_id=prepared_state.structure.id,
             input_state_id=prepared_state.state.id,
             output_state_id=None,
-            input_parameters=parameter_snapshot,
+            input_parameters=captured.input_parameters,
             directory=directory,
-            result_files=result_files,
+            result_files=captured.result_files,
             persistent_ref=persistent_ref,
-            output_path=output_path,
-            output_version=output_version,
-            potential_path=potential_path,
+            output_path=captured.output_path,
+            output_version=captured.output_version,
+            potential_path=captured.potential_path,
             imported=True,
         )
         self._commit_result(record, prepared_state=prepared_state)
         return record
-
-    def branch_path(self, record: ResultRecord) -> tuple[int, ...]:
-        if record.structure_id is None:
-            return ()
-        branch_id = self.branch_id_for_result(record)
-        branches = self.branch_ids(record.structure_id)
-        if branch_id is None or len(branches) <= 1:
-            return ()
-        return (self.branch_number(record.structure_id, branch_id),)
