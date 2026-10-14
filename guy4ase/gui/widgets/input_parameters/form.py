@@ -183,7 +183,7 @@ class GuidedFormRenderer(QObject):
                 self.session.option(path)
             except (AttributeError, KeyError) as exc:
                 raise ValueError(
-                    f"The {self.spec.task.upper()} guided-dialog specification refers "
+                    f"The {self.spec.title!r} guided-dialog specification refers "
                     f"to missing parameter {'.'.join(path)}."
                 ) from exc
 
