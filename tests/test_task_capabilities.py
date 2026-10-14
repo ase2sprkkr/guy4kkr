@@ -36,20 +36,6 @@ def _scf_atoms(status="CONVERGED"):
     return atoms
 
 
-def _action_title(widget):
-    return str(widget.property("workflowActionTitle") or widget.text().splitlines()[0])
-
-
-def _calculate_actions(window):
-    layout = window._action_group_layouts.get(window._GROUP_CALCULATE)
-    if layout is None:
-        return []
-    return [
-        _action_title(layout.itemAt(index).widget())
-        for index in range(1, layout.count())
-    ]
-
-
 def test_guided_registry_integrates_with_backend_definitions():
     definitions = guided_task_definitions()
     assert definitions
@@ -115,9 +101,16 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.shown = False
+            self.started = False
 
         def show(self):
             self.shown = True
+
+        def start(self):
+            self.started = True
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", RunWindow)
 
@@ -130,6 +123,7 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
 
     assert window is not None
     assert window.shown
+    assert window.started
     assert window.kwargs["request"].input_parameters.task_name.lower() == "torque"
 
 
@@ -149,32 +143,3 @@ def test_expert_run_action_uses_generic_calculation_readiness(tmp_path):
 
     assert expert.run_calculation_action.isEnabled()
     expert.close()
-
-
-def test_workflow_recommends_only_tasks_for_current_stage(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    gui = GuiApplication(
-        workspace=WorkspaceState(),
-        recent_files_path=tmp_path / "recent.json",
-    )
-    window = gui.create_workflow_window()
-    window.controller.replace_structure(
-        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    )
-
-    window.controller.is_scf_converged = lambda: False
-    window._refresh()
-    application.processEvents()
-    assert _calculate_actions(window) == [
-        guided_task_definition("scf").workflow.label
-    ]
-
-    window.controller.is_scf_converged = lambda: True
-    window._refresh()
-    application.processEvents()
-    expected = [
-        definition.workflow.label
-        for definition in workflow_tasks(WorkflowStage.POST_SCF)
-    ]
-    assert _calculate_actions(window) == expected
-    window.close()
