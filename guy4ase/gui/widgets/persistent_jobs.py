@@ -359,7 +359,8 @@ class PersistentJobsWidget(QWidget):
     def _show_job(self, job: PersistentJob | None) -> None:
         previous_job_id = self._selected_job_id
         next_job_id = None if job is None else job.id
-        if next_job_id != previous_job_id:
+        selection_changed = next_job_id != previous_job_id
+        if selection_changed:
             self._clear_loaded_result()
 
         if job is None:
@@ -381,7 +382,8 @@ class PersistentJobsWidget(QWidget):
             self.message_value.hide()
             self.monitor_button.hide()
             self.load_result_button.hide()
-            self.jobSelected.emit(None)
+            if selection_changed:
+                self.jobSelected.emit(None)
             return
 
         self._selected_job_id = job.id
@@ -409,7 +411,8 @@ class PersistentJobsWidget(QWidget):
         self.message_value.setVisible(bool(job.message))
         self.monitor_button.setVisible(job.attachable and self._supports_attach)
         self.load_result_button.setVisible(job.is_final and self._supports_results)
-        self.jobSelected.emit(job.id)
+        if selection_changed:
+            self.jobSelected.emit(job.id)
 
     def _request_monitor(self) -> None:
         job_id = self._selected_job_id

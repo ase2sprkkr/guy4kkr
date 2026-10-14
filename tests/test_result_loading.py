@@ -168,6 +168,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
     output = tmp_path / "external.out"
     missing = tmp_path / "missing.pot"
     result = SimpleNamespace(
+        task_name="scf",
         files={"output": output.name, "converged": missing.name},
         directory=str(tmp_path),
         produces_potential=True,

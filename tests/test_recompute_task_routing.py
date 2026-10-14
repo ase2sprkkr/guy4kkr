@@ -67,5 +67,5 @@ def test_non_guided_result_recompute_uses_expert_editor(monkeypatch):
         controller,
         recent_files,
         parent,
-        {"position_like_window": "expert-input", "persistent_job_changed": None},
+        {"position_like_window": "expert-input", "track_launch_monitor": None},
     )]

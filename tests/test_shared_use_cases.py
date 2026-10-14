@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from ase import Atoms
 
@@ -123,7 +125,10 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
 
 
 def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
-    backend_result = object()
+    backend_result = SimpleNamespace(
+        task_name="scf",
+        produces_potential=False,
+    )
     output_path = tmp_path / "Fe.out"
     loaded = LoadedResult(
         result=backend_result,

@@ -246,18 +246,18 @@ def test_structure_actions_follow_requested_group_order(tmp_path):
     )
     assert _actions_in_group(
         window, window._GROUP_DIFFERENT
-    ) == ["Recalculate SCF", "Start Over"]
-    recalculate = _action_widget(
+    ) == ["Use for New Calculation", "Start Over"]
+    use_for_new = _action_widget(
         window,
         window._GROUP_DIFFERENT,
-        "Recalculate SCF",
+        "Use for New Calculation",
     )
     start_over = _action_widget(
         window,
         window._GROUP_DIFFERENT,
         "Start Over",
     )
-    assert "#b34444" in recalculate.styleSheet()
+    assert "#b34444" in use_for_new.styleSheet()
     assert "#b34444" in start_over.styleSheet()
     window.close()
 

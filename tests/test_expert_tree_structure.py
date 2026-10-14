@@ -62,7 +62,7 @@ def test_table_shape_tracks_rows_and_cell_shapes():
     assert describe_value(grammar, one_row) != describe_value(grammar, two_rows)
 
 
-def test_repeated_dict_shape_tracks_keys_and_append_draft():
+def test_repeated_dict_shape_tracks_keys_without_promoting_append_draft():
     grammar = Array(Real(), length=2)
 
     first = describe_repeated(
@@ -86,9 +86,10 @@ def test_repeated_dict_shape_tracks_keys_and_append_draft():
 
     assert first == scalar_change
     assert first != extra_key
-    # Dict-style repeated fixed arrays render an empty append occurrence whose
-    # component editors form a presentation-only draft.
-    assert first.contains_draft
+    # The empty append occurrence is presentation-only.  It must not mark the
+    # represented model subtree as draft and force stable existing editors to
+    # be rebuilt after scalar value changes.
+    assert not first.contains_draft
 
 
 def test_repeated_sequence_fixed_array_has_no_append_component_draft():

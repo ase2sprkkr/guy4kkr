@@ -115,9 +115,17 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.shown = False
+            self.started = False
+            self.closed = False
 
         def show(self):
             self.shown = True
+
+        def start(self):
+            self.started = True
+
+        def close(self):
+            self.closed = True
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", RunWindow)
 
@@ -130,6 +138,8 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
 
     assert window is not None
     assert window.shown
+    assert window.started
+    assert not window.closed
     assert window.kwargs["request"].input_parameters.task_name.lower() == "torque"
 
 
@@ -166,7 +176,8 @@ def test_workflow_recommends_only_tasks_for_current_stage(tmp_path):
     window._refresh()
     application.processEvents()
     assert _calculate_actions(window) == [
-        guided_task_definition("scf").workflow.label
+        "Add Empty Spheres",
+        guided_task_definition("scf").workflow.label,
     ]
 
     window.controller.is_scf_converged = lambda: True
