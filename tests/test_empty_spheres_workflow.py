@@ -6,10 +6,10 @@ from ase2sprkkr import SPRKKRAtoms
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
+from guy4ase.gui.application.workspace_actions import EmptySpheresAction
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
-    EmptySpheresAction,
     WorkspaceController,
 )
 

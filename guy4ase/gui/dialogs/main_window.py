@@ -16,10 +16,8 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import (
-    EmptySpheresAction,
-    WorkspaceController,
-)
+from guy4ase.gui.application.workspace_actions import EmptySpheresAction
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.dialogs.structures.transforms import (
@@ -32,12 +30,12 @@ from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
+from guy4ase.gui.presentation import recent_launch
 from guy4ase.gui.widgets.browser_panel import BrowserPanel
 from guy4ase.gui.widgets.expert_side_panel import ExpertSidePanel
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     populate_recent_menu,
-    recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.gui.widgets.structure_overview import StructureOverviewWidget

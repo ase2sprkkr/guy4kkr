@@ -20,6 +20,7 @@ from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
+from guy4ase.gui.application.workspace_actions import EmptySpheresAction
 
 _KEEP_DIRECTORY = object()
 
@@ -35,13 +36,6 @@ class DocumentChange(Enum):
 
     APPLIED = auto()
     STALE = auto()
-
-
-class EmptySpheresAction(Enum):
-    """Recommended empty-sphere action for the current workspace draft."""
-
-    ADD = auto()
-    RECALCULATE = auto()
 
 
 class CalculationNotReady(RuntimeError):
