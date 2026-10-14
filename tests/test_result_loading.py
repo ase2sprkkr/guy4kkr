@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from ase import Atoms
 
 from guy4ase.gui.application import result_loading as result_loading_module
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import load_result, load_result_file
+from guy4ase.gui.application.structure_provenance import materialize_structure
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
@@ -51,6 +52,8 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
     assert loaded.potential_path == converged.resolve()
     assert loaded.potential_version is not None
     assert loaded.potential_version.path == converged.resolve()
+    assert loaded.structure is not None
+    assert loaded.structure.provenance.potential_version is loaded.potential_version
     assert loaded.atoms is atoms
     assert loaded.potential_error is None
     assert loaded.directory == str(run_directory.resolve())
@@ -156,6 +159,8 @@ def test_missing_output_path_is_advisory_provenance(tmp_path):
     loaded = load_result(result, fallback_directory=tmp_path)
 
     assert loaded.output_path == missing_output.resolve()
+    assert loaded.output_version is not None
+    assert not loaded.output_version.available
     assert not missing_output.exists()
     assert loaded.potential_error is None
 
@@ -164,6 +169,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
     tmp_path, monkeypatch
 ):
     output = tmp_path / "external.out"
+    output.write_text("output", encoding="utf-8")
     missing = tmp_path / "missing.pot"
     result = SimpleNamespace(
         files={"output": output.name, "converged": missing.name},
@@ -176,10 +182,14 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
         staticmethod(lambda _path: result),
     )
     original_atoms = Atoms("Cu")
-    controller = WorkspaceController(
-        WorkspaceState(atoms=original_atoms, potential_path="Cu.pot")
+    old_potential = tmp_path / "Cu.pot"
+    old_potential.write_text("potential", encoding="utf-8")
+    original_structure = materialize_structure(
+        original_atoms,
+        potential_version=PotentialFileVersion.capture(old_potential),
     )
-    original_path = str(Path("Cu.pot").resolve())
+    controller = WorkspaceController(WorkspaceState(structure=original_structure))
+    original_path = str(old_potential.resolve())
 
     adoption = controller.adopt_external_result(load_result_file(output))
 
@@ -192,14 +202,21 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
 
 def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatch):
     atoms = Atoms("Cu")
+    potential = tmp_path / "Cu.pot"
+    potential.write_text("potential", encoding="utf-8")
+    structure = materialize_structure(
+        atoms,
+        potential_version=PotentialFileVersion.capture(potential),
+    )
     workspace = WorkspaceState(
-        atoms=atoms,
+        structure=structure,
         directory="original",
-        potential_path="Cu.pot",
     )
     controller = WorkspaceController(workspace)
     generation = controller.generation
-    original_path = str(Path("Cu.pot").resolve())
+    original_path = str(potential.resolve())
+    broken = tmp_path / "broken.out"
+    broken.write_text("broken", encoding="utf-8")
     monkeypatch.setattr(
         result_loading_module.TaskResult,
         "from_file",
@@ -207,7 +224,7 @@ def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatc
     )
 
     with pytest.raises(ValueError, match="broken output"):
-        load_result_file(tmp_path / "broken.out")
+        load_result_file(broken)
 
     assert controller.generation == generation
     assert controller.atoms is atoms
