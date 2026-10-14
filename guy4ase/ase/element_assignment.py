@@ -294,8 +294,7 @@ class ElementAssignmentDraft:
                 site_type.occupation.set(
                     self._occupation_with_preserved_types(
                         site_type, occupation
-                    ),
-                    update_atoms=False,
+                    )
                 )
             result_sites.extend(
                 Site(site_type) for _position in draft_site.positions
