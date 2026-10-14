@@ -112,9 +112,7 @@ def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
     assert request.state_id == controller.state_id
 
 
-def test_backend_preparation_does_not_block_new_workspace_version(
-    monkeypatch, tmp_path
-):
+def test_backend_preparation_does_not_block_new_workspace_version(monkeypatch, tmp_path):
     preparation_entered = Event()
     release_preparation = Event()
     process_entered = Event()
@@ -212,8 +210,8 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     adoption = controller.adopt_calculation_result(loaded, request=request)
     assert not adoption.workspace_updated
     assert controller.atoms is replacement
-    assert controller.result_store.results[0].result is result
-    assert controller.result_store.results[0].structure_id == request.structure_id
+    assert controller.result_history.results[0].result is result
+    assert controller.result_history.results[0].structure_id == request.structure_id
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
@@ -277,7 +275,7 @@ def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp
 
     assert not adoption.workspace_updated
     assert controller.atoms is original_structure
-    assert controller.result_store.results[0].result is result
+    assert controller.result_history.results[0].result is result
 
 
 def test_directory_change_does_not_discard_completed_calculation_result(tmp_path):
@@ -300,7 +298,7 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
     adoption = controller.adopt_calculation_result(loaded, request=request)
 
     assert not adoption.workspace_updated
-    assert controller.result_store.results[0].result is result
+    assert controller.result_history.results[0].result is result
     assert controller.directory == str(next_directory)
 
 

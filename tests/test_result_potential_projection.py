@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_capture import capture_result, capture_structure
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.result_presentation import present_result_tree
-from guy4ase.gui.application.result_store import ResultStore
-from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
 class _Value:
@@ -37,69 +33,81 @@ def _result(task: str, name: str):
     )
 
 
-def _widget() -> ResultActionsWidget:
-    return ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
+def _capture(result, parameters=object(), *, output_path=None, potential_path=None):
+    return capture_result(
+        result,
+        input_parameters=parameters,
+        output_path=output_path,
+        potential_path=potential_path,
     )
 
 
-def _set_store(widget: ResultActionsWidget, store: ResultStore) -> None:
-    widget.set_model(
-        present_result_tree(
-            store,
-            current_structure_id=None,
-            current_state_id=None,
-        )
+def _add_structure(history: ResultHistory, atoms=Atoms("Fe"), potential_path=None):
+    return history.add_structure_state(
+        capture_structure(atoms, potential_path=potential_path)
     )
+
+
+def _model(history: ResultHistory):
+    return present_result_tree(
+        history,
+        current_structure_id=None,
+        current_state_id=None,
+    )
+
+
+def _find_node(nodes, result_id):
+    for node in nodes:
+        if node.result_id == result_id:
+            return node
+        found = _find_node(node.children, result_id)
+        if found is not None:
+            return found
+    return None
 
 
 def test_empty_spheres_breaks_potential_source_provenance():
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    scf = store.add_result(
-        _result("scf", "scf"),
+    history = ResultHistory()
+    structure_id, root = _add_structure(history)
+    scf_output = capture_structure(Atoms("Fe"), potential_path="Fe.pot")
+    scf = history.add_result(
+        _capture(_result("scf", "scf")),
         structure_id=structure_id,
         input_state_id=root,
-        input_parameters=object(),
         directory="run",
-        output_atoms=Atoms("Fe"),
-        output_potential_path="Fe.pot",
+        output_structure=scf_output,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
-    assert store.potential_source_result(scf_state) is None
+    assert history.potential_source_result(scf_state) is None
 
-    empty_spheres = store.add_result(
-        EmptySpheresResult(found=1),
+    empty_output = capture_structure(Atoms("FeX"), potential_path=None)
+    empty_spheres = history.add_result(
+        _capture(EmptySpheresResult(found=1), {}),
         structure_id=structure_id,
         input_state_id=scf_state,
-        input_parameters={},
         directory="run",
-        output_atoms=Atoms("FeX"),
-        output_potential_path=None,
+        output_structure=empty_output,
     )
     empty_state = empty_spheres.output_state_id
     assert empty_state is not None
-    assert store.potential_source_result(empty_state) is None
+    assert history.potential_source_result(empty_state) is None
 
-    dos = store.add_result(
-        _result("dos", "dos"),
+    dos = history.add_result(
+        _capture(_result("dos", "dos")),
         structure_id=structure_id,
         input_state_id=empty_state,
-        input_parameters=object(),
         directory="run",
     )
 
-    _application = QApplication.instance() or QApplication([])
-    widget = _widget()
-    _set_store(widget, store)
-    structure = widget._selector.topLevelItem(0)
-    labels = [structure.child(i).text(0).split(" — ", 1)[0] for i in range(3)]
-    assert labels == ["SCF", "Empty spheres", "DOS"]
-    assert structure.child(0).childCount() == 0
-    assert widget._find_result_item(dos.id).parent() is structure
-    widget.close()
+    model = _model(history)
+    structure = model.roots[0]
+    assert [child.label.split(" — ", 1)[0] for child in structure.children] == [
+        "SCF",
+        "Empty spheres",
+        "DOS",
+    ]
+    assert _find_node(model.roots, dos.id) in structure.children
 
 
 def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
@@ -108,116 +116,102 @@ def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
     external = tmp_path / "external.pot"
     external.write_text("external")
 
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    scf = store.add_result(
-        _result("scf", "scf"),
+    history = ResultHistory()
+    structure_id, root = _add_structure(history)
+    scf_output = capture_structure(Atoms("Fe"), potential_path=first)
+    scf = history.add_result(
+        _capture(_result("scf", "scf")),
         structure_id=structure_id,
         input_state_id=root,
-        input_parameters=object(),
         directory="run",
-        output_atoms=Atoms("Fe"),
-        output_potential_path=str(first),
+        output_structure=scf_output,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
-    assert store.potential_source_result(scf_state) is scf
+    assert history.potential_source_result(scf_state) is scf
 
-    replacement = store.new_child_state(
+    replacement_structure = capture_structure(Atoms("Fe"), potential_path=external)
+    replacement = history.add_child_state(
         scf_state,
-        potential_path=str(external),
+        structure=replacement_structure,
     )
 
-    assert store.state(replacement).potential_path == str(external)
-    assert store.potential_source_result(replacement) is None
+    assert history.state(replacement).potential_path == external.resolve()
+    assert history.potential_source_result(replacement) is None
 
 
 def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path):
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
+    history = ResultHistory()
     directory = str(tmp_path / "imported")
     potential = Path(directory) / "Fe.pot"
     potential.parent.mkdir()
     potential.write_text("potential")
-    imported_scf = store.add_external_result(
-        _result("scf", "imported"),
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
+    structure = capture_structure(Atoms("Fe"), potential_path=potential)
+    imported_scf = history.add_external_result(
+        _capture(
+            _result("scf", "imported"),
+            output_path=Path(directory) / "scf.out",
+            potential_path=potential,
+        ),
+        structure=structure,
         directory=directory,
-        output_path=Path(directory) / "scf.out",
-        potential_path=potential,
         produces_state=True,
     )
     state_id = imported_scf.output_state_id
     assert state_id is not None
     assert imported_scf.imported
-    assert store.potential_source_result(state_id) is imported_scf
+    assert history.potential_source_result(state_id) is imported_scf
 
-    dos = store.add_result(
-        _result("dos", "native"),
+    dos = history.add_result(
+        _capture(_result("dos", "native")),
         structure_id=imported_scf.structure_id,
         input_state_id=state_id,
-        input_parameters=object(),
         directory="new-run",
     )
 
-    widget = _widget()
-    _set_store(widget, store)
-
-    assert widget._selector.topLevelItemCount() == 1
-    directory_item = widget._selector.topLevelItem(0)
-    assert directory_item.text(0) == directory
-    assert directory_item.childCount() == 1
-    scf_item = directory_item.child(0)
-    assert scf_item.text(0).startswith("SCF")
-    assert scf_item.childCount() == 1
-    assert scf_item.child(0).text(0).startswith("DOS")
-    assert widget._find_result_item(dos.id).parent() is scf_item
-    widget.close()
+    model = _model(history)
+    assert len(model.roots) == 1
+    directory_node = model.roots[0]
+    assert directory_node.label == directory
+    assert len(directory_node.children) == 1
+    scf_node = directory_node.children[0]
+    assert scf_node.result_id == imported_scf.id
+    assert [child.result_id for child in scf_node.children] == [dos.id]
 
 
 def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
+    history = ResultHistory()
     directory = str(tmp_path / "imported")
     potential = Path(directory) / "Fe.pot"
     potential.parent.mkdir()
     potential.write_text("potential")
-    imported_scf = store.add_external_result(
-        _result("scf", "imported"),
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
+    structure = capture_structure(Atoms("Fe"), potential_path=potential)
+    imported_scf = history.add_external_result(
+        _capture(
+            _result("scf", "imported"),
+            output_path=Path(directory) / "scf.out",
+            potential_path=potential,
+        ),
+        structure=structure,
         directory=directory,
-        output_path=Path(directory) / "scf.out",
-        potential_path=potential,
         produces_state=True,
     )
     imported_state = imported_scf.output_state_id
     assert imported_state is not None
-    store.add_result(
-        _result("dos", "native-from-import"),
+    history.add_result(
+        _capture(_result("dos", "native-from-import")),
         structure_id=imported_scf.structure_id,
         input_state_id=imported_state,
-        input_parameters=object(),
         directory="new-run",
     )
 
-    visible_structure, visible_state = store.new_structure_state(
-        Atoms("Fe"),
-        potential_path=None,
-    )
-    store.add_result(
-        _result("dos", "visible"),
+    visible_structure, visible_state = _add_structure(history)
+    history.add_result(
+        _capture(_result("dos", "visible")),
         structure_id=visible_structure,
         input_state_id=visible_state,
-        input_parameters=object(),
         directory="visible-run",
     )
 
-    widget = _widget()
-    _set_store(widget, store)
-
-    assert widget._selector.topLevelItemCount() == 2
-    assert widget._selector.topLevelItem(0).text(0) == "Fe"
-    assert widget._selector.topLevelItem(1).text(0) == directory
-    widget.close()
+    model = _model(history)
+    assert [root.label for root in model.roots] == ["Fe", directory]

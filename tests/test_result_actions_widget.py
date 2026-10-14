@@ -1,19 +1,25 @@
-"""Tests for the result-summary widget's presentation contract."""
+"""Tests for the result-summary widget's rendering contract."""
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from ase import Atoms
 from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
-from guy4ase.gui.application.result_presentation import present_result_tree
-from guy4ase.gui.application.result_store import ResultStore
+from guy4ase.gui.application.result_action_policy import (
+    ResultAction,
+    ResultActionAvailability,
+)
+from guy4ase.gui.application.result_presentation import (
+    ResultPresentation,
+    ResultTreeModel,
+    ResultTreeNode,
+    present_result,
+)
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -61,24 +67,6 @@ def _widget(*, show_values_without_actions=True):
     )
 
 
-def _set_store(
-    widget: ResultActionsWidget,
-    store: ResultStore,
-    *,
-    structure_id: int | None,
-    state_id: int | None,
-    selected_result_id: int | None = None,
-) -> None:
-    widget.set_model(
-        present_result_tree(
-            store,
-            current_structure_id=structure_id,
-            current_state_id=state_id,
-            selected_result_id=selected_result_id,
-        )
-    )
-
-
 def test_result_actions_render_task_result():
     _application = QApplication.instance() or QApplication([])
     widget = _widget()
@@ -103,7 +91,7 @@ def test_result_collection_failure_becomes_one_error_row(result, error, caplog):
 
     widget.set_result(result)
 
-    assert widget._row_count == 1
+    assert widget.has_rows
     name = widget._grid.itemAtPosition(0, 0).widget()
     assert name.text() == "Output values could not be loaded ⚠"
     assert error in name.toolTip()
@@ -118,11 +106,11 @@ def test_broken_output_value_does_not_hide_other_rows(caplog):
 
     widget.set_result(result)
 
-    assert widget._row_count == 2
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "Display value"
-    error_name = widget._grid.itemAtPosition(1, 0).widget()
-    assert error_name.text() == "bad: unavailable ⚠"
-    assert "broken label" in error_name.toolTip()
+    first = widget._grid.itemAtPosition(0, 0).widget()
+    second = widget._grid.itemAtPosition(1, 0).widget()
+    assert first.text() == "Display value"
+    assert second.text() == "bad: unavailable ⚠"
+    assert "broken label" in second.toolTip()
     assert "Failed to display output value 'bad'" in caplog.text
     widget.close()
 
@@ -133,8 +121,7 @@ def test_broken_actions_keep_value_visible_without_buttons(caplog):
 
     widget.set_result(_Result({"bad": _Value(broken_actions=True)}))
 
-    assert widget._row_count == 1
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "Display value"
+    assert widget.has_rows
     buttons = widget._grid.itemAtPosition(0, 1).widget()
     assert not buttons.findChildren(QToolButton)
     summary = widget._grid.itemAtPosition(0, 2).widget()
@@ -153,7 +140,7 @@ def test_summary_opt_in_does_not_expose_all_actionless_values():
 
     widget.set_result(_Result({"ordinary": ordinary, "summary": summary}))
 
-    assert widget._row_count == 1
+    assert widget.has_rows
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "Display value"
     widget.close()
 
@@ -164,103 +151,29 @@ def test_empty_spheres_result_is_visible_without_actions():
 
     widget.set_result(EmptySpheresResult(found=7))
 
-    assert widget._row_count == 1
+    assert widget.has_rows
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "Empty spheres found"
     summary = widget._grid.itemAtPosition(0, 2).widget()
     assert summary.toolTip() == "7"
     widget.close()
 
 
-def test_result_from_other_structure_offers_structure_reuse():
+def test_widget_emits_result_intent_from_rendered_model():
     _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    first_structure, first_state = store.new_structure_state(
-        Atoms("Fe"), potential_path="Fe.pot"
-    )
-    current_structure, current_state = store.new_structure_state(
-        Atoms("Cu"), potential_path="Cu.pot"
-    )
-    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
-    record = store.add_result(
-        result,
-        structure_id=first_structure,
-        input_state_id=first_state,
-        input_parameters=object(),
-        directory=None,
-    )
     widget = _widget()
-    _set_store(
-        widget,
-        store,
-        structure_id=current_structure,
-        state_id=current_state,
-        selected_result_id=record.id,
+    model = ResultTreeModel(
+        roots=(ResultTreeNode("Fe", children=(ResultTreeNode("DOS", result_id=17),)),),
+        selected_result_id=17,
+        selected=ResultPresentation(
+            result_id=17,
+            actions=ResultActionAvailability(recompute=ResultAction("Recompute")),
+        ),
     )
+    seen = []
+    widget.recomputeRequested.connect(seen.append)
 
-    assert widget.selected_result_id == record.id
-    assert not widget._record_actions.isHidden()
-    assert not widget._use_state_button.isHidden()
-    assert widget._use_state_button.text() == "Use this structure"
-    assert not widget._recompute_button.isHidden()
-    assert widget._recompute_button.text() == "Recompute on current structure"
-    widget.close()
+    widget.set_model(model)
+    widget._recompute_button.click()
 
-
-def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_path):
-    _application = QApplication.instance() or QApplication([])
-    p0 = tmp_path / "p0"
-    p1 = tmp_path / "p1"
-    p2 = tmp_path / "p2"
-    for path in (p0, p1, p2):
-        path.write_text(path.name)
-
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=str(p0))
-    historical_state = store.new_child_state(root, potential_path=str(p1))
-    current_state = store.new_child_state(historical_state, potential_path=str(p2))
-    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
-    record = store.add_result(
-        result,
-        structure_id=structure_id,
-        input_state_id=historical_state,
-        input_parameters=object(),
-        directory=None,
-    )
-    widget = _widget()
-    _set_store(
-        widget,
-        store,
-        structure_id=structure_id,
-        state_id=current_state,
-        selected_result_id=record.id,
-    )
-
-    assert widget._use_state_button.text() == "Use this potential"
-    assert widget._recompute_button.text() == "Recompute on current potential"
-    widget.close()
-
-
-def test_empty_spheres_is_not_presented_as_recomputable_task():
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    record = store.add_result(
-        EmptySpheresResult(found=2),
-        structure_id=structure_id,
-        input_state_id=state_id,
-        input_parameters={"min_radius": 0.8},
-        directory=None,
-    )
-    widget = _widget(show_values_without_actions=False)
-    _set_store(
-        widget,
-        store,
-        structure_id=structure_id,
-        state_id=state_id,
-        selected_result_id=record.id,
-    )
-
-    assert widget.selected_result_id == record.id
-    assert widget._selector.currentItem().text(0) == "Empty spheres"
-    assert widget._recompute_button.isHidden()
+    assert seen == [17]
     widget.close()

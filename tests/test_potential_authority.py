@@ -13,6 +13,7 @@ from guy4ase.gui.application.historical_state import (
     resolve_historical_state,
 )
 from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_capture import capture_result
 from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -23,6 +24,15 @@ class _Parameters:
     def copy(self, *, copy_values: bool):
         assert copy_values
         return self
+
+
+def _captured(result, parameters=None, *, potential_path=None):
+    return capture_result(
+        result,
+        input_parameters=parameters,
+        output_path=None,
+        potential_path=potential_path,
+    )
 
 
 def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypatch):
@@ -36,11 +46,7 @@ def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypa
         calls.append((value, check_file_unchanged))
         return potential
 
-    monkeypatch.setattr(
-        result_loading.Potential,
-        "from_file",
-        staticmethod(parse),
-    )
+    monkeypatch.setattr(result_loading.Potential, "from_file", staticmethod(parse))
 
     loaded_atoms = result_loading.load_potential_atoms(path)
 
@@ -76,6 +82,25 @@ def test_exact_potential_loader_rejects_change_before_parse(tmp_path, monkeypatc
 
     with pytest.raises(PotentialVersionChanged, match="after it was presented"):
         result_loading.load_potential_version(version)
+
+
+def test_loaded_result_keeps_the_version_used_to_load_atoms(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("stable potential")
+    atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    result = SimpleNamespace(
+        files={},
+        potential_filename=str(path),
+        output_file=None,
+        input_parameters=None,
+    )
+    monkeypatch.setattr(result_loading, "load_potential_atoms", lambda _path: atoms)
+
+    loaded = result_loading.load_result(result, fallback_directory=tmp_path)
+
+    assert loaded.atoms is atoms
+    assert loaded.potential_version is not None
+    assert loaded.potential_version == PotentialFileVersion.capture(path)
 
 
 def test_potential_structure_flow_uses_authoritative_potential_loader(
@@ -127,18 +152,14 @@ def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_p
             potential_path=None,
         )
     )
+    history = controller.result_history
     parent = controller.state_id
     assert parent is not None
-    child = controller.result_store.new_child_state(
-        parent,
-        potential_path=None,
-        produced_by_result_id=None,
-    )
-    result = controller.result_store.add_result(
-        SimpleNamespace(task_name="scf"),
+    child = history.add_child_state(parent)
+    result = history.add_result(
+        _captured(SimpleNamespace(task_name="scf"), _Parameters()),
         structure_id=controller.structure_id,
         input_state_id=child,
-        input_parameters=_Parameters(),
         directory=str(tmp_path),
     )
 
@@ -168,17 +189,16 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
             potential_path=str(path),
         )
     )
+    history = controller.result_history
     state_id = controller.state_id
     assert state_id is not None
-    state = controller.result_store.state(state_id)
+    state = history.state(state_id)
     assert state.structure_snapshot is None
-    result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+    result = history.add_result(
+        _captured(SimpleNamespace(task_name="dos"), _Parameters(), potential_path=path),
         structure_id=controller.structure_id,
         input_state_id=state_id,
-        input_parameters=_Parameters(),
         directory=str(tmp_path),
-        potential_path=path,
     )
 
     controller.replace_structure(Atoms("Cu"))
@@ -210,17 +230,16 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
             potential_path=str(path),
         )
     )
+    history = controller.result_history
     structure_id = controller.structure_id
     historical_state_id = controller.state_id
     assert structure_id is not None
     assert historical_state_id is not None
-    result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+    result = history.add_result(
+        _captured(SimpleNamespace(task_name="dos"), _Parameters(), potential_path=path),
         structure_id=structure_id,
         input_state_id=historical_state_id,
-        input_parameters=_Parameters(),
         directory=str(tmp_path),
-        potential_path=path,
     )
 
     path.write_text("externally modified current potential is a different version")
@@ -231,15 +250,12 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
         lambda version: loaded_atoms,
     )
 
-    assert (
-        controller.result_store.state_for_potential_version(
-            current_version,
-            structure_id=structure_id,
-        )
-        is None
-    )
+    assert history.state_for_potential_version(
+        current_version,
+        structure_id=structure_id,
+    ) is None
     resolution = resolve_historical_state(
-        controller.result_store,
+        history,
         result.id,
         active_state_id=controller.state_id,
         expected_potential=current_version,
@@ -250,13 +266,10 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
     assert resolution.parent_state.id == historical_state_id
     assert resolution.potential_version == current_version
     assert controller.state_id == historical_state_id
-    assert (
-        controller.result_store.state_for_potential_version(
-            current_version,
-            structure_id=structure_id,
-        )
-        is None
-    )
+    assert history.state_for_potential_version(
+        current_version,
+        structure_id=structure_id,
+    ) is None
 
 
 def test_unknown_current_potfil_version_stays_in_structure_lineage(
@@ -272,21 +285,20 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
             potential_path=str(path),
         )
     )
+    history = controller.result_history
     structure_id = controller.structure_id
     historical_state_id = controller.state_id
     assert structure_id is not None
     assert historical_state_id is not None
-    historical_state = controller.result_store.state(historical_state_id)
+    historical_state = history.state(historical_state_id)
     historical_version = historical_state.potential_version
     assert historical_version is not None
 
-    result = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos"),
+    result = history.add_result(
+        _captured(SimpleNamespace(task_name="dos"), _Parameters(), potential_path=path),
         structure_id=structure_id,
         input_state_id=historical_state_id,
-        input_parameters=_Parameters(),
         directory=str(tmp_path),
-        potential_path=path,
     )
 
     path.write_text("externally modified current potential is a different version")
@@ -311,9 +323,9 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     assert calls == [current_version]
     assert controller.atoms is loaded_atoms
     assert controller.structure_id == structure_id
-    assert len(controller.result_store.structures) == 1
+    assert len(history.structures) == 1
     assert controller.state_id != historical_state_id
-    current_state = controller.result_store.state(controller.state_id)
+    current_state = history.state(controller.state_id)
     assert current_state.structure_id == structure_id
     assert current_state.parent_id == historical_state_id
     assert current_state.potential_version == current_version

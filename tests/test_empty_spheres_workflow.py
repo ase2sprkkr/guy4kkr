@@ -29,13 +29,13 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert workspace.empty_spheres == EmptySpheresState(count=0)
     assert workspace.empty_spheres_added == 0
     assert controller.empty_spheres_action() is EmptySpheresAction.RECALCULATE
-    first_record = controller.result_store.results[0]
+    first_record = controller.result_history.results[0]
     assert first_record.result == EmptySpheresResult(found=0)
     assert first_record.input_state_id == input_state_id
     assert first_record.output_state_id == controller.state_id
     first_output_state_id = controller.state_id
     assert first_output_state_id != input_state_id
-    first_state = controller.result_store.state(first_output_state_id)
+    first_state = controller.result_history.state(first_output_state_id)
     assert first_state.parent_id == input_state_id
     assert first_state.empty_spheres == workspace.empty_spheres
     assert controller.generation == generation.next()
@@ -52,13 +52,13 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     )
 
     assert change is DocumentChange.APPLIED
-    assert len(controller.result_store.results) == 2
-    second_record = controller.result_store.results[0]
+    assert len(controller.result_history.results) == 2
+    second_record = controller.result_history.results[0]
     assert second_record.result == EmptySpheresResult(found=0)
     assert second_record.input_state_id == first_output_state_id
     assert second_record.output_state_id == controller.state_id
     assert controller.state_id != first_output_state_id
-    second_state = controller.result_store.state(controller.state_id)
+    second_state = controller.result_history.state(controller.state_id)
     assert second_state.parent_id == first_output_state_id
     assert second_state.empty_spheres == workspace.empty_spheres
     assert controller.generation == second_generation.next()
@@ -89,7 +89,7 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     assert len(original) == 1
     assert len(workspace.atoms) == 2
     assert workspace.empty_spheres == EmptySpheresState(count=1)
-    record = controller.result_store.results[0]
+    record = controller.result_history.results[0]
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
@@ -113,7 +113,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     state = workspace.empty_spheres
     assert state is not None
     assert dict(state.parameters) == search_parameters
-    assert controller.result_store.results[0].result == EmptySpheresResult(found=0)
+    assert controller.result_history.results[0].result == EmptySpheresResult(found=0)
 
     assert controller.structure_id is not None
     assert controller.state_id is not None
@@ -141,8 +141,8 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
         request=request,
     )
 
-    assert controller.result_store.results[0].result is result
-    assert controller.result_store.results[1].result == EmptySpheresResult(found=0)
+    assert controller.result_history.results[0].result is result
+    assert controller.result_history.results[1].result == EmptySpheresResult(found=0)
     assert workspace.empty_spheres is state
     assert dict(workspace.empty_spheres.parameters) == search_parameters
 
@@ -203,7 +203,7 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
     assert workspace.empty_spheres_added == 3
     assert workspace.potential_path == "Fe.pot"
     assert controller.state_id != previous_state_id
-    assert controller.result_store.state(controller.state_id).parent_id == previous_state_id
+    assert controller.result_history.state(controller.state_id).parent_id == previous_state_id
     assert controller.generation == generation.next()
 
 

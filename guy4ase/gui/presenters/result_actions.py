@@ -46,7 +46,7 @@ class ResultActionsPresenter(QObject):
     def refresh(self, *_args) -> None:
         """Rebuild the complete result projection from current application state."""
         model = present_result_tree(
-            self._controller.result_store,
+            self._controller.result_history,
             current_structure_id=self._controller.structure_id,
             current_state_id=self._controller.state_id,
             selected_result_id=self._selected_result_id,
@@ -62,11 +62,11 @@ class ResultActionsPresenter(QObject):
     def action_availability(self, result_id: int) -> ResultActionAvailability:
         """Resolve actions again at intent time to avoid stale UI decisions."""
         try:
-            record = self._controller.result_store.result(result_id)
+            record = self._controller.result_history.result(result_id)
         except KeyError:
             return ResultActionAvailability()
         return result_action_availability(
-            self._controller.result_store,
+            self._controller.result_history,
             record,
             current_structure_id=self._controller.structure_id,
             current_state_id=self._controller.state_id,

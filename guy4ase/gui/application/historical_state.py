@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any, Union
 
 from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_history import CalculationStateRecord, ResultHistory
 from guy4ase.gui.application.result_loading import (
     load_potential_version,
     require_potential_version_current,
 )
-from guy4ase.gui.application.result_store import CalculationStateRecord, ResultStore
 
 
 @dataclass(frozen=True)
@@ -42,12 +42,15 @@ HistoricalStateResolution = Union[
 ]
 
 
-def _state_for_result(store: ResultStore, result_id: int) -> CalculationStateRecord:
-    record = store.result(result_id)
+def _state_for_result(
+    history: ResultHistory,
+    result_id: int,
+) -> CalculationStateRecord:
+    record = history.result(result_id)
     state_id = record.output_state_id or record.input_state_id
     if state_id is None:
         raise ValueError("The selected result has no reusable calculation input.")
-    return store.state(state_id)
+    return history.state(state_id)
 
 
 def _restore_state_atoms(state: CalculationStateRecord) -> Any:
@@ -60,21 +63,14 @@ def _restore_state_atoms(state: CalculationStateRecord) -> Any:
 
 
 def resolve_historical_state(
-    store: ResultStore,
+    history: ResultHistory,
     result_id: int,
     *,
     active_state_id: int | None = None,
     expected_potential: PotentialFileVersion | None = None,
 ) -> HistoricalStateResolution:
-    """Resolve the physical input for a historical result without mutating ``store``.
-
-    When ``expected_potential`` is supplied it represents an explicit user-approved
-    version of the result's POTFIL path. The function loads exactly that version.
-    If the version is not represented by an existing state, the returned resolution
-    asks the controller to create a child of the historical state; doing so remains
-    part of the controller's atomic mutation boundary.
-    """
-    state = _state_for_result(store, result_id)
+    """Resolve the physical input for a result without mutating ``history``."""
+    state = _state_for_result(history, result_id)
     if expected_potential is None:
         return ExistingHistoricalState(
             atoms=_restore_state_atoms(state),
@@ -88,7 +84,7 @@ def resolve_historical_state(
         raise ValueError("The approved potential does not belong to this result.")
 
     if active_state_id is not None:
-        active = store.state(active_state_id)
+        active = history.state(active_state_id)
         if (
             active.structure_id == state.structure_id
             and active.potential_version == expected_potential
@@ -99,7 +95,7 @@ def resolve_historical_state(
     if state.potential_version == expected_potential:
         target_state = state
     else:
-        target_state = store.state_for_potential_version(
+        target_state = history.state_for_potential_version(
             expected_potential,
             structure_id=state.structure_id,
         )

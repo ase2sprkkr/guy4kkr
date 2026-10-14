@@ -10,11 +10,13 @@ from ase import Atoms
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.file_version import FileState
+from guy4ase.gui.application.result_artifacts import current_value_for_result_file
+from guy4ase.gui.application.result_capture import capture_result, capture_structure
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.result_presentation import (
     present_result_record,
     present_result_tree,
 )
-from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -40,14 +42,14 @@ class _FileValue:
         return f"{self._context}:{self._path.read_text()}"
 
 
-def _add_result(store: ResultStore, path: Path, context: str):
-    if not store.structures:
-        structure_id, state_id = store.new_structure_state(
-            Atoms("Fe"), potential_path=None
+def _add_result(history: ResultHistory, path: Path, context: str):
+    if not history.structures:
+        structure_id, state_id = history.add_structure_state(
+            capture_structure(Atoms("Fe"), potential_path=None)
         )
     else:
-        structure_id = store.structures[0].id
-        state_id = store.results[-1].input_state_id
+        structure_id = history.structures[0].id
+        state_id = history.results[-1].input_state_id
         assert state_id is not None
 
     value = _FileValue(path, context)
@@ -56,26 +58,30 @@ def _add_result(store: ResultStore, path: Path, context: str):
         output_file=f"{context}.out",
         output_values={"dos": value},
     )
-    record = store.add_result(
-        result,
+    record = history.add_result(
+        capture_result(
+            result,
+            input_parameters=None,
+            output_path=None,
+            potential_path=None,
+        ),
         structure_id=structure_id,
         input_state_id=state_id,
-        input_parameters=None,
         directory=str(path.parent),
     )
     return record, value
 
 
-def _result_store(path: Path):
-    store = ResultStore()
-    record, value = _add_result(store, path, "old")
-    return store, record, value
+def _result_history(path: Path):
+    history = ResultHistory()
+    record, value = _add_result(history, path, "old")
+    return history, record, value
 
 
-def test_result_store_remembers_file_version_after_overwrite(tmp_path):
+def test_result_history_remembers_file_version_after_overwrite(tmp_path):
     path = tmp_path / "Fe.dos"
     path.write_text("historical")
-    _store, record, _value = _result_store(path)
+    _history, record, _value = _result_history(path)
 
     result_file = record.result_files["dos"]
     assert result_file.path == path.resolve()
@@ -91,11 +97,11 @@ def test_result_store_remembers_file_version_after_overwrite(tmp_path):
 def test_missing_historical_result_file_disables_value_actions(tmp_path):
     path = tmp_path / "Fe.dos"
     path.write_text("historical")
-    store, record, _value = _result_store(path)
+    history, record, _value = _result_history(path)
     path.unlink()
 
     presentation = present_result_record(
-        store,
+        history,
         record,
         current_structure_id=record.structure_id,
         current_state_id=record.input_state_id,
@@ -114,7 +120,7 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     _application = QApplication.instance() or QApplication([])
     path = tmp_path / "Fe.dos"
     path.write_text("historical")
-    store, old_record, old_value = _result_store(path)
+    history, old_record, old_value = _result_history(path)
     seen: list[str] = []
 
     widget = ResultActionsWidget(
@@ -123,7 +129,7 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     )
     widget.set_model(
         present_result_tree(
-            store,
+            history,
             current_structure_id=old_record.structure_id,
             current_state_id=old_record.input_state_id,
             selected_result_id=old_record.id,
@@ -133,14 +139,17 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     assert widget._result_file_warning.isHidden()
 
     path.write_text("new current contents")
-    new_record, new_value = _add_result(store, path, "new")
+    new_record, new_value = _add_result(history, path, "new")
     assert new_record.result_files["dos"].state() is FileState.CURRENT
-    assert store.current_value_for_result_file(old_record.result_files["dos"]) is new_value
+    assert (
+        current_value_for_result_file(history, old_record.result_files["dos"])
+        is new_value
+    )
     assert new_value is not old_value
 
     widget.set_model(
         present_result_tree(
-            store,
+            history,
             current_structure_id=old_record.structure_id,
             current_state_id=old_record.input_state_id,
             selected_result_id=old_record.id,

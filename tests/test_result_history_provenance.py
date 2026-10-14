@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import inspect
 from types import SimpleNamespace
 
 import numpy as np
 from ase import Atoms
 
-from guy4ase.gui.application.result_store import ResultStore
+from guy4ase.gui.application.result_capture import capture_result, capture_structure
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
@@ -22,15 +22,16 @@ def _atoms() -> Atoms:
     return atoms
 
 
-def test_state_without_usable_potential_keeps_only_lightweight_structure_snapshot():
+def test_state_without_usable_potential_keeps_lightweight_structure_snapshot():
     atoms = _atoms()
     atoms.potential = object()
-    store = ResultStore()
+    history = ResultHistory()
 
-    _, state_id = store.new_structure_state(atoms, potential_path=None)
-    state = store.state(state_id)
+    _, state_id = history.add_structure_state(
+        capture_structure(atoms, potential_path=None)
+    )
+    state = history.state(state_id)
 
-    assert not hasattr(state, "atoms")
     assert state.structure_snapshot is not None
 
     atoms.positions[:] = 9
@@ -44,29 +45,49 @@ def test_state_without_usable_potential_keeps_only_lightweight_structure_snapsho
     assert not hasattr(restored, "potential")
 
 
-def test_state_with_usable_potential_does_not_retain_structure_snapshot(tmp_path):
+def test_state_with_usable_potential_uses_potential_as_structure_authority(tmp_path):
     potential = tmp_path / "Fe.pot"
     potential.write_text("potential", encoding="utf-8")
-    store = ResultStore()
+    history = ResultHistory()
 
-    _, state_id = store.new_structure_state(
-        _atoms(),
-        potential_path=str(potential),
+    _, state_id = history.add_structure_state(
+        capture_structure(_atoms(), potential_path=potential)
     )
-    state = store.state(state_id)
+    state = history.state(state_id)
 
     assert state.potential_version is not None
     assert state.potential_version.available
+    assert state.potential_path == potential.resolve()
     assert state.structure_snapshot is None
-    assert not hasattr(state, "atoms")
 
 
-def test_result_store_api_has_no_ignored_atoms_arguments():
-    assert "atoms" not in inspect.signature(ResultStore.add_result).parameters
-    assert "atoms" not in inspect.signature(ResultStore.new_child_state).parameters
+def test_result_payload_is_not_used_as_mutable_provenance():
+    history = ResultHistory()
+    structure_id, state_id = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path=None)
+    )
+    result = SimpleNamespace(task_name="dos", output_values={})
+    captured = capture_result(
+        result,
+        input_parameters={"mesh": [10, 10, 10]},
+        output_path=None,
+        potential_path=None,
+    )
+    record = history.add_result(
+        captured,
+        structure_id=structure_id,
+        input_state_id=state_id,
+        directory=None,
+    )
+
+    result.task_name = "scf"
+
+    assert record.result is result
+    assert record.task_name == "dos"
+    assert record.input_parameters == {"mesh": [10, 10, 10]}
 
 
-def test_historical_snapshot_can_restore_structure_without_retaining_live_atoms():
+def test_historical_snapshot_restores_without_retaining_live_atoms():
     original = _atoms()
     controller = WorkspaceController(WorkspaceState(atoms=original))
     structure_id = controller.structure_id
@@ -74,11 +95,15 @@ def test_historical_snapshot_can_restore_structure_without_retaining_live_atoms(
     assert structure_id is not None
     assert state_id is not None
 
-    record = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos", output_values={}),
+    record = controller.result_history.add_result(
+        capture_result(
+            SimpleNamespace(task_name="dos", output_values={}),
+            input_parameters={},
+            output_path=None,
+            potential_path=None,
+        ),
         structure_id=structure_id,
         input_state_id=state_id,
-        input_parameters={},
         directory=None,
     )
     controller.replace_structure(Atoms("Cu"))

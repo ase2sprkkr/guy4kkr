@@ -11,7 +11,7 @@ from guy4ase.gui.application.result_action_policy import (
     result_action_availability,
 )
 from guy4ase.gui.application.result_artifacts import resolve_result_value
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_history import ResultHistory, ResultRecord
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,6 @@ _TASK_LABELS = {
 
 @dataclass(frozen=True)
 class ResultValuePresentation:
-    """Presentation-safe metadata for one result output value."""
-
     value: Any | None
     name: str
     info: str
@@ -36,8 +34,6 @@ class ResultValuePresentation:
 
 @dataclass(frozen=True)
 class ResultPresentation:
-    """Rendered content and actions for one selected result."""
-
     result_id: int | None
     values: tuple[ResultValuePresentation, ...] = ()
     file_warning: str | None = None
@@ -46,8 +42,6 @@ class ResultPresentation:
 
 @dataclass(frozen=True)
 class ResultTreeNode:
-    """Qt-independent node in the calculation-result selector."""
-
     label: str
     result_id: int | None = None
     children: tuple["ResultTreeNode", ...] = ()
@@ -55,8 +49,6 @@ class ResultTreeNode:
 
 @dataclass(frozen=True)
 class ResultTreeModel:
-    """Complete lightweight selector model plus the selected result presentation."""
-
     roots: tuple[ResultTreeNode, ...] = ()
     selected_result_id: int | None = None
     selected: ResultPresentation | None = None
@@ -151,10 +143,9 @@ def present_result(
     *,
     result_id: int | None = None,
     record: ResultRecord | None = None,
-    store: ResultStore | None = None,
+    history: ResultHistory | None = None,
     actions: ResultActionAvailability | None = None,
 ) -> ResultPresentation | None:
-    """Convert a result and resolved artifact state into view data."""
     if result is None:
         return None
 
@@ -178,7 +169,7 @@ def present_result(
             logger.exception("Failed to read an output value name")
             name = "<unknown output>"
 
-        resolved = resolve_result_value(store, record, name, value)
+        resolved = resolve_result_value(history, record, name, value)
         has_replaced_result_file |= resolved.replaced
         has_unavailable_result_file |= resolved.unavailable
         values.append(
@@ -209,14 +200,14 @@ def present_result(
 
 
 def present_result_record(
-    store: ResultStore,
+    history: ResultHistory,
     record: ResultRecord,
     *,
     current_structure_id: int | None,
     current_state_id: int | None,
 ) -> ResultPresentation:
     availability = result_action_availability(
-        store,
+        history,
         record,
         current_structure_id=current_structure_id,
         current_state_id=current_state_id,
@@ -225,7 +216,7 @@ def present_result_record(
         record.result,
         result_id=record.id,
         record=record,
-        store=store,
+        history=history,
         actions=availability,
     )
     assert presentation is not None
@@ -233,21 +224,24 @@ def present_result_record(
 
 
 def present_result_tree(
-    store: ResultStore,
+    history: ResultHistory,
     *,
     current_structure_id: int | None,
     current_state_id: int | None,
     selected_result_id: int | None = None,
 ) -> ResultTreeModel:
     """Project exact provenance into a Qt-independent selector tree."""
+    ordered_records = tuple(sorted(history.results, key=lambda record: record.id))
     result_nodes: dict[int, _MutableTreeNode] = {}
     records: dict[int, ResultRecord] = {}
-    directory_nodes: list[_MutableTreeNode] = []
 
-    for directory in store.import_directories:
-        imported = store.imported_results(directory)
-        if not imported:
-            continue
+    imported_by_directory: dict[str | None, list[ResultRecord]] = {}
+    for record in ordered_records:
+        if record.imported:
+            imported_by_directory.setdefault(record.directory, []).append(record)
+
+    directory_nodes: list[_MutableTreeNode] = []
+    for directory, imported in imported_by_directory.items():
         directory_node = _MutableTreeNode(directory or "(unknown directory)")
         directory_nodes.append(directory_node)
         for record in imported:
@@ -258,8 +252,12 @@ def present_result_tree(
 
     roots: list[_MutableTreeNode] = []
     formula_counts: dict[str, int] = {}
-    for structure in store.structures:
-        structure_records = store.structure_results(structure.id)
+    for structure in history.structures:
+        structure_records = tuple(
+            record
+            for record in ordered_records
+            if record.structure_id == structure.id and not record.imported
+        )
         if not structure_records:
             continue
 
@@ -273,7 +271,7 @@ def present_result_tree(
                 structure_node.children.append(node)
                 continue
 
-            source = store.potential_source_result(record.input_state_id)
+            source = history.potential_source_result(record.input_state_id)
             parent = result_nodes.get(source.id) if source is not None else None
             (parent.children if parent is not None else structure_node.children).append(node)
 
@@ -286,10 +284,15 @@ def present_result_tree(
 
     roots.extend(directory_nodes)
 
-    if store.unstructured_results:
+    unstructured = tuple(
+        record
+        for record in ordered_records
+        if not record.imported and record.structure_id is None
+    )
+    if unstructured:
         unknown = _MutableTreeNode("Unknown structure")
         roots.append(unknown)
-        for record in store.unstructured_results:
+        for record in unstructured:
             records[record.id] = record
             node = _MutableTreeNode(_result_label(record), result_id=record.id)
             unknown.children.append(node)
@@ -297,7 +300,7 @@ def present_result_tree(
 
     target_id = selected_result_id if selected_result_id in records else None
     if target_id is None:
-        active = store.latest_result_for_state(current_state_id)
+        active = history.latest_result_for_state(current_state_id)
         if active is not None and active.id in records:
             target_id = active.id
     if target_id is None and records:
@@ -305,7 +308,7 @@ def present_result_tree(
 
     selected = (
         present_result_record(
-            store,
+            history,
             records[target_id],
             current_structure_id=current_structure_id,
             current_state_id=current_state_id,

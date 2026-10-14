@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.result_capture import capture_result, capture_structure
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.result_presentation import present_result_tree
-from guy4ase.gui.application.result_store import ResultStore
-from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
 class _Value:
@@ -34,91 +30,93 @@ def _ui_result(task, name):
     )
 
 
-def _model(store, structure_id=None, state_id=None, selected_result_id=None):
+def _captured(result):
+    return capture_result(
+        result,
+        input_parameters=None,
+        output_path=None,
+        potential_path=None,
+    )
+
+
+def _model(history, structure_id=None, state_id=None, selected_result_id=None):
     return present_result_tree(
-        store,
+        history,
         current_structure_id=structure_id,
         current_state_id=state_id,
         selected_result_id=selected_result_id,
     )
 
 
-def test_result_selector_groups_by_formula_and_switches_displayed_result():
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    older = _ui_result("dos", "old")
-    newest = _ui_result("jxc", "new")
-    older_record = store.add_result(
-        older,
+def test_result_projection_groups_by_formula_and_selects_latest_result():
+    history = ResultHistory()
+    structure_id, state_id = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path=None)
+    )
+    older_record = history.add_result(
+        _captured(_ui_result("dos", "old")),
         structure_id=structure_id,
         input_state_id=state_id,
-        input_parameters=None,
         directory=None,
     )
-    newest_record = store.add_result(
-        newest,
+    newest_record = history.add_result(
+        _captured(_ui_result("jxc", "new")),
         structure_id=structure_id,
         input_state_id=state_id,
-        input_parameters=None,
         directory=None,
     )
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
+
+    model = _model(history, structure_id, state_id)
+
+    assert len(model.roots) == 1
+    structure = model.roots[0]
+    assert structure.label == "Fe"
+    assert [child.result_id for child in structure.children] == [
+        older_record.id,
+        newest_record.id,
+    ]
+    assert model.selected_result_id == newest_record.id
+    assert model.selected is not None
+    assert model.selected.values[0].name == "new"
+
+    selected = _model(
+        history,
+        structure_id,
+        state_id,
+        selected_result_id=older_record.id,
     )
-    widget.set_model(_model(store, structure_id, state_id))
+    assert selected.selected_result_id == older_record.id
+    assert selected.selected is not None
+    assert selected.selected.values[0].name == "old"
 
-    assert widget._selector.topLevelItemCount() == 1
-    structure = widget._selector.topLevelItem(0)
-    assert structure.text(0) == "Fe"
-    assert structure.childCount() == 2
-    assert widget.selected_result_id == newest_record.id
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "new"
 
-    widget.set_model(
-        _model(store, structure_id, state_id, selected_result_id=older_record.id)
+def test_result_projection_hides_internal_branch_nodes():
+    history = ResultHistory()
+    structure_id, root_state = history.add_structure_state(
+        capture_structure(Atoms("Fe"), potential_path=None)
     )
-    assert widget.selected_result_id == older_record.id
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "old"
-    widget.close()
 
-
-def test_result_selector_does_not_expose_internal_branch_nodes():
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, root_state = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-
-    first = store.add_result(
-        _ui_result("scf", "a"),
+    output_a = capture_structure(Atoms("Fe"), potential_path=None)
+    first = history.add_result(
+        _captured(_ui_result("scf", "a")),
         structure_id=structure_id,
         input_state_id=root_state,
-        input_parameters=None,
         directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pa",
+        output_structure=output_a,
     )
-    second = store.add_result(
-        _ui_result("scf", "b"),
+    output_b = capture_structure(Atoms("Fe"), potential_path=None)
+    second = history.add_result(
+        _captured(_ui_result("scf", "b")),
         structure_id=structure_id,
         input_state_id=root_state,
-        input_parameters=None,
         directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pb",
+        output_structure=output_b,
     )
 
-    assert store.branch_id_for_result(first) != store.branch_id_for_result(second)
+    assert history.branch_id_for_result(first) != history.branch_id_for_result(second)
 
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
-    )
-    widget.set_model(_model(store))
-    structure = widget._selector.topLevelItem(0)
-    assert structure.childCount() == 2
-    assert all(
-        not structure.child(index).text(0).startswith("Branch")
-        for index in range(structure.childCount())
-    )
-    widget.close()
+    model = _model(history)
+    assert len(model.roots) == 1
+    structure = model.roots[0]
+    assert [child.result_id for child in structure.children] == [first.id, second.id]
+    assert all(not child.label.startswith("Branch") for child in structure.children)

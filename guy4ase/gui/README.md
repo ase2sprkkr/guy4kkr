@@ -22,9 +22,13 @@ alternate APIs.
   `registry.task_dialog_spec` selects a task specification.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
-  next calculation; `ResultStore` owns calculation history independently of
-  that draft; `WorkspaceController` is the mutation/signalling boundary between
-  them and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
+  next calculation. `ResultHistory` is the authoritative in-session aggregate
+  for result records and their provenance graph. `result_capture` captures
+  provenance-critical facts from mutable/backend/filesystem-backed inputs before
+  history mutation; `result_artifacts` resolves recorded artifacts against the
+  live filesystem; `result_presentation` derives Qt-independent view
+  projections. `WorkspaceController` coordinates draft/history transitions and
+  signalling. `SprkkrExecution` owns the non-Qt execution contract for one
   immutable calculation request. Persistent application state such as recent
   files and settings also lives here.
 - `flows`: stateless shared Qt workflows composed from application state and
@@ -67,14 +71,38 @@ start.
 `WorkspaceState.atoms` is the sole physical authority for the active structure,
 including an attached SPR-KKR potential when one exists. `potential_path` is
 artifact/provenance metadata only; calculation launch must not silently use it
-as a second physical source of truth.
+as a second physical source of truth. Provenance paths are canonical absolute
+paths; textual spelling of a relative input path is not part of file identity.
 
-`ResultStore` owns result history and calculation-state provenance independently
-of the mutable workspace. A result may refer to an input state and, for tasks
-such as SCF, to an output state. Historical states retain enough provenance to
-reconstruct a reusable calculation input from the recorded POTFIL version or a
-structure snapshot when necessary. Activating historical state is always an
-explicit transition.
+`ResultHistory` owns result history and calculation-state provenance
+independently of the mutable workspace. It is the single stateful authority for
+structure/state/result records, IDs, lineage, branch semantics, indexes, and
+in-memory graph invariants. A result may refer to an input state and, for tasks
+such as SCF, to an output state. Historical states retain enough captured
+provenance to reconstruct a reusable calculation input from the recorded POTFIL
+version or a structure snapshot when necessary.
+
+`ResultHistory` does **not** observe the external world. Provenance-critical
+facts such as normalized task identity, input-parameter snapshots, structure
+snapshots, POTFIL/file versions, and path-backed output metadata are captured by
+`result_capture` before they enter history mutation. The history aggregate never
+parses backend files, snapshots live atoms, copies live input parameters, or
+asks the filesystem whether a recorded file is current. Live artifact state
+such as overwritten/missing files belongs to `result_artifacts`; UI grouping
+and labels belong to `result_presentation`.
+
+A `ResultRecord` may retain the backend result object as an **opaque read-only
+runtime payload** for presentation and result actions. That payload is not part
+of the immutable provenance contract: `ResultHistory` must not derive graph
+identity, task identity, structure lineage, or other invariants from later
+mutable state inside it. Facts needed for provenance are captured separately
+when the record is created.
+
+This boundary is also the transaction boundary: operations that may invoke
+backend/user code or inspect mutable files complete before history mutation.
+Once captured provenance enters `ResultHistory`, preparation and commit are
+purely in-memory validation/mutation, so a capture failure cannot leave a
+partially installed provenance graph.
 
 Windows and flows mutate the draft through named `WorkspaceController`
 operations rather than assigning workspace facets independently. The important
@@ -99,8 +127,8 @@ result-adoption semantics are:
 The distinction between **recording a result**, **selecting a result for
 presentation**, and **activating a result state for a future calculation** is
 intentional. Do not collapse these operations into one implicit transition.
-Presentation code reads history through `result_store`; controllers do not
-expose duplicate compatibility views of the same history.
+Presentation code reads the aggregate through `result_history`; controllers do
+not expose duplicate compatibility views of the same history.
 
 ## Parameter editing
 
@@ -213,7 +241,7 @@ signal/thread adaptation belongs in worker-level tests.
 ```python
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.application.result_store import ResultStore
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog

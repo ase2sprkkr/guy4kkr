@@ -50,7 +50,7 @@ def _controller(tmp_path, atoms=None, potential_path=None):
 
 
 def _results(controller: WorkspaceController):
-    return tuple(record.result for record in controller.result_store.results)
+    return tuple(record.result for record in controller.result_history.results)
 
 
 def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
@@ -63,7 +63,7 @@ def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
         assert not adoption.workspace_updated
 
     assert _results(controller) == tuple(reversed(results))
-    assert len(controller.result_store.results) == 12
+    assert len(controller.result_history.results) == 12
 
 
 def test_input_and_structure_changes_do_not_delete_results(tmp_path):
@@ -77,7 +77,7 @@ def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     controller.replace_structure(Atoms("Ni"))
 
     assert _results(controller) == (result,)
-    assert controller.result_store.results[0].structure_id == first_structure_id
+    assert controller.result_history.results[0].structure_id == first_structure_id
     assert controller.structure_id != first_structure_id
 
 
@@ -100,7 +100,7 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
     assert not adoption.workspace_updated
     assert controller.atoms is original_atoms
     assert controller.state_id == original_state_id
-    record = controller.result_store.results[0]
+    record = controller.result_history.results[0]
     assert record.result is external
     assert record.output_state_id is not None
     assert record.imported
@@ -142,13 +142,13 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     assert not adoption_a.workspace_updated
     assert controller.state_id == state_c
     assert controller.atoms is atoms_c
-    assert controller.potential_path == str(tmp_path / "pc.pot_new")
+    assert controller.potential_path == str((tmp_path / "pc.pot_new").resolve())
     assert controller.result is result_c
-    assert controller.result_store.branch_id_for_result(adoption_b.record) == (
-        controller.result_store.branch_id_for_result(adoption_c.record)
+    assert controller.result_history.branch_id_for_result(adoption_b.record) == (
+        controller.result_history.branch_id_for_result(adoption_c.record)
     )
-    assert controller.result_store.branch_id_for_result(adoption_a.record) != (
-        controller.result_store.branch_id_for_result(adoption_c.record)
+    assert controller.result_history.branch_id_for_result(adoption_a.record) != (
+        controller.result_history.branch_id_for_result(adoption_c.record)
     )
 
 
@@ -156,13 +156,14 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
     old_request = controller.create_calculation_request()
     old_state = controller.state_id
-    old_branch = controller.result_store.state(old_state).branch_id
+    old_branch = controller.result_history.state(old_state).branch_id
+    initial_path = str(Path("p0.pot").resolve())
 
     controller.use_for_new_calculation(expected_generation=controller.generation)
     restart_state = controller.state_id
-    restart_branch = controller.result_store.state(restart_state).branch_id
+    restart_branch = controller.result_history.state(restart_state).branch_id
     assert restart_branch != old_branch
-    assert controller.potential_path == "p0.pot"
+    assert controller.potential_path == initial_path
 
     late_result = SimpleNamespace(task_name="scf")
     late = controller.adopt_calculation_result(
@@ -173,8 +174,8 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     assert not late.workspace_updated
     assert controller.state_id == restart_state
     assert controller.restarted
-    assert controller.potential_path == "p0.pot"
-    assert controller.result_store.branch_id_for_result(late.record) == old_branch
+    assert controller.potential_path == initial_path
+    assert controller.result_history.branch_id_for_result(late.record) == old_branch
 
     new_request = controller.create_calculation_request()
     new_result = SimpleNamespace(task_name="scf")
@@ -183,7 +184,7 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
         request=new_request,
     )
     assert new.workspace_updated
-    assert controller.result_store.branch_id_for_result(new.record) == restart_branch
+    assert controller.result_history.branch_id_for_result(new.record) == restart_branch
 
 
 def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
@@ -208,7 +209,7 @@ def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
     controller.use_result_state(b.record.id)
 
     assert controller.state_id == b.record.output_state_id
-    assert controller.potential_path == str(tmp_path / "pb.pot_new")
+    assert controller.potential_path == str((tmp_path / "pb.pot_new").resolve())
     assert controller.result is result_b
 
 
@@ -227,8 +228,8 @@ def test_empty_spheres_is_result_transition_within_same_structure(tmp_path):
         parameters={"radius": 1.25},
     )
 
-    record = controller.result_store.results[0]
-    state = controller.result_store.state(controller.state_id)
+    record = controller.result_history.results[0]
+    state = controller.result_history.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
@@ -244,6 +245,7 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
     input_state_id = controller.state_id
     generation = controller.generation
     atoms = controller.atoms
+    potential = Path("Fe.pot").resolve()
 
     controller.update_empty_spheres(
         lambda candidate, _previous: (candidate, 0, False),
@@ -251,16 +253,16 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
         parameters={"method": "probe"},
     )
 
-    record = controller.result_store.results[0]
-    state = controller.result_store.state(controller.state_id)
+    record = controller.result_history.results[0]
+    state = controller.result_history.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=0)
     assert record.input_state_id == input_state_id
     assert record.output_state_id == controller.state_id
     assert controller.state_id != input_state_id
     assert controller.atoms is atoms
     assert state.structure_snapshot is not None
-    assert controller.potential_path == "Fe.pot"
-    assert state.potential_path == "Fe.pot"
+    assert controller.potential_path == str(potential)
+    assert state.potential_path == potential
     assert controller.generation != generation
     assert state.empty_spheres == controller.empty_spheres
     assert dict(state.empty_spheres.parameters) == {"method": "probe"}
@@ -274,8 +276,9 @@ def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
         expected_generation=controller.generation,
         parameters={"radius": 1.5, "grid": 24},
     )
-    empty_spheres_record = controller.result_store.results[0]
+    empty_spheres_record = controller.result_history.results[0]
     empty_spheres_state_id = controller.state_id
+    potential = Path("Fe.pot").resolve()
 
     controller.replace_structure(Atoms("Ni"), potential_path="Ni.pot")
     assert controller.empty_spheres is None
@@ -283,7 +286,7 @@ def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
     controller.use_result_state(empty_spheres_record.id)
 
     assert controller.state_id == empty_spheres_state_id
-    assert controller.potential_path == "Fe.pot"
+    assert controller.potential_path == str(potential)
     assert controller.empty_spheres is not None
     assert controller.empty_spheres.count == 0
     assert dict(controller.empty_spheres.parameters) == {"radius": 1.5, "grid": 24}

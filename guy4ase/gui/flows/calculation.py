@@ -228,7 +228,7 @@ def recompute_result(
     and potential always come from the current workspace, so selecting an old
     result never silently switches calculation lineage.
     """
-    record = controller.result_store.result(result_id)
+    record = controller.result_history.result(result_id)
     task = record.task_name
     if not task or record.input_parameters is None:
         return None

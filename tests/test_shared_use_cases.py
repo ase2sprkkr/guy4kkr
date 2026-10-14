@@ -149,8 +149,8 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
     window.on_finished(loaded)
 
     assert controller.result is backend_result
-    assert len(controller.result_store.results) == 1
-    record = controller.result_store.results[0]
+    assert len(controller.result_history.results) == 1
+    record = controller.result_history.results[0]
     assert record.result is backend_result
     assert record.input_state_id == window.request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)

@@ -20,9 +20,11 @@ class LoadedResult:
     """A result whose filesystem references have already been interpreted.
 
     ``output_path`` and ``potential_path`` are provenance file locations.
-    The authoritative physical potential, when successfully loaded, is attached
-    to ``atoms``. A missing referenced potential is different: reconstructing
-    atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
+    ``potential_version`` is the exact POTFIL version from which ``atoms`` were
+    loaded, so adoption never has to re-snapshot the path later. The
+    authoritative physical potential, when successfully loaded, is attached to
+    ``atoms``. A missing referenced potential is different: reconstructing atoms
+    depends on it, so ``potential_error`` contains the load error.
 
     ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
     this result originated from a persistent execution. It deliberately does
@@ -38,6 +40,7 @@ class LoadedResult:
     input_parameters: Any | None = None
     input_parameters_error: Exception | None = None
     persistent_ref: str | None = None
+    potential_version: PotentialFileVersion | None = None
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
@@ -99,7 +102,7 @@ def load_result(
     output, potential = _result_files(result, fallback_directory)
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
-    atoms, potential_error = _load_potential(potential)
+    atoms, potential_version, potential_error = _load_potential(potential)
     input_parameters, input_parameters_error = _load_input_parameters(result)
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
@@ -112,6 +115,7 @@ def load_result(
         input_parameters=input_parameters,
         input_parameters_error=input_parameters_error,
         persistent_ref=persistent_ref,
+        potential_version=potential_version,
     )
 
 
@@ -168,18 +172,30 @@ def _result_files(
 
 def _load_potential(
     potential: Path | None,
-) -> tuple[Any | None, Exception | None]:
+) -> tuple[Any | None, PotentialFileVersion | None, Exception | None]:
     if potential is None:
-        return None, None
+        return None, None, None
     if not potential.exists():
-        return None, FileNotFoundError(
-            f"Referenced potential file does not exist: {potential}"
+        return (
+            None,
+            None,
+            FileNotFoundError(f"Referenced potential file does not exist: {potential}"),
         )
     if not potential.is_file():
-        return None, IsADirectoryError(
-            f"Referenced potential is not a file: {potential}"
+        return (
+            None,
+            None,
+            IsADirectoryError(f"Referenced potential is not a file: {potential}"),
+        )
+
+    version = PotentialFileVersion.capture(potential)
+    if not version.available:
+        return (
+            None,
+            version,
+            OSError(f"Referenced potential file cannot be inspected: {potential}"),
         )
     try:
-        return load_potential_atoms(potential), None
-    except Exception as exc:  # noqa: BLE001 - parser failures are data
-        return None, exc
+        return load_potential_version(version), version, None
+    except Exception as exc:  # noqa: BLE001 - parser/filesystem failures are data
+        return None, version, exc

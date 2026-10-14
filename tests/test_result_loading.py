@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,7 +40,7 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
         result_loading_module.Potential,
         "from_file",
         staticmethod(
-            lambda path: potential_reads.append(path)
+            lambda path, **_kwargs: potential_reads.append(path)
             or SimpleNamespace(atoms=atoms)
         ),
     )
@@ -48,6 +49,8 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
 
     assert loaded.output_path == output.resolve()
     assert loaded.potential_path == converged.resolve()
+    assert loaded.potential_version is not None
+    assert loaded.potential_version.path == converged.resolve()
     assert loaded.atoms is atoms
     assert loaded.potential_error is None
     assert loaded.directory == str(run_directory.resolve())
@@ -96,12 +99,14 @@ def test_result_loading_uses_potential_fallbacks_and_fallback_directory(
     monkeypatch.setattr(
         result_loading_module.Potential,
         "from_file",
-        staticmethod(lambda _path: SimpleNamespace(atoms=atoms)),
+        staticmethod(lambda _path, **_kwargs: SimpleNamespace(atoms=atoms)),
     )
 
     loaded = load_result(result, fallback_directory=tmp_path)
 
     assert loaded.potential_path == potential.resolve()
+    assert loaded.potential_version is not None
+    assert loaded.potential_version.path == potential.resolve()
     assert loaded.atoms is atoms
     assert loaded.potential_error is None
 
@@ -135,6 +140,7 @@ def test_result_loading_reports_a_potential_path_that_is_not_a_file(tmp_path):
     loaded = load_result(result, fallback_directory=None)
 
     assert loaded.potential_path == potential_directory.resolve()
+    assert loaded.potential_version is None
     assert loaded.atoms is None
     assert isinstance(loaded.potential_error, IsADirectoryError)
 
@@ -173,14 +179,15 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
     controller = WorkspaceController(
         WorkspaceState(atoms=original_atoms, potential_path="Cu.pot")
     )
+    original_path = str(Path("Cu.pot").resolve())
 
     adoption = controller.adopt_external_result(load_result_file(output))
 
     assert adoption.potential_path == missing.resolve()
     assert isinstance(adoption.potential_error, FileNotFoundError)
-    assert controller.result_store.results[0].result is result
+    assert controller.result_history.results[0].result is result
     assert controller.atoms is original_atoms
-    assert controller.potential_path == "Cu.pot"
+    assert controller.potential_path == original_path
 
 
 def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatch):
@@ -192,6 +199,7 @@ def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatc
     )
     controller = WorkspaceController(workspace)
     generation = controller.generation
+    original_path = str(Path("Cu.pot").resolve())
     monkeypatch.setattr(
         result_loading_module.TaskResult,
         "from_file",
@@ -204,5 +212,5 @@ def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatc
     assert controller.generation == generation
     assert controller.atoms is atoms
     assert controller.directory == "original"
-    assert controller.potential_path == "Cu.pot"
-    assert controller.result_store.results == ()
+    assert controller.potential_path == original_path
+    assert controller.result_history.results == ()
