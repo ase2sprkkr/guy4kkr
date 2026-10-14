@@ -169,9 +169,14 @@ def load_result(
     output, potential = _result_files(result, fallback_directory)
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
-    if output_version is not None and output != output_version.path:
-        output_version = None
-    if output_version is None and output is not None:
+    if output_version is not None:
+        if output is None:
+            output = output_version.path
+        elif output != output_version.path:
+            raise ValueError(
+                "Parsed result reports an output path different from the exact file version that was read."
+            )
+    elif output is not None:
         output_version = FileVersion.capture(output)
 
     structure, potential_version, potential_error = _load_potential(potential)
