@@ -70,6 +70,22 @@ def test_add_result_rejects_partial_provenance(structure_id, input_state_id):
     assert len(store) == 0
 
 
+def test_add_result_does_not_expose_external_import_mode():
+    store = ResultStore()
+
+    with pytest.raises(TypeError, match="imported"):
+        store.add_result(
+            _result("dos"),
+            structure_id=None,
+            input_state_id=None,
+            input_parameters=None,
+            directory=None,
+            imported=True,
+        )
+
+    assert len(store) == 0
+
+
 def test_add_result_rejects_cross_structure_input_state_atomically():
     store = ResultStore()
     first_structure, _first_state = store.new_structure_state(
@@ -165,6 +181,8 @@ def test_add_external_result_snapshot_failure_does_not_commit_structure():
     assert record.id == 1
     assert record.structure_id == 1
     assert record.input_state_id == 1
+    assert record.imported
+    assert store.imported_results(None) == (record,)
 
 
 def test_new_structure_state_snapshot_failure_does_not_mutate_store(monkeypatch):

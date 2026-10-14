@@ -559,6 +559,42 @@ class ResultStore:
         if record.imported and state_id is not None:
             self._result_ids_by_state.setdefault(state_id, []).append(record.id)
 
+    def _prepare_result_record(
+        self,
+        result: ResultCapabilities,
+        *,
+        structure_id: int | None,
+        input_state_id: int | None,
+        output_state_id: int | None,
+        input_parameters: Any | None,
+        directory: str | None,
+        persistent_ref: str | None,
+        restart_scf: bool,
+        output_path: Path | None,
+        potential_path: Path | None,
+        imported: bool,
+    ) -> ResultRecord:
+        """Snapshot one result record completely before anything is committed."""
+        return ResultRecord(
+            id=self._next_result_id,
+            result=result,
+            task_name=_task_name(result),
+            structure_id=structure_id,
+            input_state_id=input_state_id,
+            output_state_id=output_state_id,
+            input_parameters=_snapshot_input_parameters(input_parameters),
+            directory=directory,
+            result_files=capture_result_files(result),
+            persistent_ref=persistent_ref,
+            restart_scf=restart_scf,
+            output_path=output_path,
+            output_version=(
+                FileVersion.capture(output_path) if output_path is not None else None
+            ),
+            potential_path=potential_path,
+            imported=imported,
+        )
+
     def add_result(
         self,
         result: ResultCapabilities,
@@ -574,7 +610,40 @@ class ResultStore:
         output_atoms: Any | None = None,
         output_potential_path: str | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
-        imported: bool = False,
+    ) -> ResultRecord:
+        """Record one native operation result and its optional state transition."""
+        return self._add_result(
+            result,
+            structure_id=structure_id,
+            input_state_id=input_state_id,
+            input_parameters=input_parameters,
+            directory=directory,
+            persistent_ref=persistent_ref,
+            restart_scf=restart_scf,
+            output_path=output_path,
+            potential_path=potential_path,
+            output_atoms=output_atoms,
+            output_potential_path=output_potential_path,
+            output_empty_spheres=output_empty_spheres,
+            imported=False,
+        )
+
+    def _add_result(
+        self,
+        result: ResultCapabilities,
+        *,
+        structure_id: int | None,
+        input_state_id: int | None,
+        input_parameters: Any | None,
+        directory: str | None,
+        persistent_ref: str | None = None,
+        restart_scf: bool = False,
+        output_path: Path | None = None,
+        potential_path: Path | None = None,
+        output_atoms: Any | None = None,
+        output_potential_path: str | None = None,
+        output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
+        imported: bool,
     ) -> ResultRecord:
         if (structure_id is None) != (input_state_id is None):
             raise ValueError(
@@ -591,12 +660,6 @@ class ResultStore:
                     f"{input_state.structure_id}, not {structure_id}."
                 )
 
-        task_name = _task_name(result)
-        parameter_snapshot = _snapshot_input_parameters(input_parameters)
-        result_files = capture_result_files(result)
-        output_version = (
-            FileVersion.capture(output_path) if output_path is not None else None
-        )
         result_id = self._next_result_id
         potential_source_result_id = (
             result_id
@@ -650,20 +713,16 @@ class ResultStore:
                 )
             output_state_id = prepared_state.state.id
 
-        record = ResultRecord(
-            id=result_id,
-            result=result,
-            task_name=task_name,
+        record = self._prepare_result_record(
+            result,
             structure_id=structure_id,
             input_state_id=input_state_id,
             output_state_id=output_state_id,
-            input_parameters=parameter_snapshot,
+            input_parameters=input_parameters,
             directory=directory,
-            result_files=result_files,
             persistent_ref=persistent_ref,
             restart_scf=restart_scf,
             output_path=output_path,
-            output_version=output_version,
             potential_path=potential_path,
             imported=imported,
         )
@@ -689,7 +748,7 @@ class ResultStore:
             return existing
 
         if atoms is None:
-            return self.add_result(
+            return self._add_result(
                 result,
                 structure_id=None,
                 input_state_id=None,
@@ -702,7 +761,7 @@ class ResultStore:
             )
 
         if result.produces_potential:
-            return self.add_result(
+            return self._add_result(
                 result,
                 structure_id=None,
                 input_state_id=None,
@@ -716,30 +775,21 @@ class ResultStore:
                 imported=True,
             )
 
-        task_name = _task_name(result)
-        parameter_snapshot = _snapshot_input_parameters(input_parameters)
-        result_files = capture_result_files(result)
-        output_version = (
-            FileVersion.capture(output_path) if output_path is not None else None
-        )
         prepared_state = self._prepare_structure_state(
             atoms,
             potential_path=(str(potential_path) if potential_path else None),
         )
         assert prepared_state.structure is not None
-        record = ResultRecord(
-            id=self._next_result_id,
-            result=result,
-            task_name=task_name,
+        record = self._prepare_result_record(
+            result,
             structure_id=prepared_state.structure.id,
             input_state_id=prepared_state.state.id,
             output_state_id=None,
-            input_parameters=parameter_snapshot,
+            input_parameters=input_parameters,
             directory=directory,
-            result_files=result_files,
             persistent_ref=persistent_ref,
+            restart_scf=False,
             output_path=output_path,
-            output_version=output_version,
             potential_path=potential_path,
             imported=True,
         )
