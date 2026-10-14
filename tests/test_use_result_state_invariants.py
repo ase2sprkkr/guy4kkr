@@ -116,9 +116,7 @@ def test_result_action_does_not_follow_overwritten_potential_path(tmp_path):
     widget.useStateRequested.connect(controller.use_result_state)
     widget.set_workspace_state(controller.structure_id, controller.state_id)
     widget.set_results(controller.result_store)
-    item = widget._find_result_item(historical.record.id)
-    assert item is not None
-    widget._selector.setCurrentItem(item)
+    assert widget.select_result(historical.record.id)
     assert widget._use_state_button.text() == "Use this potential"
 
     # This is the TOCTOU window from the bug report. The path now contains a

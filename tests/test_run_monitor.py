@@ -73,6 +73,17 @@ def test_attached_worker_receives_replayed_output_before_wait():
     assert finished == [result]
 
 
+def test_generic_monitor_has_cancellation_state_before_worker_start():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
+
+    window._on_stop()
+    app.processEvents()
+
+    assert window.runner is None
+    assert not window._stop_btn.isEnabled()
+
+
 def test_generic_monitor_close_hides_without_cancelling():
     app = QApplication.instance() or QApplication([])
 
@@ -82,7 +93,6 @@ def test_generic_monitor_close_hides_without_cancelling():
             return True
 
     window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
-    window._cancellation = RunCancellation()
     window._thread = RunningThread()
     window.show()
     app.processEvents()

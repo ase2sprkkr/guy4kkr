@@ -44,6 +44,25 @@ def test_calculation_request_requires_structure_and_state_ids():
         CalculationRequest(**common, structure_id=1)
 
 
+@pytest.mark.parametrize(
+    ("structure_id", "input_state_id"),
+    ((1, None), (None, 1)),
+)
+def test_add_result_rejects_partial_provenance(structure_id, input_state_id):
+    store = ResultStore()
+
+    with pytest.raises(ValueError, match="requires structure_id and input_state_id together"):
+        store.add_result(
+            SimpleNamespace(task_name="dos"),
+            structure_id=structure_id,
+            input_state_id=input_state_id,
+            input_parameters=None,
+            directory=None,
+        )
+
+    assert len(store) == 0
+
+
 def test_add_result_rejects_cross_structure_input_state_atomically():
     store = ResultStore()
     first_structure, _first_state = store.new_structure_state(

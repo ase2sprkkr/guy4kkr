@@ -578,6 +578,11 @@ class ResultStore:
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         imported: bool = False,
     ) -> ResultRecord:
+        if (structure_id is None) != (input_state_id is None):
+            raise ValueError(
+                "Result provenance requires structure_id and input_state_id together."
+            )
+
         input_state = None
         if input_state_id is not None:
             input_state = self.state(input_state_id)
