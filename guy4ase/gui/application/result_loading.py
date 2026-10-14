@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
-from ase2sprkkr.potentials.potentials import Potential
+from ase2sprkkr.potentials.potentials import Potential, PotentialFileChanged
+
+from guy4ase.gui.application.potential_version import PotentialFileVersion
+
+
+class PotentialVersionChanged(RuntimeError):
+    """The potential file no longer matches the version approved by the user."""
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,33 @@ def load_potential_atoms(file_path: str | Path) -> Any:
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
+    return atoms
+
+
+def require_potential_version_current(version: PotentialFileVersion) -> None:
+    """Reject a POTFIL path that no longer contains ``version``."""
+    current = version.current()
+    if not current.available or current != version:
+        raise PotentialVersionChanged(
+            f"Potential file changed after it was presented: {version.path}"
+        )
+
+
+def load_potential_version(version: PotentialFileVersion) -> Any:
+    """Load exactly ``version`` of a POTFIL, rejecting pre/read/post races."""
+    require_potential_version_current(version)
+    try:
+        atoms = load_potential_atoms(version.path)
+    except PotentialFileChanged as exc:
+        raise PotentialVersionChanged(
+            f"Potential file changed while it was being read: {version.path}"
+        ) from exc
+
+    after = version.current()
+    if not after.available or after != version:
+        raise PotentialVersionChanged(
+            f"Potential file changed while it was being read: {version.path}"
+        )
     return atoms
 
 

@@ -8,17 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from ase import Atoms
-from ase2sprkkr.potentials.potentials import PotentialFileChanged
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from guy4ase.gui.application.historical_state import (
+    HistoricalStateAlreadyActive,
+    NewHistoricalPotential,
+    resolve_historical_state,
+)
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_loading import LoadedResult, load_potential_atoms
-from guy4ase.gui.application.result_store import (
-    CalculationStateRecord,
-    ResultRecord,
-    ResultStore,
-)
+from guy4ase.gui.application.result_loading import LoadedResult
+from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
@@ -47,10 +47,6 @@ class DocumentChange(Enum):
 
 class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
-
-
-class PotentialVersionChanged(RuntimeError):
-    """The potential file no longer matches the version approved by the user."""
 
 
 @dataclass(frozen=True)
@@ -449,100 +445,32 @@ class WorkspaceController(QObject):
             workspace_updated=workspace_updated,
         )
 
-    def _known_state_for_potential(
-        self,
-        version: PotentialFileVersion,
-        *,
-        structure_id: int,
-    ) -> CalculationStateRecord | None:
-        return self._results.state_for_potential_version(
-            version,
-            structure_id=structure_id,
-        )
-
-    @staticmethod
-    def _load_potential_version(version: PotentialFileVersion) -> Any:
-        current = version.current()
-        if not current.available or current != version:
-            raise PotentialVersionChanged(
-                f"Potential file changed after it was presented: {version.path}"
-            )
-        try:
-            atoms = load_potential_atoms(version.path)
-        except PotentialFileChanged as exc:
-            raise PotentialVersionChanged(
-                f"Potential file changed while it was being read: {version.path}"
-            ) from exc
-        after = version.current()
-        if not after.available or after != version:
-            raise PotentialVersionChanged(
-                f"Potential file changed while it was being read: {version.path}"
-            )
-        return atoms
-
-    def _restore_state_atoms(self, state: CalculationStateRecord) -> Any:
-        version = state.potential_version
-        if version is not None and version.available:
-            return self._load_potential_version(version)
-        if state.structure_snapshot is not None:
-            return state.structure_snapshot.to_atoms()
-        raise ValueError("The selected result no longer has a reusable calculation input.")
-
     def use_result_state(
         self,
         result_id: int,
         expected_potential: PotentialFileVersion | None = None,
     ) -> None:
         """Activate a reconstructable historical state or approved current POTFIL."""
-        record = self._results.result(result_id)
-        state_id = record.output_state_id or record.input_state_id
-        if state_id is None:
-            raise ValueError("The selected result has no reusable calculation input.")
-        state = self._results.state(state_id)
+        resolution = resolve_historical_state(
+            self._results,
+            result_id,
+            active_state_id=self.state_id,
+            expected_potential=expected_potential,
+        )
+        if isinstance(resolution, HistoricalStateAlreadyActive):
+            return
 
-        target_state = state
-        if expected_potential is not None:
-            if state.potential_path is None:
-                raise ValueError("The selected result has no reusable potential.")
-            state_path = Path(state.potential_path).expanduser().absolute()
-            if expected_potential.path != state_path:
-                raise ValueError("The approved potential does not belong to this result.")
-
-            current = expected_potential.current()
-            if not current.available or current != expected_potential:
-                raise PotentialVersionChanged(
-                    f"Potential file changed after it was presented: {expected_potential.path}"
-                )
-
-            if self.state_id is not None:
-                active = self._results.state(self.state_id)
-                if (
-                    active.structure_id == state.structure_id
-                    and active.potential_version == expected_potential
-                ):
-                    return
-
-            atoms = None
-            if state.potential_version != expected_potential:
-                known_state = self._known_state_for_potential(
-                    expected_potential,
-                    structure_id=state.structure_id,
-                )
-                if known_state is not None:
-                    target_state = known_state
-                else:
-                    atoms = self._load_potential_version(expected_potential)
-                    target_state_id = self._results.new_child_state(
-                        state.id,
-                        potential_path=str(expected_potential.path),
-                        potential_version=expected_potential,
-                        empty_spheres=None,
-                    )
-                    target_state = self._results.state(target_state_id)
-            if atoms is None:
-                atoms = self._load_potential_version(expected_potential)
+        atoms = resolution.atoms
+        if isinstance(resolution, NewHistoricalPotential):
+            target_state_id = self._results.new_child_state(
+                resolution.parent_state.id,
+                potential_path=str(resolution.potential_version.path),
+                potential_version=resolution.potential_version,
+                empty_spheres=None,
+            )
+            target_state = self._results.state(target_state_id)
         else:
-            atoms = self._restore_state_atoms(target_state)
+            target_state = resolution.state
 
         self._workspace.atoms = atoms
         self._workspace.potential_path = target_state.potential_path

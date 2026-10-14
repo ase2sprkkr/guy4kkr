@@ -4,16 +4,18 @@ from types import SimpleNamespace
 
 import pytest
 from ase import Atoms
+from ase2sprkkr.potentials.potentials import PotentialFileChanged
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 from guy4ase.gui.application import result_loading
-from guy4ase.gui.application import workspace_controller as workspace_controller_module
-from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import (
-    PotentialVersionChanged,
-    WorkspaceController,
+from guy4ase.gui.application.historical_state import (
+    NewHistoricalPotential,
+    resolve_historical_state,
 )
+from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_loading import PotentialVersionChanged
+from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import files as file_flows
 
 
@@ -45,6 +47,35 @@ def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypa
     assert calls == [(str(path.resolve()), True)]
     assert loaded_atoms is atoms
     assert potential.atoms is atoms
+
+
+def test_exact_potential_loader_translates_backend_change(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("stable")
+    version = PotentialFileVersion.capture(path)
+
+    def changed(_path):
+        raise PotentialFileChanged("changed")
+
+    monkeypatch.setattr(result_loading, "load_potential_atoms", changed)
+
+    with pytest.raises(PotentialVersionChanged, match="while it was being read"):
+        result_loading.load_potential_version(version)
+
+
+def test_exact_potential_loader_rejects_change_before_parse(tmp_path, monkeypatch):
+    path = tmp_path / "Fe.pot"
+    path.write_text("stable")
+    version = PotentialFileVersion.capture(path)
+    path.write_text("changed after approval")
+    monkeypatch.setattr(
+        result_loading,
+        "load_potential_atoms",
+        lambda *_args, **_kwargs: pytest.fail("stale version must fail before parsing"),
+    )
+
+    with pytest.raises(PotentialVersionChanged, match="after it was presented"):
+        result_loading.load_potential_version(version)
 
 
 def test_potential_structure_flow_uses_authoritative_potential_loader(
@@ -153,7 +184,7 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
     controller.replace_structure(Atoms("Cu"))
     path.unlink()
     monkeypatch.setattr(
-        workspace_controller_module,
+        result_loading,
         "load_potential_atoms",
         lambda *_args, **_kwargs: pytest.fail(
             "missing historical POTFIL must fail before parsing"
@@ -164,6 +195,68 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
         controller.use_result_state(result.id)
 
     assert controller.atoms.get_chemical_symbols() == ["Cu"]
+
+
+def test_historical_resolution_of_unknown_current_potfil_is_read_only(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "Fe.pot"
+    path.write_text("historical potential")
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters(),
+            directory=str(tmp_path),
+            potential_path=str(path),
+        )
+    )
+    structure_id = controller.structure_id
+    historical_state_id = controller.state_id
+    assert structure_id is not None
+    assert historical_state_id is not None
+    result = controller.result_store.add_result(
+        SimpleNamespace(task_name="dos"),
+        structure_id=structure_id,
+        input_state_id=historical_state_id,
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+        potential_path=path,
+    )
+
+    path.write_text("externally modified current potential is a different version")
+    current_version = PotentialFileVersion.capture(path)
+    loaded_atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    monkeypatch.setattr(
+        "guy4ase.gui.application.historical_state.load_potential_version",
+        lambda version: loaded_atoms,
+    )
+
+    assert (
+        controller.result_store.state_for_potential_version(
+            current_version,
+            structure_id=structure_id,
+        )
+        is None
+    )
+    resolution = resolve_historical_state(
+        controller.result_store,
+        result.id,
+        active_state_id=controller.state_id,
+        expected_potential=current_version,
+    )
+
+    assert isinstance(resolution, NewHistoricalPotential)
+    assert resolution.atoms is loaded_atoms
+    assert resolution.parent_state.id == historical_state_id
+    assert resolution.potential_version == current_version
+    assert controller.state_id == historical_state_id
+    assert (
+        controller.result_store.state_for_potential_version(
+            current_version,
+            structure_id=structure_id,
+        )
+        is None
+    )
 
 
 def test_unknown_current_potfil_version_stays_in_structure_lineage(
@@ -204,15 +297,18 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     loaded_atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
     calls = []
 
-    def load(value):
-        calls.append(value)
+    def load(version):
+        calls.append(version)
         return loaded_atoms
 
-    monkeypatch.setattr(workspace_controller_module, "load_potential_atoms", load)
+    monkeypatch.setattr(
+        "guy4ase.gui.application.historical_state.load_potential_version",
+        load,
+    )
 
     controller.use_result_state(result.id, expected_potential=current_version)
 
-    assert calls == [current_version.path]
+    assert calls == [current_version]
     assert controller.atoms is loaded_atoms
     assert controller.structure_id == structure_id
     assert len(controller.result_store.structures) == 1

@@ -13,14 +13,11 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.result_loading import (
     LoadedResult,
+    PotentialVersionChanged,
     load_potential_atoms,
     load_result_file,
 )
-from guy4ase.gui.application.workspace_controller import (
-    PotentialVersionChanged,
-    ResultAdoption,
-    WorkspaceController,
-)
+from guy4ase.gui.application.workspace_controller import ResultAdoption, WorkspaceController
 from guy4ase.gui.flows.structure_candidates import (
     load_structure_candidate,
     structure_open_filter,
