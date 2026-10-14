@@ -10,7 +10,7 @@ from guy4ase.gui.input_parameters.tasks import (
     guided_task_definition,
     workflow_tasks,
 )
-from guy4ase.gui.presentation import RecentLaunch
+from guy4ase.gui.presentation import ActionCategory, RecentLaunch
 from guy4ase.gui.workflow.model import (
     ActionIcon,
     AvailableAction,
@@ -117,10 +117,10 @@ def _action(
     command: WorkflowCommand,
     title: str,
     description: str,
-    category: str,
+    category: ActionCategory,
     icon: ActionIcon,
 ) -> AvailableAction:
-    return AvailableAction(command, title, description, category, icon)  # type: ignore[arg-type]
+    return AvailableAction(command, title, description, category, icon)
 
 
 class WorkflowPlanner:
