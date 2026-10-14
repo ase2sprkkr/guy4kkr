@@ -29,7 +29,10 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    EmptySpheresAction,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.dialogs.structures.transforms import (
@@ -182,7 +185,7 @@ class MainWindow(QMainWindow):
         if empty_spheres is not None:
             self.empty_spheres_action.setText(
                 "Recalculate Empty Spheres"
-                if empty_spheres == "recalculate"
+                if empty_spheres is EmptySpheresAction.RECALCULATE
                 else "Add Empty Spheres"
             )
 

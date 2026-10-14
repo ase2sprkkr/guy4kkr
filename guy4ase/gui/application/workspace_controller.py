@@ -45,6 +45,13 @@ class DocumentChange(Enum):
     STALE = auto()
 
 
+class EmptySpheresAction(Enum):
+    """Recommended empty-sphere action for the current workspace draft."""
+
+    ADD = auto()
+    RECALCULATE = auto()
+
+
 class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
 
@@ -182,7 +189,7 @@ class WorkspaceController(QObject):
         return task or None
 
     def can_calculate(self) -> bool:
-        if not self._workspace.can_calculate():
+        if not self._workspace.is_calculation_input_complete():
             return False
         task = self.current_task()
         return task is None or self.can_run_task(task)
@@ -210,8 +217,15 @@ class WorkspaceController(QObject):
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()
 
-    def empty_spheres_action(self) -> str | None:
-        return self._workspace.empty_spheres_action()
+    def empty_spheres_action(self) -> EmptySpheresAction | None:
+        """Return the empty-sphere workflow action recommended for the draft."""
+        if self.atoms is None:
+            return None
+        if self.empty_spheres is not None:
+            return EmptySpheresAction.RECALCULATE
+        if self.has_vacuum_sites():
+            return None
+        return EmptySpheresAction.ADD
 
     def structure_change_requires_scf_restart(self) -> bool:
         if self.atoms is None or self.restarted:

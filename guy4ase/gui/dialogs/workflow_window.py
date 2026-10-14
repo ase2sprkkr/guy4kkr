@@ -24,7 +24,10 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    EmptySpheresAction,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
@@ -486,7 +489,7 @@ class WorkflowWindow(QMainWindow):
                 self._add_action(
                     (
                         "Recalculate Empty Spheres"
-                        if empty_spheres_action == "recalculate"
+                        if empty_spheres_action is EmptySpheresAction.RECALCULATE
                         else "Add Empty Spheres"
                     ),
                     "Find empty spheres explicitly before the SCF calculation",

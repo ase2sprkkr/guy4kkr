@@ -47,7 +47,7 @@ class EmptySpheresState:
 
 @dataclass
 class WorkspaceState:
-    """Inputs prepared for the next calculation.
+    """Inputs prepared for the next calculation and facts derived from them.
 
     Results deliberately do not live here. ``structure_id`` identifies the
     user-visible structure and ``state_id`` the exact structure/potential input
@@ -55,6 +55,10 @@ class WorkspaceState:
     authority for that state, including an attached SPR-KKR potential when one
     exists. ``potential_path`` is provenance metadata only and is never
     consulted to construct a calculation input.
+
+    Derived queries describe what the current draft *is*. Workflow capabilities
+    and decisions about what the application may do with it belong to
+    ``WorkspaceController``.
     """
 
     atoms: Any | None = None
@@ -76,7 +80,8 @@ class WorkspaceState:
     def structure_kind(self) -> StructureKind | None:
         return detect_structure_kind(self.atoms)
 
-    def can_calculate(self) -> bool:
+    def is_calculation_input_complete(self) -> bool:
+        """Return whether all generic inputs required to launch a task exist."""
         return (
             self.atoms is not None
             and self.input_parameters is not None
@@ -116,12 +121,3 @@ class WorkspaceState:
         return any(
             int(number) == 0 for number in getattr(self.atoms, "numbers", ())
         )
-
-    def empty_spheres_action(self) -> str | None:
-        if self.atoms is None:
-            return None
-        if self.empty_spheres is not None:
-            return "recalculate"
-        if self.has_vacuum_sites():
-            return None
-        return "add"

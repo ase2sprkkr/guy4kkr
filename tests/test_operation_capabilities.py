@@ -170,7 +170,7 @@ def test_empty_sphere_warning_does_not_preemptively_reset_scf(monkeypatch):
 
     assert structure_flows.update_empty_spheres(controller, None)
     assert not controller.restarted
-    assert controller.generation == generation
+    assert controller.generation == generation.next()
 
 
 def test_empty_sphere_warning_can_cancel_before_search(monkeypatch):
