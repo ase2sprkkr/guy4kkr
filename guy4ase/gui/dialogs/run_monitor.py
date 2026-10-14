@@ -109,6 +109,7 @@ class RunMonitorWindow(QDialog):
         self._finished_callback = on_finished
         self._warning_title = warning_title
         self._background_thread_factory = background_thread_factory
+        self._cancellation = RunCancellation()
         self._thread: QThread | None = None
         self._worker: QObject | None = None
         self._close_requested = False
@@ -162,7 +163,6 @@ class RunMonitorWindow(QDialog):
 
     def _start_worker(self) -> None:
         thread = QThread(self)
-        self._cancellation = RunCancellation()
         worker = self._worker_factory(self._cancellation)
         worker.moveToThread(thread)
 
