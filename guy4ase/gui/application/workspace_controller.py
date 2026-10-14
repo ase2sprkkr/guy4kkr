@@ -327,8 +327,12 @@ class WorkspaceController(QObject):
             owner.abandon_mutation()
             return DocumentChange.STALE
 
-        provenance = capture_structure(atoms, potential_path=None)
-        structure_id, state_id = self._history.add_structure_state(provenance)
+        try:
+            provenance = capture_structure(atoms, potential_path=None)
+            structure_id, state_id = self._history.add_structure_state(provenance)
+        except Exception:
+            owner.abandon_mutation()
+            raise
         owner.replace_after_mutation(atoms, provenance)
         self._workspace.structure_id = structure_id
         self._workspace.state_id = state_id
@@ -494,11 +498,7 @@ class WorkspaceController(QObject):
             target_state = self._history.state(target_state_id)
         else:
             target_state = resolution.state
-            provenance = capture_structure(
-                atoms,
-                potential_path=target_state.potential_path,
-                potential_version=target_state.potential_version,
-            )
+            provenance = target_state.structure_provenance
 
         self._workspace.structure = provenance.materialized(atoms)
         self._workspace.structure_id = target_state.structure_id
@@ -569,26 +569,32 @@ class WorkspaceController(QObject):
             owner.abandon_mutation()
             return DocumentChange.STALE
 
-        empty_spheres = EmptySpheresState(count=count, parameters=parameters or {})
-        result = EmptySpheresResult(found=empty_spheres.count)
-        captured = capture_result(
-            result,
-            input_parameters=empty_spheres.parameters,
-            output_path=None,
-            potential_path=None,
-        )
-        output_provenance = (
-            capture_structure(updated, potential_path=None) if structure_changed else None
-        )
+        try:
+            empty_spheres = EmptySpheresState(count=count, parameters=parameters or {})
+            result = EmptySpheresResult(found=empty_spheres.count)
+            captured = capture_result(
+                result,
+                input_parameters=empty_spheres.parameters,
+                output_path=None,
+                potential_path=None,
+            )
+            output_provenance = (
+                capture_structure(updated, potential_path=None)
+                if structure_changed
+                else None
+            )
 
-        record = self._history.add_result(
-            captured,
-            structure_id=structure_id,
-            input_state_id=state_id,
-            directory=self.directory,
-            output_structure=output_provenance,
-            output_empty_spheres=empty_spheres,
-        )
+            record = self._history.add_result(
+                captured,
+                structure_id=structure_id,
+                input_state_id=state_id,
+                directory=self.directory,
+                output_structure=output_provenance,
+                output_empty_spheres=empty_spheres,
+            )
+        except Exception:
+            owner.abandon_mutation()
+            raise
 
         assert record.output_state_id is not None
         state = self._history.state(record.output_state_id)
