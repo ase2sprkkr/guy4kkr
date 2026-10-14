@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
 from guy4ase.gui.application.attached_run_execution import AttachedRunExecution
@@ -14,20 +14,18 @@ from guy4ase.gui.application.execution_cancellation import (
     RunCancellation,
 )
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
-from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, state_label
+from guy4ase.gui.dialogs.run_monitor import (
+    RunMonitorWindow,
+    RunMonitorWorker,
+    state_label,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-class AttachedRunWorker(QObject):
+class AttachedRunWorker(RunMonitorWorker):
     """Qt signal adapter around :class:`AttachedRunExecution`."""
-
-    output = pyqtSignal(str, str)
-    status = pyqtSignal(str)
-    error = pyqtSignal(str)
-    finished = pyqtSignal(object)
-    cancelled = pyqtSignal()
 
     def __init__(
         self,

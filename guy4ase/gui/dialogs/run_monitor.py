@@ -30,20 +30,34 @@ def state_label(state: Any) -> str:
     return str(value).replace("_", " ").capitalize()
 
 
+class RunMonitorWorker(QObject):
+    """Formal Qt adapter contract consumed by :class:`RunMonitorWindow`."""
+
+    output = pyqtSignal(str, str)
+    status = pyqtSignal(str)
+    warning = pyqtSignal(str)
+    error = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    cancelled = pyqtSignal()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        raise NotImplementedError
+
+
 class RunMonitorWindow(QDialog):
     """Display one calculation worker without knowing how its runner was created.
 
-    The caller owns launch/attach/persistence semantics. ``worker_factory`` only
-    has to return a QObject exposing ``run`` and the usual output/status/error/
-    finished/cancelled signals. The worker registers its concrete runner in the
-    supplied :class:`RunCancellation`.
+    The caller owns launch/attach/persistence semantics. ``worker_factory``
+    returns a :class:`RunMonitorWorker`; the worker registers its concrete
+    runner in the supplied :class:`RunCancellation`.
     """
 
     refreshed = pyqtSignal(str)
 
     def __init__(
         self,
-        worker_factory: Callable[[RunCancellation], QObject],
+        worker_factory: Callable[[RunCancellation], RunMonitorWorker],
         parent: QWidget | None = None,
         *,
         title: str = "Calculation Run",
@@ -65,7 +79,7 @@ class RunMonitorWindow(QDialog):
         self._background_thread_factory = background_thread_factory
         self._cancellation = RunCancellation()
         self._thread: QThread | None = None
-        self._worker: QObject | None = None
+        self._worker: RunMonitorWorker | None = None
         self._close_requested = False
         self.refreshed.connect(self._set_status)
 
@@ -129,8 +143,7 @@ class RunMonitorWindow(QDialog):
         thread.started.connect(worker.run)
         worker.output.connect(self._append_output)
         worker.status.connect(self._set_status)
-        if hasattr(worker, "warning"):
-            worker.warning.connect(self._on_warning)
+        worker.warning.connect(self._on_warning)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
         worker.cancelled.connect(self._on_cancelled)

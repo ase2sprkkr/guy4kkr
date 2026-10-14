@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
-from threading import Thread
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
 
 from guy4ase.gui.application.execution_cancellation import (
     ExecutionCancelled,
@@ -12,22 +11,16 @@ from guy4ase.gui.application.execution_cancellation import (
 )
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace_controller import CalculationRequest
-from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, RunMonitorWorker
 
 
 logger = logging.getLogger(__name__)
 
 
-class _SprkkrRunWorker(QObject):
+class _SprkkrRunWorker(RunMonitorWorker):
     """Qt signal adapter around the backend-only :class:`SprkkrExecution`."""
 
-    output = pyqtSignal(str, str)  # (text, kind)
-    status = pyqtSignal(str)
-    warning = pyqtSignal(str)
     persistentJobChanged = pyqtSignal(str)
-    error = pyqtSignal(str)
-    finished = pyqtSignal(object)
-    cancelled = pyqtSignal()
 
     def __init__(
         self,
@@ -98,7 +91,6 @@ class SprkkrRunWindow(RunMonitorWindow):
             title="SPRKKR Run",
             header=header,
             warning_title="MPI Not Detected",
-            background_thread_factory=lambda **kwargs: Thread(**kwargs),
             on_finished=on_finished,
             autostart=False,
         )
