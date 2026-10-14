@@ -102,6 +102,7 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
             self.kwargs = kwargs
             self.shown = False
             self.started = False
+            self.closed = False
 
         def show(self):
             self.shown = True
@@ -110,7 +111,7 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
             self.started = True
 
         def close(self):
-            pass
+            self.closed = True
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", RunWindow)
 
@@ -124,6 +125,7 @@ def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_pat
     assert window is not None
     assert window.shown
     assert window.started
+    assert not window.closed
     assert window.kwargs["request"].input_parameters.task_name.lower() == "torque"
 
 
