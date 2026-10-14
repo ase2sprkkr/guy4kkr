@@ -14,7 +14,7 @@ from ase2sprkkr.common.warnings import DataValidityError
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QDialog
+from PyQt6.QtWidgets import QApplication, QDialog, QPlainTextEdit
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -23,6 +23,8 @@ from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.specs import bsf, scf
 from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.gui.widgets.calculation_setup import CalculationSetupPanel
+from guy4ase.gui.widgets.structure_overview import StructureOverviewWidget
 from guy4ase.main import GuiApplication
 
 
@@ -269,12 +271,26 @@ def test_preview_edits_current_task_not_fresh_scf(app, monkeypatch, accept, tmp_
     window.controller.replace_input_parameters(p)
     result = p.copy(copy_values=True)
     result.ENERGY.NE = [42]
-    def edit(current, **kwargs):
+
+    def edit(controller, _parent, **_kwargs):
+        current = controller.input_parameters
         assert current.task_name == p.task_name
         assert current.SITES.NL().tolist() == p.SITES.NL().tolist()
-        return result if accept else None
-    monkeypatch.setattr(main_window, 'edit_input_parameters', edit)
-    window._on_input_preview_double_click(None)
+        if accept:
+            controller.replace_input_parameters(result)
+
+    monkeypatch.setattr(
+        main_window.input_editing_flow,
+        'edit_current_input_parameters',
+        edit,
+    )
+    setup = window.findChild(CalculationSetupPanel)
+    assert setup is not None
+    preview = setup.findChild(QPlainTextEdit)
+    assert preview is not None
+    QTest.mouseDClick(preview.viewport(), Qt.MouseButton.LeftButton)
+    app.processEvents()
+
     assert window.controller.input_parameters is (result if accept else p)
     assert window.controller.input_parameters.task_name.lower() == 'dos'
     window.close()
@@ -304,14 +320,28 @@ def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
         recent_files_path=tmp_path / 'recent.json',
     )
     window = gui.create_main_window()
+    overview = window.findChild(StructureOverviewWidget)
+    setup = window.findChild(CalculationSetupPanel)
+    assert overview is not None
+    assert setup is not None
+    assert setup.input_preview_text
+    assert setup.directory_text == '/tmp/calculation'
+    assert setup.potential_path_text == '/tmp/potential'
 
     window.controller.reset()
+    app.processEvents()
 
     assert window.controller.atoms is None
     assert window.controller.input_parameters is None
     assert window.controller.directory is None
     assert window.controller.potential_path is None
     assert window.controller.result is None
+    assert overview.scf_status_text == ''
+    assert overview.info_text.startswith('No structure loaded.')
+    assert setup.input_preview_text == ''
+    assert setup.directory_text == '—'
+    assert setup.potential_path_text == '—'
+    assert not setup.save_input_enabled
     window.close()
 
 
@@ -327,8 +357,10 @@ def test_main_window_uses_site_aware_structure_formula(app, tmp_path):
 
     window.controller.replace_structure(atoms)
 
+    overview = window.findChild(StructureOverviewWidget)
+    assert overview is not None
     assert 'occupancy' not in atoms.arrays
-    assert window.info_label.text().startswith('Formula: (Fe|Co)2Ni\n')
+    assert overview.info_text.startswith('Formula: (Fe|Co)2Ni\n')
     window.close()
 
 
@@ -346,25 +378,29 @@ def _atoms_with_scf_status(status):
 def test_scf_status_is_cleared_when_new_status_is_start(app, tmp_path):
     gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
     window = gui.create_main_window()
+    overview = window.findChild(StructureOverviewWidget)
+    assert overview is not None
 
     window.controller.replace_structure(_atoms_with_scf_status('CONVERGED'))
-    assert window.converged_label.text() == 'SCF Status: CONVERGED'
+    assert overview.scf_status_text == 'SCF Status: CONVERGED'
 
     window.controller.replace_structure(_atoms_with_scf_status('START'))
-    assert window.converged_label.text() == ''
+    assert overview.scf_status_text == ''
     window.close()
 
 
 def test_scf_status_is_cleared_when_structure_is_reset(app, tmp_path):
     gui = GuiApplication(recent_files_path=tmp_path / 'recent.json')
     window = gui.create_main_window()
+    overview = window.findChild(StructureOverviewWidget)
+    assert overview is not None
 
     window.controller.replace_structure(_atoms_with_scf_status('CONVERGED'))
-    assert window.converged_label.text() == 'SCF Status: CONVERGED'
+    assert overview.scf_status_text == 'SCF Status: CONVERGED'
 
     window.controller.reset()
     assert window.controller.atoms is None
-    assert window.converged_label.text() == ''
+    assert overview.scf_status_text == ''
     window.close()
 
 

@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Optional
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QGridLayout,
@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QStyle,
@@ -28,6 +29,8 @@ from guy4ase.physics.composition import site_composition, structure_formula
 
 class StructureOverviewWidget(QWidget):
     """Present the current structure without owning workspace/application policy."""
+
+    recentStartRequested = pyqtSignal()
 
     def __init__(
         self,
@@ -63,8 +66,31 @@ class StructureOverviewWidget(QWidget):
         self._stack.setCurrentWidget(self._welcome_widget)
 
     @property
-    def recent_start_button(self) -> QToolButton:
-        return self._recent_start_button
+    def info_text(self) -> str:
+        """Return the rendered structure summary."""
+        return self.info_label.text()
+
+    @property
+    def scf_status_text(self) -> str:
+        """Return the rendered SCF status summary."""
+        return self.converged_label.text()
+
+    def set_recent_start(
+        self,
+        *,
+        title: str | None,
+        tooltip: str = "",
+        menu: QMenu | None = None,
+    ) -> None:
+        """Present or hide the recent-item continuation affordance."""
+        visible = title is not None
+        self._recent_start_button.setVisible(visible)
+        if not visible:
+            self._recent_start_button.setMenu(None)
+            return
+        self._recent_start_button.setText(title)
+        self._recent_start_button.setToolTip(tooltip)
+        self._recent_start_button.setMenu(menu)
 
     def set_structure(
         self,
@@ -154,6 +180,9 @@ class StructureOverviewWidget(QWidget):
         self._recent_start_button.setStyleSheet("font-size: 11pt; padding: 8px;")
         self._recent_start_button.setPopupMode(
             QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
+        self._recent_start_button.clicked.connect(
+            lambda _checked=False: self.recentStartRequested.emit()
         )
         self._recent_start_button.hide()
         layout.addWidget(

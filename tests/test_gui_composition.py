@@ -3,6 +3,7 @@ import json
 import os
 
 from ase import Atoms
+from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/guy4ase-test-matplotlib')
@@ -72,13 +73,6 @@ def test_expert_workspace_actions_share_availability_policy(tmp_path):
     assert all(not action.isEnabled() for action in structure_actions)
     assert not expert.run_calculation_action.isEnabled()
 
-    assert expert.save_btn.defaultAction() is expert.save_structure_action
-    assert (
-        expert.assign_elements_btn.defaultAction()
-        is expert.edit_structure_action
-    )
-    assert expert.run_calc_btn.defaultAction() is expert.run_calculation_action
-
     gui.controller.replace_structure(
         Atoms(
             "Fe",
@@ -91,7 +85,7 @@ def test_expert_workspace_actions_share_availability_policy(tmp_path):
     assert all(action.isEnabled() for action in structure_actions)
     assert not expert.run_calculation_action.isEnabled()
 
-    gui.controller.replace_input_parameters(object())
+    gui.controller.replace_input_parameters(InputParameters.create("scf"))
     gui.controller.change_directory(str(tmp_path))
     application.processEvents()
     assert expert.run_calculation_action.isEnabled()

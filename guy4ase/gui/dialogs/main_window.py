@@ -33,7 +33,7 @@ from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.widgets.browser_panel import BrowserPanel
-from guy4ase.gui.widgets.calculation_setup import CalculationSetupPanel
+from guy4ase.gui.widgets.expert_side_panel import ExpertSidePanel
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     populate_recent_menu,
@@ -72,32 +72,28 @@ class MainWindow(QMainWindow):
             "input": None,
             "output": None,
         }
-        self._recent_start_menu: Optional[QMenu] = None
+        self._recent_start_menu: QMenu | None = None
 
         self._build_ui()
         self._connect_workspace()
         self.recent_history.changed.connect(self._refresh_recent_menus)
         self._refresh_recent_menus()
         self._workspace_structure_changed(self.controller.atoms)
-        self._workspace_input_parameters_changed(
-            self.controller.input_parameters
-        )
+        self._workspace_input_parameters_changed(self.controller.input_parameters)
         self._workspace_directory_changed()
 
     @property
     def result_actions_widget(self) -> ResultActionsWidget:
-        """Return the result view composed into the calculation panel."""
-        return self._calculation_panel.result_actions_widget
+        """Return the result view exposed to the application composition root."""
+        return self._expert_side_panel.result_actions_widget
 
     @property
     def browser_panel(self) -> BrowserPanel:
-        """Return the session-independent browser entry points."""
-        return self._calculation_panel.browser_panel
+        """Return the session-independent browser exposed to the composition root."""
+        return self._expert_side_panel.browser_panel
 
     def _connect_workspace(self) -> None:
-        self.controller.structureChanged.connect(
-            self._workspace_structure_changed
-        )
+        self.controller.structureChanged.connect(self._workspace_structure_changed)
         self.controller.inputParametersChanged.connect(
             self._workspace_input_parameters_changed
         )
@@ -106,25 +102,27 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_structure_changed(self, atoms: Any) -> None:
-        self._calculation_panel.set_potential_path(self.controller.potential_path)
+        self._calculation_setup.set_potential_path(self.controller.potential_path)
         self._structure_overview.set_structure(
             atoms,
             scf_status=self.controller.scf_status(),
             scf_converged=self.controller.is_scf_converged(),
         )
         self._refresh_action_availability()
-        self._calculation_panel.set_input_parameters(
-            self.controller.input_parameters
-        )
 
-    def _workspace_input_parameters_changed(self, _parameters: Any) -> None:
-        self._calculation_panel.set_input_parameters(
-            self.controller.input_parameters
-        )
+    def _workspace_input_parameters_changed(self, parameters: Any) -> None:
+        self._present_input_parameters(parameters)
         self._refresh_action_availability()
 
+    def _present_input_parameters(self, parameters: Any) -> None:
+        preview = None if parameters is None else parameters.to_string(validate=False)
+        self._calculation_setup.set_input_preview(
+            preview,
+            input_available=parameters is not None,
+        )
+
     def _workspace_directory_changed(self) -> None:
-        self._calculation_panel.set_directory(self.controller.directory)
+        self._calculation_setup.set_directory(self.controller.directory)
         self._refresh_action_availability()
 
     def _refresh_action_availability(self) -> None:
@@ -142,7 +140,7 @@ class MainWindow(QMainWindow):
 
         has_input = self.controller.input_parameters is not None
         self.save_input_action.setEnabled(has_input)
-        self._calculation_panel.set_save_input_enabled(has_input)
+        self._calculation_setup.set_save_input_enabled(has_input)
         self.run_calculation_action.setEnabled(self.controller.can_calculate())
 
         empty_spheres = self.controller.empty_spheres_action()
@@ -168,7 +166,7 @@ class MainWindow(QMainWindow):
     def _refresh_recent_menus(self) -> None:
         for what in ("structure", "input", "output"):
             self._refresh_recent_menu(what)
-        self._refresh_recent_start_button()
+        self._refresh_recent_start()
 
     def open_recent_file(self, kind: RecentKind, file_path: str) -> None:
         file_flows.open_recent(
@@ -188,31 +186,28 @@ class MainWindow(QMainWindow):
             self,
         )
 
-    def _refresh_recent_start_button(self) -> None:
-        button = self._structure_overview.recent_start_button
+    def _refresh_recent_start(self) -> None:
         launch = recent_launch(self.recent_history)
-        button.setVisible(launch is not None)
         if launch is None:
+            self._structure_overview.set_recent_start(title=None)
             return
 
-        button.setText(launch.title)
-        button.setToolTip(launch.path)
         self._recent_start_menu = build_recent_launch_menu(
-            button,
+            self._structure_overview,
             self.recent_history,
             self.continue_recent_file,
+            menu=self._recent_start_menu,
         )
-        button.setMenu(self._recent_start_menu)
+        self._structure_overview.set_recent_start(
+            title=launch.title,
+            tooltip=launch.path,
+            menu=self._recent_start_menu,
+        )
 
-        try:
-            button.clicked.disconnect()
-        except TypeError:
-            pass
-        button.clicked.connect(
-            lambda _checked=False, item=launch: self.continue_recent_file(
-                item.kind, item.path
-            )
-        )
+    def _continue_recent_start(self) -> None:
+        launch = recent_launch(self.recent_history)
+        if launch is not None:
+            self.continue_recent_file(launch.kind, launch.path)
 
     def _build_ui(self) -> None:
         self._build_menu_bar()
@@ -233,20 +228,24 @@ class MainWindow(QMainWindow):
             load_output=self.load_sprkkr_output,
             parent=splitter,
         )
-        self._calculation_panel = CalculationSetupPanel(
+        self._structure_overview.recentStartRequested.connect(
+            self._continue_recent_start
+        )
+
+        self._expert_side_panel = ExpertSidePanel(
             edit_input=self._on_edit_sprkkr_input,
             load_input=self._on_load_sprkkr_input,
             save_input=self._on_save_sprkkr_input,
             choose_directory=self._choose_working_directory,
             run_calculation_action=self.run_calculation_action,
             load_output=self.load_sprkkr_output,
-            value_action=lambda value, action: execute_value_action(
-                value, action, self
-            ),
+            value_action=lambda value, action: execute_value_action(value, action, self),
             parent=splitter,
         )
+        self._calculation_setup = self._expert_side_panel.calculation_setup
+
         splitter.addWidget(self._structure_overview)
-        splitter.addWidget(self._calculation_panel)
+        splitter.addWidget(self._expert_side_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([1000, 350])
@@ -259,17 +258,11 @@ class MainWindow(QMainWindow):
         create_action.setShortcut("Ctrl+N")
         create_action.triggered.connect(self.create_structure)
         structure_menu.addAction(create_action)
-        create_database_action = QAction(
-            "Create from &Prototype Database...", self
-        )
-        create_database_action.triggered.connect(
-            self.create_structure_from_database
-        )
+        create_database_action = QAction("Create from &Prototype Database...", self)
+        create_database_action.triggered.connect(self.create_structure_from_database)
         structure_menu.addAction(create_database_action)
 
-        download_action = QAction(
-            "&Download from Online Database...", self
-        )
+        download_action = QAction("&Download from Online Database...", self)
         download_action.triggered.connect(self.download_structure)
         structure_menu.addAction(download_action)
 
@@ -305,21 +298,13 @@ class MainWindow(QMainWindow):
         )
         run_menu.addAction(self.empty_spheres_action)
         run_menu.addSeparator()
-        self.run_calculation_action = QAction(
-            "Run SPRKKR Calculation...", self
-        )
-        self.run_calculation_action.triggered.connect(
-            self._on_run_sprkkr_calculation
-        )
+        self.run_calculation_action = QAction("Run SPRKKR Calculation...", self)
+        self.run_calculation_action.triggered.connect(self._on_run_sprkkr_calculation)
         run_menu.addAction(self.run_calculation_action)
 
         view_menu = menubar.addMenu("&View")
-        self.visualize_structure_action = QAction(
-            "&Visualize Structure", self
-        )
-        self.visualize_structure_action.triggered.connect(
-            self._visualize_structure
-        )
+        self.visualize_structure_action = QAction("&Visualize Structure", self)
+        self.visualize_structure_action.triggered.connect(self._visualize_structure)
         view_menu.addAction(self.visualize_structure_action)
 
         tools_menu = menubar.addMenu("&Tools")
@@ -346,12 +331,8 @@ class MainWindow(QMainWindow):
         self.rotate_structure_action.triggered.connect(self._on_rotate_structure)
         structure_menu.addAction(self.rotate_structure_action)
 
-        self.build_2d_structure_action = QAction(
-            "Build &2D Structure...", self
-        )
-        self.build_2d_structure_action.triggered.connect(
-            self.build_2d_structure
-        )
+        self.build_2d_structure_action = QAction("Build &2D Structure...", self)
+        self.build_2d_structure_action.triggered.connect(self.build_2d_structure)
         structure_menu.addAction(self.build_2d_structure_action)
         structure_menu.addSeparator()
 
@@ -366,9 +347,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _visualize_structure(self) -> None:
-        visualization_flow.visualize_structure(
-            self.controller, self.settings, self
-        )
+        visualization_flow.visualize_structure(self.controller, self.settings, self)
 
     def _open_settings(self) -> None:
         edit_settings(self.settings, self)
@@ -388,9 +367,7 @@ class MainWindow(QMainWindow):
         structure_flows.download_structure(self.controller, self)
 
     def _on_save_structure(self) -> None:
-        file_flows.save_structure(
-            self.controller, self.recent_history, self
-        )
+        file_flows.save_structure(self.controller, self.recent_history, self)
 
     def _on_create_sprkkr_input(self, task: str = "scf") -> None:
         if not isinstance(task, str):
@@ -422,9 +399,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_save_sprkkr_input(self) -> None:
-        file_flows.save_input_parameters(
-            self.controller, self.recent_history, self
-        )
+        file_flows.save_input_parameters(self.controller, self.recent_history, self)
 
     def _choose_working_directory(self) -> None:
         calculation_flow.choose_working_directory(
