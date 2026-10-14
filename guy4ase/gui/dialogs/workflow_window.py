@@ -331,7 +331,11 @@ class WorkflowWindow(QMainWindow):
             }[command.kind]()
             return
         if isinstance(command, Build2D):
-            self._build_2d(surface_mode=command.kind is Build2DKind.SURFACE)
+            surface_mode = {
+                Build2DKind.SURFACE: True,
+                Build2DKind.STRUCTURE: False,
+            }[command.kind]
+            self._build_2d(surface_mode=surface_mode)
             return
         if isinstance(command, Load):
             {
