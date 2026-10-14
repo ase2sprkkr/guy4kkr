@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from ase import Atoms
 import pytest
 
+from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.structure_provenance import materialize_structure
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.dialogs.structures import build_2d as build_2d_dialog
 from guy4ase.gui.flows import structure_candidates as candidate_flows
@@ -15,10 +17,13 @@ def test_structure_candidate_load_has_no_workspace_side_effects(tmp_path):
     path = tmp_path / "replacement.cif"
     loaded = Atoms("Fe")
     workspace_atoms = Atoms("Cu")
-    workspace = WorkspaceState(
-        atoms=workspace_atoms,
-        potential_path="Cu.pot",
+    potential = tmp_path / "Cu.pot"
+    potential.write_text("potential", encoding="utf-8")
+    workspace_structure = materialize_structure(
+        workspace_atoms,
+        potential_version=PotentialFileVersion.capture(potential),
     )
+    workspace = WorkspaceState(structure=workspace_structure)
 
     candidate = candidate_flows.load_structure_candidate(
         path,
@@ -26,9 +31,12 @@ def test_structure_candidate_load_has_no_workspace_side_effects(tmp_path):
         reader=lambda value: loaded if value == path.resolve() else None,
     )
 
-    assert candidate == StructureCandidate(loaded, path.resolve())
+    assert candidate is not None
+    assert candidate.atoms is loaded
+    assert candidate.source_path == path.resolve()
+    assert candidate.structure.provenance.potential_version is None
     assert workspace.atoms is workspace_atoms
-    assert workspace.potential_path == "Cu.pot"
+    assert workspace.potential_path == str(potential.resolve())
 
 
 def test_build_2d_replacement_uses_shared_structure_source(monkeypatch):
@@ -43,7 +51,7 @@ def test_build_2d_replacement_uses_shared_structure_source(monkeypatch):
 
     def select(*args, **kwargs):
         calls.append((args, kwargs))
-        return StructureCandidate(loaded)
+        return StructureCandidate(materialize_structure(loaded))
 
     monkeypatch.setattr(build_2d_dialog, "select_structure_source", select)
 
