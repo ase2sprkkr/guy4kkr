@@ -32,7 +32,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     arpes_emax = energy_bound("EMAX", "Maximum energy:")
     arpes_ne = main_energy_mesh_field("NE", "Energy points:", "integer", minimum=1, maximum=10000)
     miller = field("TASK", "MILLER_HKL", "Surface Miller indices [h, k, l]:", "literal")
-    arpes = TaskDialogSpec("arpes", "arpes", "ARPES Calculation Setup", (
+    arpes = TaskDialogSpec("ARPES Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common ARPES settings", (
             mirror(ephot), mirror(pol), mirror(arpes_emin), mirror(arpes_emax), mirror(arpes_ne), mirror(miller),
         )),), QUICK_COLOR, quick=True),
