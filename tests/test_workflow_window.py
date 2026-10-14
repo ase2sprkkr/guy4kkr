@@ -4,84 +4,45 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
-from ase.build import bulk as build_bulk
-from ase2sprkkr.sprkkr.build import semiinfinite_system
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.dialogs import workflow_window as workflow_module
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.presentation import RecentLaunch
+from guy4ase.gui.workflow.model import (
+    Build2D,
+    Build2DKind,
+    ContinueRecent,
+    CreateStructure,
+    CreateStructureKind,
+    Load,
+    LoadKind,
+    RunTask,
+    StartOver,
+    UpdateEmptySpheres,
+    UseForNewCalculation,
+    VisualizeStructure,
+)
 from guy4ase.main import GuiApplication
 
 
 def _workflow(tmp_path, *, workspace=None):
     gui = GuiApplication(
         workspace=workspace,
-        recent_files_path=tmp_path / 'recent.json',
+        recent_files_path=tmp_path / "recent.json",
     )
     return gui, gui.create_workflow_window()
 
 
-def _action_title(widget):
-    return str(
-        widget.property("workflowActionTitle")
-        or widget.text().splitlines()[0]
+def _commands(window):
+    plan = window._actions.plan
+    assert plan is not None
+    return tuple(
+        action.command
+        for group in plan.groups
+        for action in group.actions
     )
-
-
-def _action_titles(window):
-    titles = []
-    for group in window._ACTION_GROUPS:
-        layout = window._action_group_layouts.get(group)
-        if layout is None:
-            continue
-        titles.extend(
-            _action_title(layout.itemAt(index).widget())
-            for index in range(1, layout.count())
-        )
-    return titles
-
-
-def _group_titles(window):
-    return [
-        window._actions_layout.itemAt(index)
-        .widget()
-        .findChild(QLabel, "workflowActionGroupLabel")
-        .text()
-        for index in range(window._actions_layout.count())
-    ]
-
-
-def _actions_in_group(window, group):
-    layout = window._action_group_layouts[group]
-    return [
-        _action_title(layout.itemAt(index).widget())
-        for index in range(1, layout.count())
-    ]
-
-
-def _action_widget(window, group, title):
-    layout = window._action_group_layouts[group]
-    return next(
-        layout.itemAt(index).widget()
-        for index in range(1, layout.count())
-        if _action_title(layout.itemAt(index).widget()) == title
-    )
-
-
-def test_load_output_is_only_available_on_the_start_screen(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    _gui, window = _workflow(tmp_path)
-
-    assert "Load SPR-KKR Output" in _action_titles(window)
-
-    window.controller.replace_structure(
-        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    )
-    application.processEvents()
-
-    assert "Load SPR-KKR Output" not in _action_titles(window)
-    window.close()
 
 
 def test_workflow_and_expert_share_one_workspace(tmp_path):
@@ -94,171 +55,119 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     expert = gui.create_main_window()
     assert expert.controller is window.controller is gui.controller
     assert expert.recent_history is window.recent_history is gui.recent_files
-    window.controller.replace_structure(
+
+    expert.controller.replace_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
     application.processEvents()
+
     assert workspace.atoms is not None
     assert expert.controller.atoms is workspace.atoms
+    assert RunTask(guided_task_definition("scf")) in _commands(window)
     expert.close()
     window.close()
 
 
-def test_structure_kind_follows_external_workspace_changes(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    gui, workflow = _workflow(tmp_path)
-    expert = gui.create_main_window()
-    bulk = Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True)
-    layer = semiinfinite_system(build_bulk("Fe", "bcc", a=2.8), (0, 0))
-
-    expert.controller.replace_structure(bulk)
-    application.processEvents()
-    assert 'Create a 2D Surface' in _action_titles(workflow)
-    assert _action_widget(
-        workflow, workflow._GROUP_CALCULATE, 'Converge SCF'
-    ).accessibleDescription() == 'Prepare and run a self-consistent calculation'
-
-    expert.controller.replace_structure(layer)
-    application.processEvents()
-    assert 'Create a 2D Surface' not in _action_titles(workflow)
-    assert _action_widget(
-        workflow, workflow._GROUP_CALCULATE, 'Converge SCF'
-    ).accessibleDescription() == (
-        'Converge bulk region(s), then the interaction zone'
-    )
-
-    expert.controller.replace_structure(bulk)
-    application.processEvents()
-    assert 'Create a 2D Surface' in _action_titles(workflow)
-
-    expert.controller.replace_structure(None)
-    application.processEvents()
-    assert 'Create a 3D Structure' in _action_titles(workflow)
-
-    expert.close()
-    workflow.close()
-
-
-def test_in_progress_scf_statuses_offer_continue(tmp_path):
+def test_workspace_signals_refresh_semantic_plan(tmp_path):
     application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
+
+    assert CreateStructure(CreateStructureKind.THREE_D) in _commands(window)
+
     window.controller.replace_structure(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     )
+    application.processEvents()
+    assert RunTask(guided_task_definition("scf")) in _commands(window)
+    assert CreateStructure(CreateStructureKind.THREE_D) not in _commands(window)
 
-    for status in (
-        "ITR",
-        "ITR-BULK",
-        "ITR-L-BULK",
-        "ITR-R-BULK",
-        "ITR-I-ZONE",
-    ):
-        window.controller.scf_status = lambda value=status: value
-        window.controller.is_scf_converged = lambda: False
-        window._refresh()
-        application.processEvents()
-        calculate = _actions_in_group(window, window._GROUP_CALCULATE)
-        assert "Continue SCF" in calculate
-        assert "Converge SCF" not in calculate
-
+    window.controller.reset()
+    application.processEvents()
+    assert CreateStructure(CreateStructureKind.THREE_D) in _commands(window)
     window.close()
 
 
-def test_start_actions_are_grouped_with_section_labels(tmp_path):
+def test_typed_commands_are_dispatched_without_title_interpretation(
+    tmp_path, monkeypatch
+):
     _application = QApplication.instance() or QApplication([])
     _gui, window = _workflow(tmp_path)
+    events = []
 
-    assert _group_titles(window) == [
-        "Create structure",
-        "Load structure",
-    ]
-    assert "Create a 3D Structure" in _actions_in_group(
-        window, "Create structure"
-    )
-    assert "Download Structure from Online Database" in _actions_in_group(
-        window, "Load structure"
-    )
-    assert "Load SPR-KKR Output" in _actions_in_group(
-        window, "Load structure"
-    )
-    labels = window._actions.findChildren(
-        QLabel, "workflowActionGroupLabel"
-    )
-    assert all(label.font().bold() for label in labels)
-    assert all(not label.styleSheet() for label in labels)
-    create_button = _action_widget(
-        window, "Create structure", "Create a 3D Structure"
-    )
-    load_button = _action_widget(
-        window, "Load structure", "Load a Structure"
-    )
-    assert "#3979b8" in create_button.styleSheet()
-    assert "#527f9f" in load_button.styleSheet()
-    window.close()
-
-
-def test_group_labels_follow_dark_and_light_palette_text_color(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    original_palette = application.palette()
-    try:
-        for window_color, text_color in (
-            (QColor("#202020"), QColor("#ffffff")),
-            (QColor("#ffffff"), QColor("#202020")),
-        ):
-            palette = QPalette(original_palette)
-            palette.setColor(QPalette.ColorRole.Window, window_color)
-            palette.setColor(QPalette.ColorRole.WindowText, text_color)
-            application.setPalette(palette)
-            _gui, window = _workflow(tmp_path)
-            labels = window._actions.findChildren(
-                QLabel, "workflowActionGroupLabel"
-            )
-
-            assert labels
-            assert all(
-                label.palette().color(QPalette.ColorRole.WindowText)
-                == text_color
-                for label in labels
-            )
-            window.close()
-    finally:
-        application.setPalette(original_palette)
-
-
-def test_structure_actions_follow_requested_group_order(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    _gui, window = _workflow(tmp_path)
-    atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    atoms.sprkkr_is_scf_converged = lambda: True
-    window.controller.replace_structure(atoms)
-    window._refresh()
-    application.processEvents()
-
-    assert _group_titles(window) == [
-        "Calculate",
-        "View",
-        "Create derived structure",
-        "And now something completely different...",
-    ]
-    assert "Calculate DOS" in _actions_in_group(window, "Calculate")
-    assert "Create a 2D Surface" in _actions_in_group(
-        window, "Create structure"
-    )
-    assert _actions_in_group(
-        window, window._GROUP_DIFFERENT
-    ) == ["Recalculate SCF", "Start Over"]
-    recalculate = _action_widget(
+    monkeypatch.setattr(
         window,
-        window._GROUP_DIFFERENT,
-        "Recalculate SCF",
+        "_prepare_task",
+        lambda task: events.append(("task", task)),
     )
-    start_over = _action_widget(
+    monkeypatch.setattr(window, "_update_empty_spheres", lambda: events.append("spheres"))
+    monkeypatch.setattr(window, "_create_3d", lambda: events.append("create-3d"))
+    monkeypatch.setattr(
+        window, "_create_from_database", lambda: events.append("prototype")
+    )
+    monkeypatch.setattr(window, "_create_surface", lambda: events.append("surface"))
+    monkeypatch.setattr(
+        window, "_create_transition", lambda: events.append("transition")
+    )
+    monkeypatch.setattr(
         window,
-        window._GROUP_DIFFERENT,
-        "Start Over",
+        "_build_2d",
+        lambda _checked=False, *, surface_mode=False: events.append(
+            ("build-2d", surface_mode)
+        ),
     )
-    assert "#b34444" in recalculate.styleSheet()
-    assert "#b34444" in start_over.styleSheet()
+    monkeypatch.setattr(window, "_download_structure", lambda: events.append("download"))
+    monkeypatch.setattr(window, "_load_structure", lambda: events.append("load-structure"))
+    monkeypatch.setattr(window, "_load_output", lambda: events.append("load-output"))
+    monkeypatch.setattr(
+        window,
+        "_continue_recent",
+        lambda kind, path: events.append(("recent", kind, path)),
+    )
+    monkeypatch.setattr(window, "_visualize_structure", lambda: events.append("view"))
+    monkeypatch.setattr(
+        window, "_use_for_new_calculation", lambda: events.append("new-calculation")
+    )
+    monkeypatch.setattr(window, "_start_over", lambda: events.append("reset"))
+
+    scf = guided_task_definition("scf")
+    recent = RecentLaunch("output", "/tmp/result.out")
+    commands = (
+        RunTask(scf),
+        UpdateEmptySpheres(),
+        CreateStructure(CreateStructureKind.THREE_D),
+        CreateStructure(CreateStructureKind.PROTOTYPE),
+        CreateStructure(CreateStructureKind.SURFACE),
+        CreateStructure(CreateStructureKind.TWO_D),
+        Build2D(Build2DKind.SURFACE),
+        Build2D(Build2DKind.STRUCTURE),
+        Load(LoadKind.ONLINE_STRUCTURE),
+        Load(LoadKind.STRUCTURE),
+        Load(LoadKind.OUTPUT),
+        ContinueRecent(recent),
+        VisualizeStructure(),
+        UseForNewCalculation(),
+        StartOver(),
+    )
+    for command in commands:
+        window._actions.commandRequested.emit(command)
+
+    assert events == [
+        ("task", "scf"),
+        "spheres",
+        "create-3d",
+        "prototype",
+        "surface",
+        "transition",
+        ("build-2d", True),
+        ("build-2d", False),
+        "download",
+        "load-structure",
+        "load-output",
+        ("recent", "output", "/tmp/result.out"),
+        "view",
+        "new-calculation",
+        "reset",
+    ]
     window.close()
 
 
