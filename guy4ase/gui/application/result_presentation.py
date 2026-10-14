@@ -232,6 +232,10 @@ def present_result_record(
     return presentation
 
 
+def _records_in_recording_order(store: ResultStore) -> tuple[ResultRecord, ...]:
+    return tuple(sorted(store.results, key=lambda record: record.id))
+
+
 def present_result_tree(
     store: ResultStore,
     *,
@@ -240,14 +244,17 @@ def present_result_tree(
     selected_result_id: int | None = None,
 ) -> ResultTreeModel:
     """Project exact provenance into a Qt-independent selector tree."""
+    ordered_records = _records_in_recording_order(store)
     result_nodes: dict[int, _MutableTreeNode] = {}
     records: dict[int, ResultRecord] = {}
-    directory_nodes: list[_MutableTreeNode] = []
 
-    for directory in store.import_directories:
-        imported = store.imported_results(directory)
-        if not imported:
-            continue
+    imported_by_directory: dict[str | None, list[ResultRecord]] = {}
+    for record in ordered_records:
+        if record.imported:
+            imported_by_directory.setdefault(record.directory, []).append(record)
+
+    directory_nodes: list[_MutableTreeNode] = []
+    for directory, imported in imported_by_directory.items():
         directory_node = _MutableTreeNode(directory or "(unknown directory)")
         directory_nodes.append(directory_node)
         for record in imported:
@@ -259,7 +266,11 @@ def present_result_tree(
     roots: list[_MutableTreeNode] = []
     formula_counts: dict[str, int] = {}
     for structure in store.structures:
-        structure_records = store.structure_results(structure.id)
+        structure_records = tuple(
+            record
+            for record in ordered_records
+            if record.structure_id == structure.id and not record.imported
+        )
         if not structure_records:
             continue
 
@@ -286,10 +297,15 @@ def present_result_tree(
 
     roots.extend(directory_nodes)
 
-    if store.unstructured_results:
+    unstructured = tuple(
+        record
+        for record in ordered_records
+        if not record.imported and record.structure_id is None
+    )
+    if unstructured:
         unknown = _MutableTreeNode("Unknown structure")
         roots.append(unknown)
-        for record in store.unstructured_results:
+        for record in unstructured:
             records[record.id] = record
             node = _MutableTreeNode(_result_label(record), result_id=record.id)
             unknown.children.append(node)
