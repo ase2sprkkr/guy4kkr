@@ -89,14 +89,16 @@ class WorkspaceState:
         )
 
     def scf_status(self) -> str | None:
-        """Return the normalized SCFSTATUS of the active workspace potential."""
+        """Return the effective SCFSTATUS of the active workspace state."""
         atoms = self.atoms
+        if atoms is None:
+            return None
+        if self.restarted:
+            return "START"
         if not isinstance(atoms, SPRKKRAtoms):
             return None
         if not atoms.has_potential():
             return None
-        if self.restarted:
-            return "START"
         status = atoms.potential.SCF_INFO.SCFSTATUS()
         if status is None:
             return None

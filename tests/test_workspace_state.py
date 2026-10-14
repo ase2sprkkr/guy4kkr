@@ -2,18 +2,20 @@ from types import SimpleNamespace
 
 from ase import Atoms
 from ase.build import bulk
+from ase2sprkkr import SPRKKRAtoms
 from ase2sprkkr.sprkkr.build import semiinfinite_system
 
 from guy4ase.gui.application.workspace import WorkspaceState
 
 
 def _scf_atoms(status=None, *, converged=False):
-    atoms = SimpleNamespace(
-        sprkkr_is_scf_converged=lambda: converged,
-        has_potential=lambda: status is not None,
+    atoms = SPRKKRAtoms.promote_ase_atoms(
+        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+        symmetry=False,
     )
+    atoms.sprkkr_is_scf_converged = lambda: converged
     if status is not None:
-        atoms.potential = SimpleNamespace(
+        atoms._potential = SimpleNamespace(
             SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
         )
     return atoms
@@ -49,3 +51,12 @@ def test_scf_status_and_convergence_are_derived_separately():
     workspace.atoms = Atoms("Fe")
     assert workspace.scf_status() is None
     assert not workspace.is_scf_converged()
+
+
+def test_pending_restart_reports_start_without_mutating_structure_potential():
+    atoms = Atoms("Fe")
+    workspace = WorkspaceState(atoms=atoms, restarted=True)
+
+    assert workspace.scf_status() == "START"
+    assert not workspace.is_scf_converged()
+    assert workspace.atoms is atoms
