@@ -15,6 +15,7 @@ from guy4ase.gui.application.historical_state import (
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_capture import capture_result
 from guy4ase.gui.application.result_loading import PotentialVersionChanged
+from guy4ase.gui.application.structure_provenance import materialize_structure
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import files as file_flows
@@ -33,6 +34,12 @@ def _captured(result, parameters=None, *, potential_path=None):
         output_path=None,
         potential_path=potential_path,
     )
+
+
+def _potential_structure(atoms, path):
+    version = PotentialFileVersion.capture(path)
+    assert version.available
+    return materialize_structure(atoms, potential_version=version)
 
 
 def test_potential_loader_delegates_stable_read_to_ase2sprkkr(tmp_path, monkeypatch):
@@ -99,28 +106,36 @@ def test_loaded_result_keeps_the_version_used_to_load_atoms(tmp_path, monkeypatc
     loaded = result_loading.load_result(result, fallback_directory=tmp_path)
 
     assert loaded.atoms is atoms
-    assert loaded.potential_version is not None
+    assert loaded.structure is not None
+    assert loaded.potential_version is loaded.structure.provenance.potential_version
     assert loaded.potential_version == PotentialFileVersion.capture(path)
+    assert loaded.structure.provenance.potential_path == path.resolve()
 
 
-def test_potential_structure_flow_uses_authoritative_potential_loader(
+def test_potential_structure_flow_returns_materialized_exact_version(
     tmp_path, monkeypatch
 ):
     path = tmp_path / "Fe.pot_new"
-    path.touch()
+    path.write_text("stable potential")
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    version = PotentialFileVersion.capture(path)
+    structure = materialize_structure(atoms, potential_version=version)
     calls = []
     monkeypatch.setattr(
         file_flows,
-        "load_potential_atoms",
-        lambda value: calls.append(value) or atoms,
+        "load_potential_materialized",
+        lambda value: calls.append(value) or structure,
     )
 
-    assert file_flows._read_structure_file(path) is atoms
+    loaded = file_flows._read_structure_file(path)
+
+    assert loaded is structure
+    assert loaded.get() is atoms
+    assert loaded.provenance.potential_version is version
     assert calls == [path]
 
 
-def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
+def test_calculation_request_uses_materialized_atoms_not_potential_metadata(tmp_path):
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
@@ -129,7 +144,6 @@ def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
             atoms=atoms,
             input_parameters=_Parameters(),
             directory=str(tmp_path),
-            potential_path="source-only.pot",
         )
     )
 
@@ -137,6 +151,7 @@ def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
 
     assert request.atoms is atoms
     assert request.atoms.potential is potential
+    assert request.structure_provenance is controller.structure_provenance
     assert not hasattr(request, "potential_path")
 
 
@@ -149,7 +164,6 @@ def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_p
             atoms=atoms,
             input_parameters=_Parameters(),
             directory=str(tmp_path),
-            potential_path=None,
         )
     )
     history = controller.result_history
@@ -183,10 +197,9 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
     atoms._potential = potential
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=atoms,
+            structure=_potential_structure(atoms, path),
             input_parameters=_Parameters(),
             directory=str(tmp_path),
-            potential_path=str(path),
         )
     )
     history = controller.result_history
@@ -224,10 +237,9 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
     path.write_text("historical potential")
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
+            structure=_potential_structure(Atoms("Fe"), path),
             input_parameters=_Parameters(),
             directory=str(tmp_path),
-            potential_path=str(path),
         )
     )
     history = controller.result_history
@@ -279,10 +291,9 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     path.write_text("historical potential")
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
+            structure=_potential_structure(Atoms("Fe"), path),
             input_parameters=_Parameters(),
             directory=str(tmp_path),
-            potential_path=str(path),
         )
     )
     history = controller.result_history
