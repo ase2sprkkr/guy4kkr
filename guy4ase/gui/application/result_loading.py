@@ -51,12 +51,13 @@ class LoadedResult:
     ) -> None:
         if structure is not None and atoms is not None:
             raise ValueError("Pass either structure or atoms, not both.")
-        if structure is None and atoms is not None:
-            structure = materialize_structure(
-                atoms,
-                potential_path=potential_path,
-                potential_version=potential_version,
-            )
+        if atoms is not None:
+            if potential_path is not None or potential_version is not None:
+                raise ValueError(
+                    "Raw atoms cannot be associated with POTFIL provenance. "
+                    "Pass a structure materialized by the stable potential loader."
+                )
+            structure = materialize_structure(atoms)
         if structure is not None:
             provenance = structure.provenance
             if potential_path is None:
@@ -132,11 +133,7 @@ def load_potential_materialized(
     if not version.available:
         raise OSError(f"Potential file cannot be inspected: {path}")
     atoms = load_potential_version(version)
-    return materialize_structure(
-        atoms,
-        potential_path=path,
-        potential_version=version,
-    )
+    return materialize_structure(atoms, potential_version=version)
 
 
 def load_result_file(file_path: str | Path) -> LoadedResult:
@@ -280,11 +277,7 @@ def _load_potential(
     try:
         atoms = load_potential_version(version)
         return (
-            materialize_structure(
-                atoms,
-                potential_path=potential,
-                potential_version=version,
-            ),
+            materialize_structure(atoms, potential_version=version),
             version,
             None,
         )
