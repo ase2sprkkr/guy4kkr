@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -49,3 +50,15 @@ def test_atomic_write_keeps_previous_file_when_flush_fails(tmp_path, monkeypatch
 
     assert path.read_text(encoding="utf-8") == original
     assert not tuple(tmp_path.glob(".state.json.*.tmp"))
+
+
+def test_atomic_write_fsyncs_file_and_parent_directory(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(atomic_io.os, "fsync", lambda fd: calls.append(fd))
+
+    target = tmp_path / "state.json"
+    atomic_io.atomic_write_text(target, "value")
+
+    assert target.read_text(encoding="utf-8") == "value"
+    expected = 1 if os.name == "nt" else 2
+    assert len(calls) == expected

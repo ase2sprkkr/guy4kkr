@@ -1,10 +1,11 @@
-"""Persistent calculation-job browser."""
+"""Reusable persistent calculation-job browser."""
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import Callable
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,11 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.persistent_jobs import (
-    PersistentJob,
-    PersistentJobRecovery,
-    PersistentJobSource,
-)
+from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.attached_run import create_attached_run_monitor
 from guy4ase.gui.dialogs.object_view import execute_value_action
@@ -80,40 +77,26 @@ _GROUPS: tuple[tuple[str, Callable[[PersistentJob], str]], ...] = (
 )
 
 
-class _HistorySignals(QObject):
-    recovered = pyqtSignal(str, object)
-
-
-class CalculationHistoryDialog(QDialog):
-    """Browse persistent ASE2SPRKKR jobs independently of the current workspace."""
+class PersistentJobsWidget(QWidget):
+    """Display the job source with an optional persistent-reference filter."""
 
     def __init__(
         self,
+        source: PersistentJobSource,
         parent: QWidget | None = None,
-        *,
-        source: PersistentJobSource | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Calculation Jobs")
-        manage_window_geometry(
-            self,
-            "calculation-history",
-            default_size=(1100, 700),
-        )
-        self._source = source if source is not None else PersistentJobSource()
-        self._recovery = PersistentJobRecovery(self._source)
-        self._signals = _HistorySignals(self)
-        self._signals.recovered.connect(
-            self._recovery_completed,
-            Qt.ConnectionType.QueuedConnection,
-        )
+        self._source = source
+        self._all_jobs: tuple[PersistentJob, ...] = ()
         self._jobs: tuple[PersistentJob, ...] = ()
         self._jobs_by_id: dict[str, PersistentJob] = {}
+        self._visible_refs: frozenset[str] | None = None
         self._selected_job_id: str | None = None
         self._monitors: dict[str, RunMonitorWindow] = {}
-        self._close_requested = False
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Group by:"))
         self.group_by = QComboBox(self)
@@ -133,11 +116,11 @@ class CalculationHistoryDialog(QDialog):
         self.backend_notice.hide()
         root.addWidget(self.backend_notice)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        splitter.setChildrenCollapsible(False)
-        root.addWidget(splitter, 1)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setChildrenCollapsible(False)
+        root.addWidget(self.splitter, 1)
 
-        self.tree = QTreeWidget(splitter)
+        self.tree = QTreeWidget(self.splitter)
         self.tree.setColumnCount(6)
         self.tree.setHeaderLabels(("Job", "Status", "Started", "Finished", "Task", "Target"))
         self.tree.setRootIsDecorated(True)
@@ -148,9 +131,8 @@ class CalculationHistoryDialog(QDialog):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemDoubleClicked.connect(self._item_double_clicked)
-        splitter.addWidget(self.tree)
 
-        details = QWidget(splitter)
+        details = QWidget(self.splitter)
         details_layout = QVBoxLayout(details)
         self.detail_title = QLabel("Select a calculation job", details)
         font = self.detail_title.font()
@@ -208,72 +190,73 @@ class CalculationHistoryDialog(QDialog):
             parent=details,
         )
         details_layout.addWidget(self.result_widget, 1)
-        splitter.addWidget(details)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([540, 560])
 
-        self._load_metadata()
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([540, 560])
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._recovery.active_ids:
-            self._close_requested = True
-            self.hide()
-            event.ignore()
-            return
-        super().closeEvent(event)
+        self._source.changed.connect(self._source_changed)
+        self._source.reloaded.connect(self._source_reloaded)
+        self._set_jobs(self._source.jobs())
 
-    def _load_metadata(self) -> None:
-        try:
-            jobs = self._source.jobs()
-        except (OSError, RuntimeError, ValueError) as exc:
-            QMessageBox.warning(self, "Calculation Jobs", str(exc))
-            jobs = ()
-        self._set_jobs(jobs)
+    @property
+    def all_jobs(self) -> tuple[PersistentJob, ...]:
+        return self._all_jobs
+
+    @property
+    def visible_jobs(self) -> tuple[PersistentJob, ...]:
+        return self._jobs
+
+    @property
+    def selected_persistent_ref(self) -> str | None:
+        return self._selected_job_id
+
+    def set_visible_refs(self, persistent_refs: Collection[str] | None) -> None:
+        self._visible_refs = None if persistent_refs is None else frozenset(str(value) for value in persistent_refs)
+        self._apply_filter()
+
+    def _source_changed(self, _job_id: str) -> None:
+        self._set_jobs(self._source.jobs())
+
+    def _source_reloaded(self) -> None:
+        self._set_jobs(self._source.jobs())
 
     def _set_jobs(self, jobs: tuple[PersistentJob, ...]) -> None:
-        self._jobs = tuple(sorted(jobs, key=lambda job: job.started_at, reverse=True))
-        self._jobs_by_id = {job.id: job for job in self._jobs}
+        self._all_jobs = tuple(sorted(jobs, key=lambda job: job.started_at, reverse=True))
+        self._jobs_by_id = {job.id: job for job in self._all_jobs}
+        self._update_backend_notice()
+        self._apply_filter()
+
+    def _update_backend_notice(self) -> None:
         if not self._source.available:
-            self.backend_notice.setText(
-                self._source.unavailable_reason
-                or "Persistent calculation jobs are not available in this ASE2SPRKKR version yet."
-            )
+            self.backend_notice.setText(self._source.unavailable_reason or "Persistent calculation jobs are not available.")
             self.backend_notice.show()
-        elif not self._jobs:
+        elif self._source.recovery_error:
+            self.backend_notice.setText(f"Persistent recovery failed: {self._source.recovery_error}")
+            self.backend_notice.show()
+        elif not self._all_jobs:
             self.backend_notice.setText("No persistent calculation jobs have been recorded yet.")
             self.backend_notice.show()
         else:
             self.backend_notice.hide()
 
-        try:
-            candidates = tuple(job for job in self._jobs if job.id not in self._monitors)
-            self._recovery.recover_finishing(
-                candidates,
-                on_completed=lambda job_id, result: self._signals.recovered.emit(job_id, result),
-            )
-        except Exception as exc:  # noqa: BLE001 - persisted/backend recovery boundary
-            self.backend_notice.setText(f"Persistent recovery failed: {exc}")
-            self.backend_notice.show()
+    def _apply_filter(self) -> None:
+        if self._visible_refs is None:
+            self._jobs = self._all_jobs
+        else:
+            self._jobs = tuple(job for job in self._all_jobs if job.id in self._visible_refs)
+        visible_ids = {job.id for job in self._jobs}
+        if self._selected_job_id not in visible_ids:
+            self._selected_job_id = None
         self._populate_tree()
-
-    def _recovery_completed(self, job_id: str, result: object) -> None:
-        self._load_metadata()
-        if self._selected_job_id == job_id:
-            self.result_widget.set_result(result)
-        if self._close_requested and not self._recovery.active_ids:
-            self.close()
 
     def _replace_job(self, job: PersistentJob) -> None:
         self._jobs_by_id[job.id] = job
+        self._all_jobs = tuple(job if current.id == job.id else current for current in self._all_jobs)
         self._jobs = tuple(job if current.id == job.id else current for current in self._jobs)
 
     def _verified_result_files(self, job: PersistentJob) -> PersistentJob:
-        if (
-            not job.is_final
-            or job.result_files_verified
-            or not self._source.supports_result_file_check
-        ):
+        if not job.is_final or job.result_files_verified or not self._source.supports_result_file_check:
             return job
         try:
             checked = self._source.check_result_files(job.id)
@@ -300,24 +283,20 @@ class CalculationHistoryDialog(QDialog):
                     group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                     self.tree.addTopLevelItem(group)
                     groups[group_name] = group
-
                 title = job.dataset or job.id[:12]
-                item = QTreeWidgetItem(
-                    [
-                        title,
-                        _status_label(job.state),
-                        _timestamp_label(job.started_at),
-                        _timestamp_label(job.finished_at),
-                        job.task,
-                        job.target,
-                    ]
-                )
+                item = QTreeWidgetItem([
+                    title,
+                    _status_label(job.state),
+                    _timestamp_label(job.started_at),
+                    _timestamp_label(job.finished_at),
+                    job.task,
+                    job.target,
+                ])
                 item.setData(0, _JOB_ID_ROLE, job.id)
                 item.setToolTip(0, job.id)
                 group.addChild(item)
                 if job.id == selected:
                     selected_item = item
-
             self.tree.expandAll()
             if selected_item is None and self._jobs:
                 selected_item = self._first_job_item()
@@ -325,7 +304,6 @@ class CalculationHistoryDialog(QDialog):
                 self.tree.setCurrentItem(selected_item)
         finally:
             self.tree.blockSignals(False)
-
         self._show_job(self._job_for_item(self.tree.currentItem()))
 
     def _first_job_item(self) -> QTreeWidgetItem | None:
@@ -342,11 +320,7 @@ class CalculationHistoryDialog(QDialog):
             return None
         return self._jobs_by_id.get(str(job_id))
 
-    def _selection_changed(
-        self,
-        current: QTreeWidgetItem | None,
-        _previous: QTreeWidgetItem | None,
-    ) -> None:
+    def _selection_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
         self._show_job(self._job_for_item(current))
 
     def _show_job(self, job: PersistentJob | None) -> None:
@@ -355,15 +329,9 @@ class CalculationHistoryDialog(QDialog):
             self._selected_job_id = None
             self.detail_title.setText("Select a calculation job")
             for widget in (
-                self.status_value,
-                self.task_value,
-                self.target_value,
-                self.directory_value,
-                self.dataset_value,
-                self.started_value,
-                self.finished_value,
-                self.updated_value,
-                self.return_code_value,
+                self.status_value, self.task_value, self.target_value,
+                self.directory_value, self.dataset_value, self.started_value,
+                self.finished_value, self.updated_value, self.return_code_value,
                 self.result_files_value,
             ):
                 widget.setText("—")
@@ -394,58 +362,36 @@ class CalculationHistoryDialog(QDialog):
         self.result_files_value.setText(result_files_label)
         self.message_value.setText(job.message or "")
         self.message_value.setVisible(bool(job.message))
-        self.monitor_button.setVisible(
-            job.attachable
-            and job.id not in self._recovery.active_ids
-            and bool(getattr(self._source, "supports_attach", False))
-        )
+        self.monitor_button.setVisible(job.attachable and not self._source.is_recovering(job.id) and self._source.supports_attach)
         self.load_result_button.setVisible(job.is_final and self._source.supports_results)
 
     def _refresh_statuses(self) -> None:
         try:
-            jobs = run_modal_task(
-                self,
-                self._source.refresh,
-                title="Refreshing Calculations",
-                label="Checking active calculation statuses…",
-            )
-        except Exception as exc:  # noqa: BLE001 - execution backend boundary
+            jobs = run_modal_task(self, self._source.refresh, title="Refreshing Calculations", label="Checking active calculation statuses…")
+        except Exception as exc:
             QMessageBox.warning(self, "Status Refresh Failed", str(exc))
             return
         self._set_jobs(jobs)
 
     def _monitor_selected_job(self) -> None:
         job_id = self._selected_job_id
-        if job_id is None or job_id in self._recovery.active_ids:
+        if job_id is None or self._source.is_recovering(job_id):
             return
         job = self._jobs_by_id.get(job_id)
         if job is None or not job.attachable:
             return
-
         existing = self._monitors.get(job_id)
         if existing is not None:
-            existing.show()
-            existing.raise_()
-            existing.activateWindow()
-            return
+            existing.show(); existing.raise_(); existing.activateWindow(); return
 
         def finished(result) -> None:
-            self._load_metadata()
+            self._source.job_changed(job_id)
             if self._selected_job_id == job_id:
                 self.result_widget.set_result(result)
 
-        window = create_attached_run_monitor(
-            job,
-            self._source,
-            parent=self,
-            on_finished=finished,
-        )
+        window = create_attached_run_monitor(job, self._source, parent=self, on_finished=finished)
         self._monitors[job_id] = window
-
-        def remove_monitor(*_args) -> None:
-            self._monitors.pop(job_id, None)
-
-        window.destroyed.connect(remove_monitor)
+        window.destroyed.connect(lambda *_args: self._monitors.pop(job_id, None))
         window.show()
 
     def _load_selected_result(self) -> None:
@@ -453,24 +399,11 @@ class CalculationHistoryDialog(QDialog):
         if job_id is None:
             return
         try:
-            result = run_modal_task(
-                self,
-                lambda: self._source.load_result(job_id),
-                title="Loading Calculation Result",
-                label="Loading result files…",
-            )
-        except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
+            result = run_modal_task(self, lambda: self._source.load_result(job_id), title="Loading Calculation Result", label="Loading result files…")
+        except Exception as exc:
             QMessageBox.warning(self, "Result Load Failed", str(exc))
             return
         if self._selected_job_id == job_id:
-            record = getattr(result, "run_record", None)
-            if record is not None:
-                checked = PersistentJob.from_run_record(
-                    record,
-                    result_files_verified=True,
-                )
-                self._replace_job(checked)
-                self._show_job(checked)
             self.result_widget.set_result(result)
 
     def _item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
@@ -479,5 +412,25 @@ class CalculationHistoryDialog(QDialog):
             return
         if job.is_final and self._source.supports_results:
             self._load_selected_result()
-        elif job.attachable and bool(getattr(self._source, "supports_attach", False)):
+        elif job.attachable and self._source.supports_attach:
             self._monitor_selected_job()
+
+
+class CalculationHistoryDialog(QDialog):
+    """Standalone persistent-job view; applications should inject their source."""
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        source: PersistentJobSource | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Calculation Jobs")
+        manage_window_geometry(self, "calculation-history", default_size=(1100, 700))
+        root = QVBoxLayout(self)
+        self.jobs = PersistentJobsWidget(
+            source if source is not None else PersistentJobSource(parent=self),
+            self,
+        )
+        root.addWidget(self.jobs)

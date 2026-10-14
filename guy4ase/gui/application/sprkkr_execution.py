@@ -39,6 +39,7 @@ class SprkkrExecution:
         output: Callable[[str, str], None] | None = None,
         status: Callable[[str], None] | None = None,
         warning: Callable[[str], None] | None = None,
+        persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.request = replace(request, atoms=request.atoms.copy())
         self.cancellation = cancellation
@@ -46,6 +47,9 @@ class SprkkrExecution:
         self._output = output or (lambda _text, _kind: None)
         self._status = status or (lambda _text: None)
         self._warning = warning or (lambda _text: None)
+        self._persistent_job_changed = (
+            persistent_job_changed or (lambda _job_id: None)
+        )
 
     def file_names(self) -> tuple[str, str, str]:
         """Return input, potential and output filename templates for the request."""
@@ -103,9 +107,14 @@ class SprkkrExecution:
             runner.cancel()
             raise ExecutionCancelled
 
-        self._with_mpi_warnings(runner.submit)
+        try:
+            self._with_mpi_warnings(runner.submit)
+        finally:
+            self._persistent_job_changed(runner.id)
+
         if self.cancellation.requested:
             runner.cancel()
+            self._persistent_job_changed(runner.id)
             raise ExecutionCancelled
         return runner
 
@@ -129,6 +138,8 @@ class SprkkrExecution:
             if self.cancellation.requested:
                 raise ExecutionCancelled from exc
             raise
+        finally:
+            self._persistent_job_changed(runner.id)
 
         if self.cancellation.requested:
             raise ExecutionCancelled

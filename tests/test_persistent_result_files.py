@@ -11,6 +11,11 @@ class _State(str, Enum):
     FINISHED = "finished"
 
 
+class _ResultFilesState(str, Enum):
+    CURRENT = "current"
+    OVERWRITTEN = "overwritten"
+
+
 def _record(*, result_files=None):
     return SimpleNamespace(
         id="1234567890abcdef",
@@ -30,62 +35,37 @@ def _record(*, result_files=None):
 
 
 def test_result_file_state_is_exposed():
-    record = _record(
-        result_files=SimpleNamespace(state=SimpleNamespace(value="overwritten")),
+    job = PersistentJob.from_run_record(
+        _record(result_files=SimpleNamespace(state=_ResultFilesState.OVERWRITTEN))
     )
-
-    job = PersistentJob.from_run_record(record)
-
     assert job.result_files_state == "overwritten"
     assert not job.result_files_verified
 
 
-def test_explicit_result_file_check_marks_state_as_verified():
-    stored = _record(
-        result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
-    )
-    checked = _record(
-        result_files=SimpleNamespace(state=SimpleNamespace(value="overwritten")),
-    )
+def test_explicit_result_file_check_marks_cached_state_as_verified():
+    stored = _record(result_files=SimpleNamespace(state=_ResultFilesState.CURRENT))
+    checked = _record(result_files=SimpleNamespace(state=_ResultFilesState.OVERWRITTEN))
 
     class Store:
-        @staticmethod
-        def runs():
-            return (stored,)
+        def runs(self): return (stored,)
+        def get(self, run_id):
+            assert run_id == stored.id
+            return stored
 
     class Manager:
         store = Store()
-
-        def __init__(self):
-            self.checked = []
-
+        def refresh(self): pass
+        def attach(self, *_args, **_kwargs): return object()
+        def load_result(self, *_args, **_kwargs): return SimpleNamespace(run_record=stored)
         def check_result_files(self, run_id):
-            self.checked.append(run_id)
+            assert run_id == stored.id
             return checked
 
-    manager = Manager()
-    source = PersistentJobSource(manager)
-
+    source = PersistentJobSource(Manager())
     listed = source.jobs()[0]
     verified = source.check_result_files(stored.id)
-
     assert listed.result_files_state == "current"
     assert not listed.result_files_verified
     assert verified.result_files_state == "overwritten"
     assert verified.result_files_verified
-    assert manager.checked == [stored.id]
-
-
-def test_result_file_check_requires_backend_operation():
-    record = _record(
-        result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
-    )
-
-    class Store:
-        @staticmethod
-        def runs():
-            return (record,)
-
-    source = PersistentJobSource(SimpleNamespace(store=Store()))
-
-    assert not source.supports_result_file_check
+    assert source.job(stored.id) == verified

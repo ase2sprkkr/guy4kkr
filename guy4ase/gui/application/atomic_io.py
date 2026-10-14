@@ -8,18 +8,31 @@ from pathlib import Path
 from typing import Any
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Persist directory-entry changes where the platform exposes that operation."""
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(directory, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write_text(
     path: str | Path,
     text: str,
     *,
     encoding: str = "utf-8",
 ) -> None:
-    """Replace *path* only after the complete new contents are written and flushed.
+    """Atomically and durably replace *path* with completely flushed contents.
 
     The temporary file lives next to the destination so :func:`os.replace` is
-    an atomic same-filesystem operation. A write/flush failure therefore leaves
-    an existing destination untouched. This protects file integrity only; it
-    deliberately does not serialize concurrent writers.
+    an atomic same-filesystem operation. The file itself is fsynced before the
+    replacement and, on POSIX, the containing directory is fsynced afterwards
+    so the rename is durable across a crash. This helper protects file
+    integrity only; callers remain responsible for concurrent-writer locking.
     """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +52,7 @@ def atomic_write_text(
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
         temporary = None
+        _fsync_directory(destination.parent)
     finally:
         if temporary is not None:
             try:

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
@@ -46,28 +47,45 @@ def _job(
     )
 
 
-class _Source:
+class _Source(QObject):
+    changed = pyqtSignal(str)
+    reloaded = pyqtSignal()
+
     available = True
     unavailable_reason = None
+    recovery_error = None
     supports_refresh = True
     supports_results = True
     supports_attach = True
     supports_result_file_check = False
 
     def __init__(self, jobs):
+        super().__init__()
         self._jobs = tuple(jobs)
         self.loaded = []
         self.refresh_calls = 0
         self.attach_calls = []
         self.attach_callbacks = {}
         self.runners = {}
+        self.recovering = set()
 
     def jobs(self):
         return self._jobs
 
+    def job(self, job_id):
+        return next((job for job in self._jobs if job.id == job_id), None)
+
+    def is_recovering(self, job_id):
+        return job_id in self.recovering
+
     def refresh(self):
         self.refresh_calls += 1
+        self.reloaded.emit()
         return self._jobs
+
+    def job_changed(self, job_id):
+        self.changed.emit(job_id)
+        return self.job(job_id)
 
     def attach(self, job_id, *, callback=None, output_listener=None):
         self.attach_calls.append(job_id)
@@ -76,11 +94,14 @@ class _Source:
 
     def load_result(self, job_id):
         self.loaded.append(job_id)
-        return type("Result", (), {"output_values": {}})()
+        return SimpleNamespace(output_values={})
+
+
+def _jobs(dialog):
+    return dialog.jobs
 
 
 def test_history_groups_jobs_and_shows_selected_metadata():
-    _application = QApplication.instance() or QApplication([])
     source = _Source(
         (
             _job(
@@ -102,38 +123,38 @@ def test_history_groups_jobs_and_shows_selected_metadata():
     )
 
     dialog = CalculationHistoryDialog(source=source)
+    jobs = _jobs(dialog)
 
     assert dialog.windowTitle() == "Calculation Jobs"
-    assert [dialog.group_by.itemText(i) for i in range(dialog.group_by.count())] == [
+    assert [jobs.group_by.itemText(i) for i in range(jobs.group_by.count())] == [
         "Started date",
         "Finished date",
         "Status",
         "Task",
         "Execution target",
     ]
-    assert dialog.tree.headerItem().text(2) == "Started"
-    assert dialog.tree.headerItem().text(3) == "Finished"
-    assert dialog.tree.topLevelItem(0).text(0) == "2026-10-13"
-    assert dialog.detail_title.text() == "Fe-SCF"
-    assert dialog.status_value.text() == "Running"
-    assert dialog.started_value.text() == "2026-10-13 10:00:00"
-    assert dialog.finished_value.text() == "—"
-    assert dialog.result_files_value.text() == "—"
-    assert dialog.result_widget._history_button is None
-    assert not dialog.monitor_button.isHidden()
-    assert dialog.load_result_button.isHidden()
+    assert jobs.tree.headerItem().text(2) == "Started"
+    assert jobs.tree.headerItem().text(3) == "Finished"
+    assert jobs.tree.topLevelItem(0).text(0) == "2026-10-13"
+    assert jobs.detail_title.text() == "Fe-SCF"
+    assert jobs.status_value.text() == "Running"
+    assert jobs.started_value.text() == "2026-10-13 10:00:00"
+    assert jobs.finished_value.text() == "—"
+    assert jobs.result_files_value.text() == "—"
+    assert jobs.result_widget._history_button is None
+    assert not jobs.monitor_button.isHidden()
+    assert jobs.load_result_button.isHidden()
 
-    dialog.group_by.setCurrentText("Finished date")
-    assert dialog.tree.topLevelItem(0).text(0) == "Not finished"
-    assert dialog.tree.topLevelItem(1).text(0) == "2026-10-12"
+    jobs.group_by.setCurrentText("Finished date")
+    assert jobs.tree.topLevelItem(0).text(0) == "Not finished"
+    assert jobs.tree.topLevelItem(1).text(0) == "2026-10-12"
 
-    dialog.group_by.setCurrentText("Task")
-    assert dialog.tree.topLevelItem(0).text(0) == "SCF"
+    jobs.group_by.setCurrentText("Task")
+    assert jobs.tree.topLevelItem(0).text(0) == "SCF"
     dialog.close()
 
 
 def test_finished_job_shows_stable_finished_time_and_can_load_result():
-    _application = QApplication.instance() or QApplication([])
     job = _job(
         "finished-dos",
         state="finished",
@@ -144,20 +165,20 @@ def test_finished_job_shows_stable_finished_time_and_can_load_result():
     )
     source = _Source((job,))
     dialog = CalculationHistoryDialog(source=source)
+    jobs = _jobs(dialog)
 
-    assert dialog.finished_value.text() == "2026-10-13 10:37:00"
-    assert dialog.tree.topLevelItem(0).child(0).text(3) == "2026-10-13 10:37:00"
-    assert dialog.result_files_value.text() == "Current (stored, not checked)"
-    assert dialog.monitor_button.isHidden()
-    assert not dialog.load_result_button.isHidden()
-    dialog._load_selected_result()
+    assert jobs.finished_value.text() == "2026-10-13 10:37:00"
+    assert jobs.tree.topLevelItem(0).child(0).text(3) == "2026-10-13 10:37:00"
+    assert jobs.result_files_value.text() == "Current (stored, not checked)"
+    assert jobs.monitor_button.isHidden()
+    assert not jobs.load_result_button.isHidden()
+    jobs._load_selected_result()
 
     assert source.loaded == [job.id]
     dialog.close()
 
 
 def test_selected_final_job_verifies_result_files():
-    _application = QApplication.instance() or QApplication([])
     job = _job(
         "finished-overwritten",
         state="finished",
@@ -176,7 +197,7 @@ def test_selected_final_job_verifies_result_files():
 
         def check_result_files(self, job_id):
             self.checked.append(job_id)
-            return _job(
+            checked = _job(
                 job_id,
                 state="finished",
                 task="DOS",
@@ -186,19 +207,22 @@ def test_selected_final_job_verifies_result_files():
                 result_files_state="overwritten",
                 result_files_verified=True,
             )
+            self._jobs = (checked,)
+            self.changed.emit(job_id)
+            return checked
 
     source = Source((job,))
     dialog = CalculationHistoryDialog(source=source)
+    jobs = _jobs(dialog)
 
     assert source.checked == [job.id]
-    assert dialog.result_files_value.text() == "Overwritten"
-    assert dialog._jobs_by_id[job.id].result_files_verified
+    assert jobs.result_files_value.text() == "Overwritten"
+    assert jobs._jobs_by_id[job.id].result_files_verified
     dialog.close()
 
 
-def test_finishing_job_is_recovered_without_opening_monitor():
-    application = QApplication.instance() or QApplication([])
-    finishing = _job(
+def test_recovering_job_does_not_offer_second_monitor():
+    job = _job(
         "recovering-dos",
         state="finishing",
         task="DOS",
@@ -206,36 +230,16 @@ def test_finishing_job_is_recovered_without_opening_monitor():
         created_at="2026-10-13T08:00:00+00:00",
         attachable=True,
     )
-    finished = _job(
-        finishing.id,
-        state="finished",
-        task="DOS",
-        dataset="Fe-DOS",
-        created_at=finishing.created_at,
-        finished_at="2026-10-13T08:45:00+00:00",
-        attachable=False,
-    )
-    source = _Source((finishing,))
+    source = _Source((job,))
+    source.recovering.add(job.id)
 
     dialog = CalculationHistoryDialog(source=source)
 
-    assert source.attach_calls == [finishing.id]
-    assert dialog._recovery.active_ids == (finishing.id,)
-    assert dialog.monitor_button.isHidden()
-
-    source._jobs = (finished,)
-    result = type("Result", (), {"output_values": {}})()
-    source.attach_callbacks[finishing.id](result)
-    application.processEvents()
-
-    assert dialog._recovery.active_ids == ()
-    assert dialog._jobs_by_id[finishing.id].state == "finished"
-    assert not dialog.load_result_button.isHidden()
+    assert dialog.jobs.monitor_button.isHidden()
     dialog.close()
 
 
 def test_nonattachable_active_job_does_not_offer_monitor():
-    _application = QApplication.instance() or QApplication([])
     source = _Source(
         (
             _job(
@@ -248,44 +252,64 @@ def test_nonattachable_active_job_does_not_offer_monitor():
             ),
         )
     )
-
     dialog = CalculationHistoryDialog(source=source)
 
-    assert dialog.monitor_button.isHidden()
+    assert dialog.jobs.monitor_button.isHidden()
+    dialog.close()
+
+
+def test_source_change_rebuilds_visible_history():
+    source = _Source(
+        (
+            _job(
+                "running",
+                state="running",
+                task="SCF",
+                dataset="Fe",
+                created_at="2026-10-13T08:00:00+00:00",
+            ),
+        )
+    )
+    dialog = CalculationHistoryDialog(source=source)
+
+    source._jobs = (
+        _job(
+            "running",
+            state="finished",
+            task="SCF",
+            dataset="Fe",
+            created_at="2026-10-13T08:00:00+00:00",
+            finished_at="2026-10-13T08:30:00+00:00",
+        ),
+    )
+    source.changed.emit("running")
+
+    assert dialog.jobs.status_value.text() == "Finished"
+    assert not dialog.jobs.load_result_button.isHidden()
     dialog.close()
 
 
 def test_empty_backend_shows_empty_state():
-    _application = QApplication.instance() or QApplication([])
     dialog = CalculationHistoryDialog(source=_Source(()))
 
-    assert not dialog.backend_notice.isHidden()
-    assert dialog.backend_notice.text() == (
+    assert not dialog.jobs.backend_notice.isHidden()
+    assert dialog.jobs.backend_notice.text() == (
         "No persistent calculation jobs have been recorded yet."
     )
-    assert dialog.tree.topLevelItemCount() == 0
+    assert dialog.jobs.tree.topLevelItemCount() == 0
     dialog.close()
 
 
 def test_unavailable_backend_is_an_empty_nonfatal_history():
-    _application = QApplication.instance() or QApplication([])
+    source = _Source(())
+    source.available = False
+    source.unavailable_reason = "Persistent jobs are not available yet."
+    source.supports_refresh = False
 
-    class Source:
-        available = False
-        unavailable_reason = "Persistent jobs are not available yet."
-        supports_refresh = False
-        supports_results = False
-        supports_attach = False
-        supports_result_file_check = False
+    dialog = CalculationHistoryDialog(source=source)
 
-        @staticmethod
-        def jobs():
-            return ()
-
-    dialog = CalculationHistoryDialog(source=Source())
-
-    assert not dialog.backend_notice.isHidden()
-    assert dialog.backend_notice.text() == "Persistent jobs are not available yet."
-    assert not dialog.refresh_button.isEnabled()
-    assert dialog.tree.topLevelItemCount() == 0
+    assert not dialog.jobs.backend_notice.isHidden()
+    assert dialog.jobs.backend_notice.text() == "Persistent jobs are not available yet."
+    assert not dialog.jobs.refresh_button.isEnabled()
+    assert dialog.jobs.tree.topLevelItemCount() == 0
     dialog.close()
