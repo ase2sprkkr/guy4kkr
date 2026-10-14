@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
@@ -75,12 +76,14 @@ def run_calculation(
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
     ``position_like_window`` optionally reuses another managed window's
     top-left corner for the profile picker and the run window. Their own sizes
-    stay independent.
+    stay independent. ``persistent_job_changed`` is an application observer of
+    stable persistent run ids; it never receives a parallel lifecycle snapshot.
     """
     try:
         request = controller.create_calculation_request()
@@ -124,6 +127,7 @@ def run_calculation(
         profile_description=description,
         parent=parent,
         on_finished=finished,
+        on_persistent_job_changed=persistent_job_changed,
     )
     _position_like_window(window, position_like_window)
     window.show()
@@ -137,6 +141,7 @@ def configure_and_run_task(
     task: str,
     *,
     dataset_default_mode: str,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
@@ -181,6 +186,7 @@ def configure_and_run_task(
             recent_files,
             parent,
             position_like_window="guided-input",
+            persistent_job_changed=persistent_job_changed,
         )
     except (ImportError, ModuleNotFoundError) as exc:
         QMessageBox.critical(
@@ -196,6 +202,8 @@ def recompute_result(
     recent_files: RecentFiles,
     parent: QWidget,
     result_id: int,
+    *,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Re-run historical settings on the state active in the workspace.
 
@@ -246,4 +254,5 @@ def recompute_result(
         recent_files,
         parent,
         position_like_window="guided-input",
+        persistent_job_changed=persistent_job_changed,
     )
