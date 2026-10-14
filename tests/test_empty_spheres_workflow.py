@@ -18,11 +18,11 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     controller = WorkspaceController(workspace)
     assert controller.empty_spheres_action() is EmptySpheresAction.ADD
 
-    generation = controller.generation
+    provenance = controller.structure_provenance
     input_state_id = controller.state_id
     change = controller.update_empty_spheres(
         lambda atoms, _previous: (atoms, 0, False),
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
 
     assert change is DocumentChange.APPLIED
@@ -38,9 +38,7 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     first_state = controller.result_history.state(first_output_state_id)
     assert first_state.parent_id == input_state_id
     assert first_state.empty_spheres == workspace.empty_spheres
-    assert controller.generation == generation.next()
-
-    second_generation = controller.generation
+    assert controller.structure_provenance is provenance
 
     def repeat_search(atoms, previous_count):
         assert previous_count == 0
@@ -48,7 +46,7 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
 
     change = controller.update_empty_spheres(
         repeat_search,
-        expected_generation=second_generation,
+        expected_provenance=provenance,
     )
 
     assert change is DocumentChange.APPLIED
@@ -61,34 +59,34 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     second_state = controller.result_history.state(controller.state_id)
     assert second_state.parent_id == first_output_state_id
     assert second_state.empty_spheres == workspace.empty_spheres
-    assert controller.generation == second_generation.next()
+    assert controller.structure_provenance is provenance
 
 
-def test_empty_sphere_update_publishes_found_count_and_new_state():
+def test_empty_sphere_update_mutates_owned_atoms_in_place_and_creates_provenance():
     original = Atoms("Fe")
-    workspace = WorkspaceState(atoms=original, potential_path="Fe.pot")
+    workspace = WorkspaceState(atoms=original)
     controller = WorkspaceController(workspace)
     published = []
     controller.resultChanged.connect(published.append)
-    generation = controller.generation
+    provenance = controller.structure_provenance
     structure_id = controller.structure_id
     input_state_id = controller.state_id
 
     def add_one(atoms, _previous):
-        assert atoms is not original
+        assert atoms is original
         atoms += Atoms("X")
         return atoms, 1, True
 
     change = controller.update_empty_spheres(
         add_one,
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
 
     assert change is DocumentChange.APPLIED
-    assert workspace.atoms is not original
-    assert len(original) == 1
-    assert len(workspace.atoms) == 2
+    assert workspace.atoms is original
+    assert len(original) == 2
     assert workspace.empty_spheres == EmptySpheresState(count=1)
+    assert controller.structure_provenance != provenance
     record = controller.result_history.results[0]
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
@@ -96,7 +94,6 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     assert record.output_state_id == controller.state_id
     assert published == [record.result]
     assert workspace.potential_path is None
-    assert controller.generation == generation.next()
 
 
 def test_empty_sphere_state_keeps_search_parameters_across_later_results():
@@ -106,7 +103,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
 
     controller.update_empty_spheres(
         lambda atoms, _previous: (atoms, 0, False),
-        expected_generation=controller.generation,
+        expected_provenance=controller.structure_provenance,
         parameters=search_parameters,
     )
 
@@ -117,11 +114,12 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
 
     assert controller.structure_id is not None
     assert controller.state_id is not None
+    assert controller.structure_provenance is not None
     request = CalculationRequest(
         atoms=workspace.atoms,
+        structure_provenance=controller.structure_provenance,
         input_parameters=object(),
         directory="",
-        generation=controller.generation,
         structure_id=controller.structure_id,
         state_id=controller.state_id,
     )
@@ -171,40 +169,31 @@ def test_empty_sphere_flow_prefills_parameters_from_workspace_state(monkeypatch)
     assert dict(seen[0]) == search_parameters
 
 
-def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
-    atoms = SimpleNamespace(
-        potential=SimpleNamespace(
-            SCF_INFO=SimpleNamespace(SCFSTATUS="CONVERGED")
-        ),
-        sprkkr_is_scf_converged=lambda: True,
-    )
+def test_use_for_new_calculation_keeps_structure_and_assigns_new_state():
+    atoms = Atoms("Fe")
     empty_spheres = EmptySpheresState(
         3, {"min_radius": 0.8, "mesh": (20, 20, 20)}
     )
     workspace = WorkspaceState(
         atoms=atoms,
-        potential_path="Fe.pot",
         empty_spheres=empty_spheres,
     )
     controller = WorkspaceController(workspace)
-    generation = controller.generation
+    provenance = controller.structure_provenance
     previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(
-        expected_generation=generation
+        expected_state_id=previous_state_id
     )
 
     assert change is DocumentChange.APPLIED
     assert workspace.atoms is atoms
-    assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
+    assert workspace.structure_provenance is provenance
     assert workspace.restarted
-    assert not workspace.is_scf_converged()
     assert workspace.empty_spheres is empty_spheres
     assert workspace.empty_spheres_added == 3
-    assert workspace.potential_path == "Fe.pot"
     assert controller.state_id != previous_state_id
     assert controller.result_history.state(controller.state_id).parent_id == previous_state_id
-    assert controller.generation == generation.next()
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():
