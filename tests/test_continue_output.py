@@ -21,6 +21,7 @@ def _loaded_scf(path, *, atoms=None) -> LoadedResult:
         potential_error=None,
         directory=str(path.parent),
         input_parameters=None,
+        produces_potential=True,
     )
 
 
@@ -52,7 +53,6 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
     assert controller.state_id == record.output_state_id
     assert controller.atoms is not None
     assert controller.directory == str(tmp_path)
-    assert controller.can_run_task("scf")
 
     generation = controller.generation
     assert file_flows.continue_output(controller, recent, output, None)
@@ -61,7 +61,7 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
     assert controller.generation == generation
 
 
-def test_restart_after_continue_keeps_scf_action_available(tmp_path, monkeypatch):
+def test_restart_after_continue_keeps_scf_state_ready_for_new_calculation(tmp_path, monkeypatch):
     output = tmp_path / "SCF.out"
     output.write_text("calculation", encoding="utf-8")
     loaded = _loaded_scf(output)
@@ -75,7 +75,6 @@ def test_restart_after_continue_keeps_scf_action_available(tmp_path, monkeypatch
 
     assert controller.restarted
     assert controller.scf_status() == "START"
-    assert controller.can_run_task("scf")
 
 
 def test_workflow_shows_scf_action_after_continue_and_restart(tmp_path, monkeypatch):

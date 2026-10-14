@@ -269,7 +269,7 @@ def present_result_tree(
             node = _MutableTreeNode(_result_label(record), result_id=record.id)
             result_nodes[record.id] = node
 
-            if record.task_name in {"scf", "empty_spheres"}:
+            if record.output_state_id is not None:
                 structure_node.children.append(node)
                 continue
 

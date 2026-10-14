@@ -11,7 +11,7 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.definitions.bsf import bsf_mode
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.specs.registry import guided_task_definition
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def switch(dialog, mode):
 def test_import_preserves_bsf_geometry_and_mode(application, factory, expected_mode):
     parameters = factory()
     dialog = GuidedInputParametersDialog("bsf", parameters)
-    assert task_dialog_spec("bsf").parameter_task == "bsf"
+    assert guided_task_definition("bsf").backend_task == "bsf"
     assert bsf_mode(dialog.session.working_parameters) == expected_mode
     np.testing.assert_array_equal(dialog.session.value(("TASK", "KA")), parameters.TASK.KA())
     assert dialog.session.value(("TASK", "KPATH")) is None

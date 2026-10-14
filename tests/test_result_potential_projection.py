@@ -65,9 +65,12 @@ def test_empty_spheres_breaks_potential_source_provenance():
         directory="run",
         output_atoms=Atoms("Fe"),
         output_potential_path="Fe.pot",
+        output_potential_produced=True,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
+    # The named POTFIL did not actually exist, so it cannot be provenance for a
+    # reusable potential even though the backend says this result produced one.
     assert store.potential_source_result(scf_state) is None
 
     empty_spheres = store.add_result(
@@ -102,6 +105,30 @@ def test_empty_spheres_breaks_potential_source_provenance():
     widget.close()
 
 
+def test_state_producing_result_projection_is_not_tied_to_scf_name():
+    store = ResultStore()
+    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
+    future = store.add_result(
+        _result("future_task", "future"),
+        structure_id=structure_id,
+        input_state_id=root,
+        input_parameters=object(),
+        directory="run",
+        output_atoms=Atoms("Fe"),
+        output_potential_path=None,
+    )
+    assert future.output_state_id is not None
+
+    tree = present_result_tree(
+        store,
+        current_structure_id=None,
+        current_state_id=None,
+    )
+
+    assert len(tree.roots) == 1
+    assert [child.result_id for child in tree.roots[0].children] == [future.id]
+
+
 def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
     first = tmp_path / "first.pot"
     first.write_text("first")
@@ -118,6 +145,7 @@ def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
         directory="run",
         output_atoms=Atoms("Fe"),
         output_potential_path=str(first),
+        output_potential_produced=True,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
@@ -146,7 +174,7 @@ def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path)
         directory=directory,
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
-        produces_state=True,
+        produces_potential=True,
     )
     state_id = imported_scf.output_state_id
     assert state_id is not None
@@ -190,7 +218,7 @@ def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
         directory=directory,
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
-        produces_state=True,
+        produces_potential=True,
     )
     imported_state = imported_scf.output_state_id
     assert imported_state is not None

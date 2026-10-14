@@ -102,8 +102,8 @@ class PageSpec:
 
 @dataclass(frozen=True)
 class TaskDialogSpec:
-    task: str
-    parameter_task: str
+    """Presentation layout for a guided task; task identity lives in the registry."""
+
     title: str
     pages: tuple[PageSpec, ...]
     intro: str | None = None

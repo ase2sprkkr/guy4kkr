@@ -11,6 +11,10 @@ from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
+def _result(**kwargs):
+    return SimpleNamespace(produces_potential=False, **kwargs)
+
+
 def test_result_loading_resolves_relative_artifacts_from_result_directory(
     tmp_path, monkeypatch
 ):
@@ -24,7 +28,7 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
     atoms = Atoms("Fe")
     potential_reads = []
     parameters = object()
-    result = SimpleNamespace(
+    result = _result(
         files={
             "output": output.name,
             "converged": converged.name,
@@ -53,6 +57,7 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
     assert loaded.directory == str(run_directory.resolve())
     assert loaded.input_parameters is parameters
     assert loaded.input_parameters_error is None
+    assert not loaded.produces_potential
     assert potential_reads == [str(converged.resolve())]
 
 
@@ -63,6 +68,7 @@ def test_result_loading_keeps_input_parameter_parse_failure_nonfatal(tmp_path):
         files = {}
         directory = str(tmp_path)
         output_file = None
+        produces_potential = False
 
         @property
         def input_parameters(self):
@@ -87,7 +93,7 @@ def test_result_loading_uses_potential_fallbacks_and_fallback_directory(
     potential = tmp_path / expected_name
     potential.touch()
     atoms = Atoms("Fe")
-    result = SimpleNamespace(
+    result = _result(
         files=files,
         directory=None,
         potential_filename=potential_filename,
@@ -107,7 +113,7 @@ def test_result_loading_uses_potential_fallbacks_and_fallback_directory(
 
 
 def test_result_loading_uses_output_file_before_explicit_output_fallback(tmp_path):
-    result = SimpleNamespace(
+    result = _result(
         files={},
         directory=None,
         output_file="metadata.out",
@@ -126,7 +132,7 @@ def test_result_loading_uses_output_file_before_explicit_output_fallback(tmp_pat
 def test_result_loading_reports_a_potential_path_that_is_not_a_file(tmp_path):
     potential_directory = tmp_path / "potential.pot"
     potential_directory.mkdir()
-    result = SimpleNamespace(
+    result = _result(
         files={"potential": potential_directory.name},
         directory=str(tmp_path),
     )
@@ -141,7 +147,7 @@ def test_result_loading_reports_a_potential_path_that_is_not_a_file(tmp_path):
 
 def test_missing_output_path_is_advisory_provenance(tmp_path):
     missing_output = tmp_path / "missing.out"
-    result = SimpleNamespace(
+    result = _result(
         files={"output": missing_output.name},
         directory=str(tmp_path),
     )
@@ -159,7 +165,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
 ):
     output = tmp_path / "external.out"
     missing = tmp_path / "missing.pot"
-    result = SimpleNamespace(
+    result = _result(
         files={"output": output.name, "converged": missing.name},
         directory=str(tmp_path),
     )

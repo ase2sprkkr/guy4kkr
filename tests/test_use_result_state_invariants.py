@@ -35,6 +35,7 @@ def _loaded_scf(atoms, potential_path: str | Path | None = None):
         atoms=atoms,
         potential_error=None,
         directory=None,
+        produces_potential=True,
     )
 
 

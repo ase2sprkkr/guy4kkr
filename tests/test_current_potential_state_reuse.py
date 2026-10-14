@@ -54,6 +54,7 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
         output_potential_path=str(potential),
+        output_potential_produced=True,
     )
     assert scf1.output_state_id is not None
 
@@ -66,6 +67,7 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
         output_potential_path=str(potential),
+        output_potential_produced=True,
     )
     assert scf2.output_state_id is not None
     return scf1, scf2

@@ -142,7 +142,7 @@ def test_add_external_result_snapshot_failure_does_not_commit_structure():
             directory=None,
             output_path=None,
             potential_path=None,
-            produces_state=False,
+            produces_potential=False,
         )
 
     assert store.structures == ()
@@ -155,7 +155,7 @@ def test_add_external_result_snapshot_failure_does_not_commit_structure():
         directory=None,
         output_path=None,
         potential_path=None,
-        produces_state=False,
+        produces_potential=False,
     )
     assert record.id == 1
     assert record.structure_id == 1

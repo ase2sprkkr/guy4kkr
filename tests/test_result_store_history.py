@@ -35,6 +35,7 @@ def _loaded(
         potential_error=None,
         directory=None,
         input_parameters=input_parameters,
+        produces_potential=str(result.task_name).lower() == "scf",
     )
 
 

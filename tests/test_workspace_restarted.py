@@ -37,6 +37,7 @@ def _loaded_result(task, atoms):
         atoms=atoms,
         potential_error=None,
         directory=None,
+        produces_potential=task.upper() == "SCF",
     )
 
 

@@ -40,6 +40,7 @@ def test_scf_does_not_fast_forward_across_use_for_new_calculation():
         atoms=Atoms("Fe"),
         potential_error=None,
         directory="run",
+        produces_potential=True,
     )
     adoption = controller.adopt_calculation_result(loaded, request=request)
 

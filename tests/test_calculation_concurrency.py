@@ -39,6 +39,15 @@ class _Cancellation:
         return True
 
 
+def _dos_result(directory):
+    return SimpleNamespace(
+        files={},
+        directory=str(directory),
+        task_name="DOS",
+        produces_potential=False,
+    )
+
+
 def test_confirmed_structure_edit_is_copy_on_write():
     atoms = Atoms("Fe")
     controller = WorkspaceController(
@@ -207,7 +216,7 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     replacement = Atoms("Cu")
     controller.replace_structure(replacement)
 
-    result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
+    result = _dos_result(tmp_path)
     loaded = load_result(result, fallback_directory=tmp_path)
     adoption = controller.adopt_calculation_result(loaded, request=request)
     assert not adoption.workspace_updated
@@ -262,7 +271,7 @@ def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_p
 
 
 def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp_path):
-    result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
+    result = _dos_result(tmp_path)
     monkeypatch.setattr(
         result_loading_module.TaskResult,
         "from_file",
@@ -291,9 +300,7 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
         )
     )
     request = controller.create_calculation_request()
-    result = SimpleNamespace(
-        files={}, directory=str(original_directory), task_name="DOS"
-    )
+    result = _dos_result(original_directory)
     loaded = load_result(result, fallback_directory=original_directory)
 
     controller.change_directory(str(next_directory))

@@ -20,6 +20,7 @@ from guy4ase.gui.dialogs.profiles import (
     profile_description,
 )
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
+from guy4ase.gui.input_parameters.specs.registry import guided_task_definition
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
 
@@ -80,17 +81,9 @@ def run_calculation(
 
     ``position_like_window`` optionally reuses another managed window's
     top-left corner for the profile picker and the run window. Their own sizes
-    stay independent.
+    stay independent. Backend task validity is enforced by ASE2SPRKKR rather
+    than by Guy4ASE's guided-task registry.
     """
-    task = controller.current_task()
-    if task is not None and not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            f"{task.upper()} cannot be run with the current workspace state.",
-        )
-        return None
-
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -149,14 +142,6 @@ def configure_and_run_task(
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
-        if not controller.can_run_task(task):
-            QMessageBox.information(
-                parent,
-                "Task Not Available",
-                f"{str(task).upper()} cannot be run with the current workspace state.",
-            )
-            return None
-
         if (
             not controller.directory
             and not choose_working_directory(
@@ -218,21 +203,22 @@ def recompute_result(
 
     Historical input parameters are only an editable starting point. Structure
     and potential always come from the current workspace, so selecting an old
-    result never silently switches calculation lineage.
+    result never silently switches calculation lineage. Recompute uses the
+    guided editor and therefore remains limited to tasks that have a guided
+    definition; this is a UI capability, not a backend launch restriction.
     """
     record = controller.result_store.result(result_id)
     task = record.task_name
     if not task or record.input_parameters is None:
         return None
 
-    if not controller.can_run_task(task):
+    try:
+        definition = guided_task_definition(task)
+    except ValueError:
         QMessageBox.information(
             parent,
-            "Task Not Available",
-            (
-                f"{task.upper()} cannot be run with the potential currently active "
-                "in the workspace."
-            ),
+            "Guided Setup Unavailable",
+            f"{task.upper()} has no guided editor. It can still be run from Expert mode.",
         )
         return None
 
@@ -253,7 +239,7 @@ def recompute_result(
     except AttributeError:
         return None
     dialog = GuidedInputParametersDialog(
-        task,
+        definition.task,
         parameters,
         parent=parent,
         atoms=atoms,

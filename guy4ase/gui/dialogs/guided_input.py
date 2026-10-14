@@ -30,7 +30,7 @@ from guy4ase.gui.flows.input_parameters import (
 )
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.specs.registry import guided_task_definition
 from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
@@ -81,11 +81,11 @@ class GuidedInputParametersDialog(QDialog):
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.spec: TaskDialogSpec = task_dialog_spec(
-            self.task,
+        definition = guided_task_definition(self.task)
+        self.spec: TaskDialogSpec = definition.dialog_spec(
             is_2d=detect_structure_kind(atoms) == "2d",
         )
-        expected_task = self.spec.parameter_task.lower()
+        expected_task = definition.backend_task
         if parameters.task_name.lower() != expected_task:
             raise ValueError(
                 f"Expected {expected_task.upper()} input parameters, "
@@ -378,15 +378,11 @@ def select_guided_input_parameters(
     atoms: Any = None,
     dataset_default_mode: str,
 ) -> InputParameters | None:
-    task = task.lower()
-    spec = task_dialog_spec(
-        task,
-        is_2d=detect_structure_kind(atoms) == "2d",
-    )
-    parameters = InputParameters.create(spec.parameter_task)
+    definition = guided_task_definition(task)
+    parameters = InputParameters.create(definition.backend_task)
     apply_default_dataset(parameters, dataset_default_mode, atoms)
     dialog = GuidedInputParametersDialog(
-        task,
+        definition.task,
         parameters,
         parent=parent,
         atoms=atoms,

@@ -24,6 +24,9 @@ class LoadedResult:
     to ``atoms``. A missing referenced potential is different: reconstructing
     atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
 
+    ``produces_potential`` snapshots the backend task semantic at this boundary;
+    application provenance code must not infer it again from a task name.
+
     ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
     this result originated from a persistent execution. It deliberately does
     not duplicate the backend-specific run reference.
@@ -38,6 +41,7 @@ class LoadedResult:
     input_parameters: Any | None = None
     input_parameters_error: Exception | None = None
     persistent_ref: str | None = None
+    produces_potential: bool = False
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
@@ -112,6 +116,7 @@ def load_result(
         input_parameters=input_parameters,
         input_parameters_error=input_parameters_error,
         persistent_ref=persistent_ref,
+        produces_potential=result.produces_potential,
     )
 
 
