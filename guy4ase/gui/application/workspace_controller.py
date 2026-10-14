@@ -29,11 +29,15 @@ def _result_produces_potential(result: Any) -> bool:
     """Return backend-declared potential-production semantics for a result."""
     try:
         task = str(result.task_name).strip()
-        if not task:
-            return False
-        return bool(InputParameters.definition(task).produces_potential)
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         return False
+    if not task:
+        return False
+    try:
+        definition = InputParameters.definition(task)
+    except KeyError:
+        return False
+    return bool(definition.produces_potential)
 
 
 def _atoms_has_potential(atoms: Any) -> bool:
@@ -47,6 +51,13 @@ class DocumentChange(Enum):
 
     APPLIED = auto()
     STALE = auto()
+
+
+class EmptySpheresAction(Enum):
+    """Recommended empty-sphere action for the current workspace draft."""
+
+    ADD = auto()
+    RECALCULATE = auto()
 
 
 class CalculationNotReady(RuntimeError):
@@ -187,7 +198,7 @@ class WorkspaceController(QObject):
 
     def can_calculate(self) -> bool:
         """Return whether the workspace contains the concrete launch inputs."""
-        return self._workspace.can_calculate()
+        return self._workspace.is_calculation_input_complete()
 
     def can_build_2d(self) -> bool:
         return self.structure_kind() == "3d"
@@ -201,8 +212,15 @@ class WorkspaceController(QObject):
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()
 
-    def empty_spheres_action(self) -> str | None:
-        return self._workspace.empty_spheres_action()
+    def empty_spheres_action(self) -> EmptySpheresAction | None:
+        """Return the empty-sphere workflow action recommended for the draft."""
+        if self.atoms is None:
+            return None
+        if self.empty_spheres is not None:
+            return EmptySpheresAction.RECALCULATE
+        if self.has_vacuum_sites():
+            return None
+        return EmptySpheresAction.ADD
 
     def structure_change_requires_scf_restart(self) -> bool:
         if self.atoms is None or self.restarted:
