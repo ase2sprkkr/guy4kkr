@@ -7,7 +7,9 @@ from typing import Callable
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.execution_profiles import profile_description
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.window_geometry import window_placement
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
@@ -207,6 +209,53 @@ def configure_and_run_task(
             f"The {task.upper()} task is not available:\n{exc}",
         )
         return None
+
+
+def show_new_calculation_source_required(parent: QWidget) -> None:
+    """Explain why a structure with multiple provenance branches needs selection."""
+    QMessageBox.information(
+        parent,
+        "Select Calculation State",
+        "This structure has multiple calculation branches. Select the result state "
+        "you want to reuse first, then choose Use for New Calculation.",
+    )
+
+
+def use_for_new_calculation(
+    controller: WorkspaceController,
+    parent: QWidget,
+    *,
+    result_id: int | None = None,
+    expected_potential: PotentialFileVersion | None = None,
+) -> bool:
+    """Confirm and atomically branch from the active or historical structure."""
+    generation = controller.generation
+    answer = QMessageBox.question(
+        parent,
+        "Use for New Calculation?",
+        "Keep the selected structure and reusable potential as starting density, "
+        "reset the SCF stage, and use it for a new calculation?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    if answer != QMessageBox.StandardButton.Yes:
+        return False
+
+    try:
+        change = controller.use_for_new_calculation(
+            result_id=result_id,
+            expected_potential=expected_potential,
+            expected_generation=generation,
+        )
+    except PotentialVersionChanged as exc:
+        QMessageBox.warning(
+            parent,
+            "Potential Changed",
+            "The potential changed while the operation was being confirmed. "
+            f"Please try again.\n{exc}",
+        )
+        return False
+    return document_change_applied(parent, change)
 
 
 def recompute_result(

@@ -43,6 +43,7 @@ _ACTION_LABELS = {
     "open_directory": "Open containing directory",
 }
 _RESULT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
+_STRUCTURE_ID_ROLE = _RESULT_ID_ROLE + 1
 
 
 def result_action_icon(style: QStyle, action: str) -> QIcon:
@@ -93,6 +94,7 @@ class ResultActionsWidget(QWidget):
     useStateRequested = pyqtSignal(int)
     recomputeRequested = pyqtSignal(int)
     selectionRequested = pyqtSignal(int)
+    newCalculationRequested = pyqtSignal(int)
     historyRequested = pyqtSignal()
 
     def __init__(
@@ -126,6 +128,7 @@ class ResultActionsWidget(QWidget):
         self._selector.setHeaderHidden(True)
         self._selector.setToolTip("Select a result")
         self._selector.currentItemChanged.connect(self._select_result)
+        self._selector.itemDoubleClicked.connect(self._item_double_clicked)
         self._selector.hide()
         layout.addWidget(self._selector)
 
@@ -241,6 +244,8 @@ class ResultActionsWidget(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         else:
             item.setData(0, _RESULT_ID_ROLE, node.result_id)
+        if node.structure_id is not None:
+            item.setData(0, _STRUCTURE_ID_ROLE, node.structure_id)
         for child in node.children:
             item.addChild(self._tree_item(child))
         return item
@@ -267,6 +272,12 @@ class ResultActionsWidget(QWidget):
         value = current.data(0, _RESULT_ID_ROLE)
         if value is not None:
             self.selectionRequested.emit(int(value))
+
+    def _item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        """Emit continuation intent only for model-designated structure nodes."""
+        structure_id = item.data(0, _STRUCTURE_ID_ROLE)
+        if structure_id is not None:
+            self.newCalculationRequested.emit(int(structure_id))
 
     def _refresh_record_actions(self, actions: ResultActionAvailability) -> None:
         use_state = actions.use_state

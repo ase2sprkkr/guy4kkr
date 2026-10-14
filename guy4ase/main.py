@@ -141,6 +141,18 @@ class GuiApplication(QObject):
                 track_launch_monitor=self._track_launch_monitor,
             )
         )
+        presenter.newCalculationRequested.connect(
+            lambda source, target=window: calculation_flow.use_for_new_calculation(
+                self.controller,
+                target,
+                result_id=source.result_id,
+            )
+        )
+        presenter.newCalculationUnavailable.connect(
+            lambda target=window: calculation_flow.show_new_calculation_source_required(
+                target
+            )
+        )
 
     def _use_result_state(
         self,

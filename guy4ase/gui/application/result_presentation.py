@@ -51,6 +51,7 @@ class ResultTreeNode:
     label: str
     result_id: int | None = None
     children: tuple["ResultTreeNode", ...] = ()
+    structure_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -67,12 +68,14 @@ class _MutableTreeNode:
     label: str
     result_id: int | None = None
     children: list["_MutableTreeNode"] = field(default_factory=list)
+    structure_id: int | None = None
 
     def freeze(self) -> ResultTreeNode:
         return ResultTreeNode(
             self.label,
             self.result_id,
             tuple(child.freeze() for child in self.children),
+            self.structure_id,
         )
 
 
@@ -263,7 +266,10 @@ def present_result_tree(
         if not structure_records:
             continue
 
-        structure_node = _MutableTreeNode(structure.formula)
+        structure_node = _MutableTreeNode(
+            structure.formula,
+            structure_id=structure.id,
+        )
         for record in structure_records:
             records[record.id] = record
             node = _MutableTreeNode(_result_label(record), result_id=record.id)

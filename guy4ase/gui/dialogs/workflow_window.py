@@ -40,7 +40,6 @@ from guy4ase.gui.input_parameters.tasks import (
     workflow_tasks,
 )
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -633,21 +632,7 @@ class WorkflowWindow(QMainWindow):
         structure_flows.update_empty_spheres(self.controller, self)
 
     def _use_for_new_calculation(self) -> None:
-        generation = self.controller.generation
-        answer = QMessageBox.question(
-            self,
-            "Use for New Calculation?",
-            "Keep the current potential as starting density, reset the SCF stage, "
-            "and use this structure for a new calculation?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        change = self.controller.use_for_new_calculation(
-            expected_generation=generation,
-        )
-        document_change_applied(self, change)
+        calculation_flow.use_for_new_calculation(self.controller, self)
 
     def _start_over(self) -> None:
         answer = QMessageBox.question(
