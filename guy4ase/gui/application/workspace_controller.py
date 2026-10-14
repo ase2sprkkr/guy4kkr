@@ -15,62 +15,56 @@ from guy4ase.gui.application.historical_state import (
     NewHistoricalPotential,
     resolve_historical_state,
 )
+from guy4ase.gui.application.materialized import Materialized
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_artifacts import find_existing_external_result
 from guy4ase.gui.application.result_capture import capture_result, capture_structure
 from guy4ase.gui.application.result_history import ResultHistory, ResultRecord
 from guy4ase.gui.application.result_loading import LoadedResult
+from guy4ase.gui.application.structure_provenance import (
+    StructureProvenance,
+    materialize_structure,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
+_ANY_STRUCTURE = object()
 _POST_SCF_TASKS = frozenset({"xas", "arpes", "dos", "bsf", "jxc"})
 
 
 def _atoms_has_potential(atoms: Any) -> bool:
-    """Return whether the authoritative atoms state owns a potential."""
     checker = getattr(atoms, "has_potential", None)
     return bool(callable(checker) and checker())
 
 
 class DocumentChange(Enum):
-    """Semantic result of a revision-sensitive draft command."""
-
     APPLIED = auto()
     STALE = auto()
 
 
 class EmptySpheresAction(Enum):
-    """Recommended empty-sphere action for the current workspace draft."""
-
     ADD = auto()
     RECALCULATE = auto()
 
 
 class CalculationNotReady(RuntimeError):
-    """The workspace does not contain all inputs required for calculation."""
+    pass
 
 
 @dataclass(frozen=True)
 class CalculationRequest:
-    """Immutable provenance captured when a calculation is launched.
+    """Immutable calculation launch snapshot.
 
-    ``generation`` protects preparation against delayed draft callbacks.
-    Completed calculations are always recorded against ``structure_id`` and
-    ``state_id``. An SCF output may advance the workspace only while that exact
-    input state is still active.
-
-    ``atoms`` identifies the authoritative launch input and is the sole physical
-    authority for its potential; potential paths are provenance/artifact metadata
-    only. The execution service copies it before ASE2SPRKKR sees it.
-
-    ``restart_scf`` snapshots the pending workspace execution intent.
+    ``structure_provenance`` is the exact physical-state identity from which the
+    request was prepared. It replaces the workspace generation as the structure
+    concurrency token. ``state_id`` remains the lineage identity.
     """
 
     atoms: Atoms
+    structure_provenance: StructureProvenance
     input_parameters: Any
     directory: str
-    generation: Generation
     structure_id: int
     state_id: int
     restart_scf: bool = False
@@ -78,8 +72,6 @@ class CalculationRequest:
 
 @dataclass(frozen=True)
 class ResultAdoption:
-    """Artifacts and workspace effect of recording a completed result."""
-
     output_path: Path | None = None
     potential_path: Path | None = None
     potential_error: Exception | None = None
@@ -106,26 +98,26 @@ class WorkspaceController(QObject):
         self._workspace = workspace or WorkspaceState()
         self._generation = self._workspace.generation
         self._history = ResultHistory()
-        if self._workspace.atoms is not None:
-            captured = capture_structure(
-                self._workspace.atoms,
-                potential_path=self._workspace.potential_path,
-            )
+        provenance = self._workspace.structure_provenance
+        if provenance is not None:
             structure_id, state_id = self._history.add_structure_state(
-                captured,
+                provenance,
                 empty_spheres=self._workspace.empty_spheres,
             )
             self._workspace.structure_id = structure_id
             self._workspace.state_id = state_id
-            self._workspace.potential_path = (
-                str(captured.potential_path)
-                if captured.potential_path is not None
-                else None
-            )
 
     @property
     def atoms(self) -> Any:
         return self._workspace.atoms
+
+    @property
+    def structure(self) -> Materialized[Any, StructureProvenance] | None:
+        return self._workspace.structure
+
+    @property
+    def structure_provenance(self) -> StructureProvenance | None:
+        return self._workspace.structure_provenance
 
     @property
     def input_parameters(self) -> Any:
@@ -137,7 +129,6 @@ class WorkspaceController(QObject):
 
     @property
     def potential_path(self) -> str | None:
-        """Return potential provenance/artifact path, never calculation input."""
         return self._workspace.potential_path
 
     @property
@@ -150,7 +141,6 @@ class WorkspaceController(QObject):
 
     @property
     def result(self) -> Any | None:
-        """Return the latest result attached to the active workspace state."""
         record = self._history.latest_result_for_state(self.state_id)
         return record.result if record is not None else None
 
@@ -172,13 +162,13 @@ class WorkspaceController(QObject):
 
     @property
     def generation(self) -> Generation:
+        """Revision of non-structural draft state kept for parameter workflows."""
         return self._generation
 
     def structure_kind(self):
         return self._workspace.structure_kind()
 
     def current_task(self) -> str | None:
-        """Return the normalized task of the active input parameters, if known."""
         parameters = self.input_parameters
         try:
             task = str(parameters.task_name).strip().lower()
@@ -193,7 +183,6 @@ class WorkspaceController(QObject):
         return task is None or self.can_run_task(task)
 
     def can_run_task(self, task: str) -> bool:
-        """Return whether the active workspace satisfies ``task`` prerequisites."""
         if self.atoms is None:
             return False
         task = str(task).strip().lower()
@@ -216,7 +205,6 @@ class WorkspaceController(QObject):
         return self._workspace.has_vacuum_sites()
 
     def empty_spheres_action(self) -> EmptySpheresAction | None:
-        """Return the empty-sphere workflow action recommended for the draft."""
         if self.atoms is None:
             return None
         if self.empty_spheres is not None:
@@ -233,13 +221,13 @@ class WorkspaceController(QObject):
         return self.scf_status() not in (None, "START")
 
     def create_calculation_request(self) -> CalculationRequest:
-        atoms = self.atoms
+        structure = self.structure
         parameters = self.input_parameters
         directory = self._workspace.directory
         structure_id = self._workspace.structure_id
         state_id = self._workspace.state_id
         if (
-            atoms is None
+            structure is None
             or parameters is None
             or not directory
             or structure_id is None
@@ -249,10 +237,10 @@ class WorkspaceController(QObject):
                 "Structure, input parameters, working directory and calculation state are required."
             )
         return CalculationRequest(
-            atoms=atoms,
+            atoms=structure.get(),
+            structure_provenance=structure.provenance,
             input_parameters=parameters.copy(copy_values=True),
             directory=directory,
-            generation=self._generation,
             structure_id=structure_id,
             state_id=state_id,
             restart_scf=self.restarted,
@@ -260,6 +248,14 @@ class WorkspaceController(QObject):
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
         return expected is None or expected == self._generation
+
+    def _structure_is_current(
+        self,
+        expected: StructureProvenance | None | object,
+    ) -> bool:
+        if expected is _ANY_STRUCTURE:
+            return True
+        return self.structure_provenance == expected
 
     def _changed(self) -> None:
         self._generation = self._generation.next()
@@ -273,21 +269,28 @@ class WorkspaceController(QObject):
 
     def replace_structure(
         self,
-        atoms: Any,
+        structure: Materialized[Any, StructureProvenance] | Any | None,
         *,
         potential_path: str | None = None,
         directory: Any = _KEEP_DIRECTORY,
-        expected_generation: Generation | None = None,
+        expected_provenance: StructureProvenance | None | object = _ANY_STRUCTURE,
         restarted: bool = False,
     ) -> DocumentChange:
-        if not self._generation_is_current(expected_generation):
+        if not self._structure_is_current(expected_provenance):
             return DocumentChange.STALE
-        captured = capture_structure(atoms, potential_path=potential_path)
-        structure_id, state_id = self._history.add_structure_state(captured)
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = (
-            str(captured.potential_path) if captured.potential_path is not None else None
-        )
+        if structure is None:
+            materialized = None
+            structure_id = state_id = None
+        else:
+            materialized = (
+                structure
+                if isinstance(structure, Materialized)
+                else materialize_structure(structure, potential_path=potential_path)
+            )
+            provenance = materialized.provenance
+            structure_id, state_id = self._history.add_structure_state(provenance)
+
+        self._workspace.structure = materialized
         self._workspace.structure_id = structure_id
         self._workspace.state_id = state_id
         self._workspace.empty_spheres = None
@@ -296,31 +299,37 @@ class WorkspaceController(QObject):
         self._changed()
         if directory_changed:
             self.directoryChanged.emit(directory)
-        self.structureChanged.emit(atoms)
+        self.structureChanged.emit(self.atoms)
         return DocumentChange.APPLIED
 
     def apply_structure_edit(
         self,
         edit: Callable[[Any], Any],
         *,
-        expected_generation: Generation,
+        expected_provenance: StructureProvenance | None,
     ) -> DocumentChange | None:
-        if not self._generation_is_current(expected_generation):
-            return DocumentChange.STALE
-        source = self.atoms
-        if source is None:
+        owner = self.structure
+        if owner is None:
             raise ValueError("No structure is loaded.")
-
-        atoms = edit(source.copy())
-        if atoms is None:
-            return None
-        if not self._generation_is_current(expected_generation):
+        if owner.provenance != expected_provenance:
             return DocumentChange.STALE
 
-        captured = capture_structure(atoms, potential_path=None)
-        structure_id, state_id = self._history.add_structure_state(captured)
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = None
+        candidate = owner.take_for_mutation()
+        try:
+            atoms = edit(candidate)
+        except Exception:
+            owner.abandon_mutation()
+            raise
+        if atoms is None:
+            owner.abandon_mutation()
+            return None
+        if self.structure is not owner or owner.provenance != expected_provenance:
+            owner.abandon_mutation()
+            return DocumentChange.STALE
+
+        provenance = capture_structure(atoms, potential_path=None)
+        structure_id, state_id = self._history.add_structure_state(provenance)
+        owner.replace_after_mutation(atoms, provenance)
         self._workspace.structure_id = structure_id
         self._workspace.state_id = state_id
         self._workspace.empty_spheres = None
@@ -374,7 +383,6 @@ class WorkspaceController(QObject):
         *,
         select_result: bool = False,
     ) -> ResultAdoption:
-        """Record an imported result without implicitly replacing the draft."""
         record = find_existing_external_result(
             self._history,
             loaded.output_path,
@@ -385,22 +393,17 @@ class WorkspaceController(QObject):
                 loaded.result,
                 input_parameters=loaded.input_parameters,
                 output_path=loaded.output_path,
+                output_version=loaded.output_version,
                 potential_path=loaded.potential_path,
             )
-            structure = (
-                capture_structure(
-                    loaded.atoms,
-                    potential_path=loaded.potential_path,
-                    potential_version=loaded.potential_version,
-                )
-                if loaded.atoms is not None
-                else None
+            provenance = (
+                loaded.structure.provenance if loaded.structure is not None else None
             )
             record = self._history.add_external_result(
                 captured,
-                structure=structure,
+                structure=provenance,
                 directory=loaded.directory,
-                produces_state=(loaded.atoms is not None and captured.task_name == "scf"),
+                produces_state=(provenance is not None and captured.task_name == "scf"),
                 persistent_ref=loaded.persistent_ref,
             )
 
@@ -415,23 +418,17 @@ class WorkspaceController(QObject):
         *,
         request: CalculationRequest,
     ) -> ResultAdoption:
-        """Record a launched result against its exact captured provenance."""
         captured = capture_result(
             loaded.result,
             input_parameters=request.input_parameters,
             output_path=loaded.output_path,
+            output_version=loaded.output_version,
             potential_path=loaded.potential_path,
         )
         is_scf = captured.task_name == "scf"
-        output_atoms = loaded.atoms if is_scf and loaded.atoms is not None else None
-        output_structure = (
-            capture_structure(
-                output_atoms,
-                potential_path=loaded.potential_path,
-                potential_version=loaded.potential_version,
-            )
-            if output_atoms is not None
-            else None
+        output_materialized = loaded.structure if is_scf else None
+        output_provenance = (
+            output_materialized.provenance if output_materialized is not None else None
         )
 
         record = self._history.add_result(
@@ -441,28 +438,25 @@ class WorkspaceController(QObject):
             directory=request.directory,
             persistent_ref=loaded.persistent_ref,
             restart_scf=request.restart_scf,
-            output_structure=output_structure,
+            output_structure=output_provenance,
         )
 
         workspace_updated = False
         if (
-            is_scf
-            and output_atoms is not None
+            output_materialized is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
             and request.state_id == self._workspace.state_id
+            and request.structure_provenance == self.structure_provenance
         ):
             state = self._history.state(record.output_state_id)
-            self._workspace.atoms = output_atoms
-            self._workspace.potential_path = (
-                str(state.potential_path) if state.potential_path is not None else None
-            )
+            self._workspace.structure = output_materialized
             self._workspace.empty_spheres = state.empty_spheres
             self._workspace.state_id = state.id
             self._workspace.restarted = False
             self._changed()
             workspace_updated = True
-            self.structureChanged.emit(output_atoms)
+            self.structureChanged.emit(output_materialized.get())
 
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(
@@ -476,7 +470,6 @@ class WorkspaceController(QObject):
         result_id: int,
         expected_potential: PotentialFileVersion | None = None,
     ) -> None:
-        """Activate a reconstructable historical state or approved current POTFIL."""
         resolution = resolve_historical_state(
             self._history,
             result_id,
@@ -488,26 +481,26 @@ class WorkspaceController(QObject):
 
         atoms = resolution.atoms
         if isinstance(resolution, NewHistoricalPotential):
-            captured = capture_structure(
+            provenance = capture_structure(
                 atoms,
                 potential_path=resolution.potential_version.path,
                 potential_version=resolution.potential_version,
             )
             target_state_id = self._history.add_child_state(
                 resolution.parent_state.id,
-                structure=captured,
+                structure=provenance,
                 empty_spheres=None,
             )
             target_state = self._history.state(target_state_id)
         else:
             target_state = resolution.state
+            provenance = capture_structure(
+                atoms,
+                potential_path=target_state.potential_path,
+                potential_version=target_state.potential_version,
+            )
 
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = (
-            str(target_state.potential_path)
-            if target_state.potential_path is not None
-            else None
-        )
+        self._workspace.structure = provenance.materialized(atoms)
         self._workspace.structure_id = target_state.structure_id
         self._workspace.state_id = target_state.id
         self._workspace.empty_spheres = target_state.empty_spheres
@@ -518,9 +511,7 @@ class WorkspaceController(QObject):
         self.structureChanged.emit(atoms)
 
     def reset(self) -> None:
-        """Clear the draft while deliberately preserving calculation history."""
-        self._workspace.atoms = None
-        self._workspace.potential_path = None
+        self._workspace.structure = None
         self._workspace.input_parameters = None
         self._workspace.structure_id = None
         self._workspace.state_id = None
@@ -533,13 +524,15 @@ class WorkspaceController(QObject):
         self.directoryChanged.emit(None)
 
     def use_for_new_calculation(
-        self, *, expected_generation: Generation | None = None
+        self,
+        *,
+        expected_state_id: int | None = None,
     ) -> DocumentChange:
-        if not self._generation_is_current(expected_generation):
-            return DocumentChange.STALE
         state_id = self._workspace.state_id
         if state_id is None:
             raise ValueError("No calculation state is active.")
+        if expected_state_id is not None and expected_state_id != state_id:
+            return DocumentChange.STALE
         self._workspace.state_id = self._history.add_child_state(
             state_id,
             new_branch=True,
@@ -553,21 +546,27 @@ class WorkspaceController(QObject):
         self,
         edit: Callable[[Any, int], tuple[Any, int, bool]],
         *,
-        expected_generation: Generation,
+        expected_provenance: StructureProvenance,
         parameters: Mapping[str, Any] | None = None,
     ) -> DocumentChange:
-        if not self._generation_is_current(expected_generation):
-            return DocumentChange.STALE
-        source = self.atoms
+        owner = self.structure
         structure_id = self.structure_id
         state_id = self.state_id
-        if source is None or structure_id is None or state_id is None:
+        if owner is None or structure_id is None or state_id is None:
             raise ValueError("No structure is loaded.")
+        if owner.provenance != expected_provenance:
+            return DocumentChange.STALE
 
         previous_state = self._workspace.empty_spheres
         previous_count = previous_state.count if previous_state is not None else 0
-        updated, count, structure_changed = edit(source.copy(), previous_count)
-        if not self._generation_is_current(expected_generation):
+        candidate = owner.take_for_mutation()
+        try:
+            updated, count, structure_changed = edit(candidate, previous_count)
+        except Exception:
+            owner.abandon_mutation()
+            raise
+        if self.structure is not owner or owner.provenance != expected_provenance:
+            owner.abandon_mutation()
             return DocumentChange.STALE
 
         empty_spheres = EmptySpheresState(count=count, parameters=parameters or {})
@@ -578,10 +577,8 @@ class WorkspaceController(QObject):
             output_path=None,
             potential_path=None,
         )
-        output_structure = (
-            capture_structure(updated, potential_path=None)
-            if structure_changed
-            else None
+        output_provenance = (
+            capture_structure(updated, potential_path=None) if structure_changed else None
         )
 
         record = self._history.add_result(
@@ -589,24 +586,23 @@ class WorkspaceController(QObject):
             structure_id=structure_id,
             input_state_id=state_id,
             directory=self.directory,
-            output_structure=output_structure,
+            output_structure=output_provenance,
             output_empty_spheres=empty_spheres,
         )
 
         assert record.output_state_id is not None
         state = self._history.state(record.output_state_id)
-        active_atoms = updated if structure_changed else source
-        self._workspace.atoms = active_atoms
-        self._workspace.potential_path = (
-            str(state.potential_path) if state.potential_path is not None else None
-        )
+        if structure_changed:
+            assert output_provenance is not None
+            owner.replace_after_mutation(updated, output_provenance)
+            self._workspace.restarted = True
+        else:
+            owner.abandon_mutation()
         self._workspace.empty_spheres = state.empty_spheres
         self._workspace.state_id = state.id
-        if structure_changed:
-            self._workspace.restarted = True
         self._changed()
         if structure_changed:
-            self.structureChanged.emit(active_atoms)
+            self.structureChanged.emit(updated)
 
         self.resultChanged.emit(result)
         return DocumentChange.APPLIED
