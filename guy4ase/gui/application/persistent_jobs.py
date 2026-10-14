@@ -149,16 +149,14 @@ class PersistentJobSource:
             manager = ExecutionManager()
             self._manager = manager
 
-        store = manager.store
+        try:
+            store = manager.store
+        except AttributeError as exc:
+            raise TypeError("persistent job manager must expose a run store") from exc
         if not callable(getattr(store, "runs", None)) or not callable(
             getattr(store, "get", None)
         ):
-            self._manager = None
-            self.unavailable_reason = (
-                "Persistent calculation history is not available in this "
-                "ASE2SPRKKR version yet."
-            )
-            return
+            raise TypeError("persistent run store must provide runs() and get()")
 
         self.reload(notify=False)
 
@@ -330,28 +328,33 @@ class PersistentJobSource:
                 logger.exception("Failed to recover persistent run %s", job.id)
 
     def _recover(self, job_id: str) -> Any | None:
-        # Keep the re-entrant lock through attach. ASE2SPRKKR may invoke the
-        # completion callback synchronously during attach, so the callback must
-        # be able to re-enter while check+attach remains single-owner per run id.
+        # Reserve the identity before attach, then release the lock. A second
+        # reload sees the sentinel and cannot attach the same finishing run.
         with self._lock:
             if job_id in self._recovery_runners:
                 value = self._recovery_runners[job_id]
                 return None if value is _RECOVERING else value
             self._recovery_runners[job_id] = _RECOVERING
-            completed_synchronously = False
 
-            def completed(_result: Any) -> None:
-                nonlocal completed_synchronously
-                completed_synchronously = True
-                self._recovery_runners.pop(job_id, None)
-                self.job_changed(job_id)
+        completed_synchronously = False
 
-            try:
-                runner = self.attach(job_id, callback=completed)
-            except BaseException:
+        def completed(_result: Any) -> None:
+            nonlocal completed_synchronously
+            completed_synchronously = True
+            with self._lock:
                 self._recovery_runners.pop(job_id, None)
-                raise
-            if completed_synchronously:
+            self.job_changed(job_id)
+
+        try:
+            runner = self.attach(job_id, callback=completed)
+        except BaseException:
+            with self._lock:
+                if self._recovery_runners.get(job_id) is _RECOVERING:
+                    self._recovery_runners.pop(job_id, None)
+            raise
+
+        with self._lock:
+            if completed_synchronously or job_id not in self._recovery_runners:
                 return None
             self._recovery_runners[job_id] = runner
-            return runner
+        return runner

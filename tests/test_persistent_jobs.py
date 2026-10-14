@@ -4,6 +4,8 @@ from __future__ import annotations
 from enum import Enum
 from types import SimpleNamespace
 
+import pytest
+
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
 
@@ -278,9 +280,6 @@ def test_source_recovery_handles_synchronous_completion_without_stale_runner():
     assert source.job(record.id).state == "finished"
 
 
-def test_incomplete_manager_becomes_empty_source():
-    source = PersistentJobSource(SimpleNamespace())
-
-    assert not source.available
-    assert source.jobs() == ()
-    assert source.unavailable_reason is not None
+def test_explicit_manager_must_satisfy_run_store_contract():
+    with pytest.raises(TypeError, match="run store"):
+        PersistentJobSource(SimpleNamespace())
