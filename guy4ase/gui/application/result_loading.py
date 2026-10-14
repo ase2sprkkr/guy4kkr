@@ -1,46 +1,90 @@
 """Interpret calculation results and result files without changing a workspace."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential, PotentialFileChanged
 
+from guy4ase.gui.application.file_version import FileVersion
+from guy4ase.gui.application.materialized import Materialized
 from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.structure_provenance import (
+    StructureProvenance,
+    materialize_structure,
+)
 
 
 class PotentialVersionChanged(RuntimeError):
     """The potential file no longer matches the version approved by the user."""
 
 
-@dataclass(frozen=True)
+class OutputVersionChanged(RuntimeError):
+    """The output file changed while the parsed result was being materialized."""
+
+
 class LoadedResult:
-    """A result whose filesystem references have already been interpreted.
+    """A result whose external sources are already bound to exact versions.
 
-    ``output_path`` and ``potential_path`` are provenance file locations.
-    ``potential_version`` is the exact POTFIL version from which ``atoms`` were
-    loaded, so adoption never has to re-snapshot the path later. The
-    authoritative physical potential, when successfully loaded, is attached to
-    ``atoms``. A missing referenced potential is different: reconstructing atoms
-    depends on it, so ``potential_error`` contains the load error.
-
-    ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
-    this result originated from a persistent execution. It deliberately does
-    not duplicate the backend-specific run reference.
+    Successfully loaded structure state is represented by one ``Materialized``
+    object. ``potential_path``/``potential_version`` remain available when POTFIL
+    loading failed, so the UI can report the failed external reference without
+    pretending that a valid structure provenance exists.
     """
 
-    result: TaskResult
-    output_path: Path | None
-    potential_path: Path | None
-    atoms: Any | None
-    potential_error: Exception | None
-    directory: str | None
-    input_parameters: Any | None = None
-    input_parameters_error: Exception | None = None
-    persistent_ref: str | None = None
-    potential_version: PotentialFileVersion | None = None
+    def __init__(
+        self,
+        *,
+        result: TaskResult,
+        output_path: Path | None,
+        potential_path: Path | None,
+        potential_error: Exception | None,
+        directory: str | None,
+        input_parameters: Any | None = None,
+        input_parameters_error: Exception | None = None,
+        persistent_ref: str | None = None,
+        potential_version: PotentialFileVersion | None = None,
+        output_version: FileVersion | None = None,
+        structure: Materialized[Any, StructureProvenance] | None = None,
+        atoms: Any | None = None,
+    ) -> None:
+        if structure is not None and atoms is not None:
+            raise ValueError("Pass either structure or atoms, not both.")
+        if structure is None and atoms is not None:
+            structure = materialize_structure(
+                atoms,
+                potential_path=potential_path,
+                potential_version=potential_version,
+            )
+        if structure is not None:
+            provenance = structure.provenance
+            if potential_path is None:
+                potential_path = provenance.potential_path
+            if potential_version is None:
+                potential_version = provenance.potential_version
+            if provenance.potential_path != potential_path:
+                raise ValueError("Loaded structure does not match the potential path.")
+            if provenance.potential_version != potential_version:
+                raise ValueError("Loaded structure does not match the potential version.")
+        if output_version is not None and output_path != output_version.path:
+            raise ValueError("Loaded result does not match the captured output version.")
+
+        self.result = result
+        self.output_path = output_path
+        self.output_version = output_version
+        self.potential_path = potential_path
+        self.potential_version = potential_version
+        self.structure = structure
+        self.potential_error = potential_error
+        self.directory = directory
+        self.input_parameters = input_parameters
+        self.input_parameters_error = input_parameters_error
+        self.persistent_ref = persistent_ref
+
+    @property
+    def atoms(self) -> Any | None:
+        return self.structure.get() if self.structure is not None else None
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
@@ -54,7 +98,6 @@ def load_potential_atoms(file_path: str | Path) -> Any:
 
 
 def require_potential_version_current(version: PotentialFileVersion) -> None:
-    """Reject a POTFIL path that no longer contains ``version``."""
     current = version.current()
     if not current.available or current != version:
         raise PotentialVersionChanged(
@@ -80,14 +123,37 @@ def load_potential_version(version: PotentialFileVersion) -> Any:
     return atoms
 
 
-def load_result_file(file_path: str | Path) -> LoadedResult:
-    """Parse an external result and all usable referenced result files."""
+def load_potential_materialized(
+    file_path: str | Path,
+) -> Materialized[Any, StructureProvenance]:
+    """Load POTFIL and its exact structure provenance as one stable operation."""
     path = Path(file_path).resolve()
+    version = PotentialFileVersion.capture(path)
+    if not version.available:
+        raise OSError(f"Potential file cannot be inspected: {path}")
+    atoms = load_potential_version(version)
+    return materialize_structure(
+        atoms,
+        potential_path=path,
+        potential_version=version,
+    )
+
+
+def load_result_file(file_path: str | Path) -> LoadedResult:
+    """Parse one exact version of an external result file."""
+    path = Path(file_path).resolve()
+    version = FileVersion.capture(path)
+    if not version.available:
+        raise OSError(f"Output file cannot be inspected: {path}")
     result = TaskResult.from_file(path)
+    current = version.current()
+    if not current.available or current != version:
+        raise OutputVersionChanged(f"Output file changed while it was read: {path}")
     return load_result(
         result,
         fallback_directory=path.parent,
         output_fallback=path,
+        output_version=version,
     )
 
 
@@ -97,19 +163,26 @@ def load_result(
     fallback_directory: str | Path | None,
     output_fallback: str | Path | None = None,
     persistent_ref: str | None = None,
+    output_version: FileVersion | None = None,
 ) -> LoadedResult:
     """Resolve result files for an already constructed calculation result."""
     output, potential = _result_files(result, fallback_directory)
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
-    atoms, potential_version, potential_error = _load_potential(potential)
+    if output_version is not None and output != output_version.path:
+        output_version = None
+    if output_version is None and output is not None:
+        output_version = FileVersion.capture(output)
+
+    structure, potential_version, potential_error = _load_potential(potential)
     input_parameters, input_parameters_error = _load_input_parameters(result)
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
         result=result,
         output_path=output,
+        output_version=output_version,
         potential_path=potential,
-        atoms=atoms,
+        structure=structure,
         potential_error=potential_error,
         directory=directory,
         input_parameters=input_parameters,
@@ -172,7 +245,11 @@ def _result_files(
 
 def _load_potential(
     potential: Path | None,
-) -> tuple[Any | None, PotentialFileVersion | None, Exception | None]:
+) -> tuple[
+    Materialized[Any, StructureProvenance] | None,
+    PotentialFileVersion | None,
+    Exception | None,
+]:
     if potential is None:
         return None, None, None
     if not potential.exists():
@@ -196,6 +273,15 @@ def _load_potential(
             OSError(f"Referenced potential file cannot be inspected: {potential}"),
         )
     try:
-        return load_potential_version(version), version, None
+        atoms = load_potential_version(version)
+        return (
+            materialize_structure(
+                atoms,
+                potential_path=potential,
+                potential_version=version,
+            ),
+            version,
+            None,
+        )
     except Exception as exc:  # noqa: BLE001 - parser/filesystem failures are data
         return None, version, exc
