@@ -8,8 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application import workspace_controller as controller_module
+from guy4ase.gui.application import result_loading
 from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_presentation import (
+    present_result_record,
+    present_result_tree,
+)
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
@@ -81,7 +85,7 @@ def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
 
     loaded_atoms = Atoms("Fe")
     monkeypatch.setattr(
-        controller_module,
+        result_loading,
         "load_potential_atoms",
         lambda path: loaded_atoms,
     )
@@ -126,35 +130,57 @@ def test_current_version_action_hides_when_scf2_state_is_active(tmp_path):
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    widget.set_workspace_state(scf2_state.structure_id, scf2_state.id)
-    widget.set_results(store)
-    assert widget.select_result(scf1.id)
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=scf2_state.structure_id,
+            current_state_id=scf2_state.id,
+            selected_result_id=scf1.id,
+        )
+    )
 
     assert widget.selected_result_id == scf1.id
     assert widget._use_state_button.isHidden()
     widget.close()
 
 
-def test_current_version_action_emits_approved_version(tmp_path):
+def test_current_version_policy_approves_version_and_widget_emits_only_intent(tmp_path):
     _application = QApplication.instance() or QApplication([])
     potential = tmp_path / "Fe.pot"
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
     scf1, _scf2 = _make_two_scf_versions(controller, potential, tmp_path)
     store = controller.result_store
 
+    presentation = present_result_record(
+        store,
+        scf1,
+        current_structure_id=controller.structure_id,
+        current_state_id=controller.state_id,
+    )
+    assert presentation.actions.use_state is not None
+    assert presentation.actions.use_state.label == (
+        "Continue with current version of this potential"
+    )
+    assert presentation.actions.use_state.expected_potential == PotentialFileVersion.capture(
+        potential
+    )
+
     widget = ResultActionsWidget(
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    widget.set_workspace_state(controller.structure_id, controller.state_id)
-    widget.set_results(store)
-    assert widget.select_result(scf1.id)
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=controller.structure_id,
+            current_state_id=controller.state_id,
+            selected_result_id=scf1.id,
+        )
+    )
 
     captured = []
-    widget.useStateRequested.connect(
-        lambda result_id, version: captured.append((result_id, version))
-    )
+    widget.useStateRequested.connect(captured.append)
     widget._use_state_button.click()
 
-    assert captured == [(scf1.id, PotentialFileVersion.capture(potential))]
+    assert captured == [scf1.id]
     widget.close()

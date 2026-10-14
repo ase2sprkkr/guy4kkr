@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from ase import Atoms
 from ase2sprkkr import SPRKKRAtoms
-from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.result_loading import LoadedResult
+from guy4ase.gui.application.result_presentation import present_result_record
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
 class _Parameters:
@@ -77,9 +73,7 @@ def test_use_result_state_never_substitutes_current_atoms_for_historical_state(t
     assert controller.atoms.potential.marker == "historical"
 
 
-def test_result_action_does_not_follow_overwritten_potential_path(tmp_path):
-    """A click activates the state shown by the UI, not the file now at its path."""
-    _application = QApplication.instance() or QApplication([])
+def test_restore_presentation_never_silently_treats_overwritten_potential_as_exact(tmp_path):
     historical_path = tmp_path / "historical.pot"
     current_path = tmp_path / "current.pot"
     historical_path.write_text("historical file", encoding="utf-8")
@@ -93,39 +87,39 @@ def test_result_action_does_not_follow_overwritten_potential_path(tmp_path):
         )
     )
     historical_request = controller.create_calculation_request()
-    historical_atoms = _atoms_with_potential("historical")
     historical = controller.adopt_calculation_result(
-        _loaded_scf(historical_atoms, historical_path),
+        _loaded_scf(_atoms_with_potential("historical"), historical_path),
         request=historical_request,
     )
     assert historical.workspace_updated
 
     current_request = controller.create_calculation_request()
-    current_atoms = _atoms_with_potential("current")
     current = controller.adopt_calculation_result(
-        _loaded_scf(current_atoms, current_path),
+        _loaded_scf(_atoms_with_potential("current"), current_path),
         request=current_request,
     )
     assert current.workspace_updated
-    assert controller.atoms is current_atoms
 
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
+    before = present_result_record(
+        controller.result_store,
+        historical.record,
+        current_structure_id=controller.structure_id,
+        current_state_id=controller.state_id,
     )
-    widget.useStateRequested.connect(controller.use_result_state)
-    widget.set_workspace_state(controller.structure_id, controller.state_id)
-    widget.set_results(controller.result_store)
-    assert widget.select_result(historical.record.id)
-    assert widget._use_state_button.text() == "Use this potential"
+    assert before.actions.use_state is not None
+    assert before.actions.use_state.label == "Use this potential"
 
-    # This is the TOCTOU window from the bug report. The path now contains a
-    # different file, but it is not the physical authority on master.
     historical_path.write_text("replacement file", encoding="utf-8")
-    widget._use_selected_state()
+    after = present_result_record(
+        controller.result_store,
+        historical.record,
+        current_structure_id=controller.structure_id,
+        current_state_id=controller.state_id,
+    )
 
-    assert controller.state_id == historical.record.output_state_id
-    assert controller.atoms is historical_atoms
-    assert controller.atoms.potential.marker == "historical"
-    assert controller.potential_path == str(historical_path)
-    widget.close()
+    assert after.actions.use_state is not None
+    assert after.actions.use_state.label == "Continue with current version of this potential"
+    assert after.actions.use_state.expected_potential is not None
+    assert after.actions.use_state.expected_potential != (
+        controller.result_store.state_for_result(historical.record).potential_version
+    )

@@ -10,6 +10,10 @@ from ase import Atoms
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.file_version import FileState
+from guy4ase.gui.application.result_presentation import (
+    present_result_record,
+    present_result_tree,
+)
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -84,6 +88,28 @@ def test_result_store_remembers_file_version_after_overwrite(tmp_path):
     assert result_file.state() is FileState.MISSING
 
 
+def test_missing_historical_result_file_disables_value_actions(tmp_path):
+    path = tmp_path / "Fe.dos"
+    path.write_text("historical")
+    store, record, _value = _result_store(path)
+    path.unlink()
+
+    presentation = present_result_record(
+        store,
+        record,
+        current_structure_id=record.structure_id,
+        current_state_id=record.input_state_id,
+    )
+
+    assert presentation.file_warning is not None
+    assert "no longer available" in presentation.file_warning.lower()
+    assert len(presentation.values) == 1
+    value = presentation.values[0]
+    assert value.actions == ()
+    assert value.warning is not None
+    assert "no longer exists" in value.warning.lower()
+
+
 def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path):
     _application = QApplication.instance() or QApplication([])
     path = tmp_path / "Fe.dos"
@@ -95,7 +121,14 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
         lambda value, action: seen.append(getattr(value, action)()),
         show_values_without_actions=True,
     )
-    widget.set_results(store)
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=old_record.structure_id,
+            current_state_id=old_record.input_state_id,
+            selected_result_id=old_record.id,
+        )
+    )
     assert widget.selected_result_id == old_record.id
     assert widget._result_file_warning.isHidden()
 
@@ -105,7 +138,14 @@ def test_historical_result_uses_known_current_result_with_clear_warning(tmp_path
     assert store.current_value_for_result_file(old_record.result_files["dos"]) is new_value
     assert new_value is not old_value
 
-    widget.set_results(store)
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=old_record.structure_id,
+            current_state_id=old_record.input_state_id,
+            selected_result_id=old_record.id,
+        )
+    )
     assert widget.selected_result_id == old_record.id
 
     assert not widget._result_file_warning.isHidden()

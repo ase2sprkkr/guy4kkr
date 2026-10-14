@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.result_presentation import present_result_tree
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -30,6 +31,15 @@ def _ui_result(task, name):
         task_name=task,
         output_file=f"{name}.out",
         output_values={"value": _Value(name)},
+    )
+
+
+def _model(store, structure_id=None, state_id=None, selected_result_id=None):
+    return present_result_tree(
+        store,
+        current_structure_id=structure_id,
+        current_state_id=state_id,
+        selected_result_id=selected_result_id,
     )
 
 
@@ -57,8 +67,7 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    widget.set_workspace_state(structure_id, state_id)
-    widget.set_results(store)
+    widget.set_model(_model(store, structure_id, state_id))
 
     assert widget._selector.topLevelItemCount() == 1
     structure = widget._selector.topLevelItem(0)
@@ -67,7 +76,9 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
     assert widget.selected_result_id == newest_record.id
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "new"
 
-    assert widget.select_result(older_record.id)
+    widget.set_model(
+        _model(store, structure_id, state_id, selected_result_id=older_record.id)
+    )
     assert widget.selected_result_id == older_record.id
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "old"
     widget.close()
@@ -103,7 +114,7 @@ def test_result_selector_does_not_expose_internal_branch_nodes():
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    widget.set_results(store)
+    widget.set_model(_model(store))
     structure = widget._selector.topLevelItem(0)
     assert structure.childCount() == 2
     assert all(
