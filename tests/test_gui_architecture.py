@@ -65,7 +65,13 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
     for module, targets in graph.items():
         if module.startswith("guy4ase.gui.widgets"):
             assert not any(
-                target.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.flows"))
+                target.startswith(
+                    (
+                        "guy4ase.gui.controllers",
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.flows",
+                    )
+                )
                 for target in targets
             ), module
         if module.startswith("guy4ase.gui.flows"):
@@ -85,6 +91,7 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
             assert not any(
                 target.startswith(
                     (
+                        "guy4ase.gui.controllers",
                         "guy4ase.gui.dialogs",
                         "guy4ase.gui.widgets",
                         "guy4ase.gui.flows",

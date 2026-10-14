@@ -1,3 +1,4 @@
+import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
@@ -22,17 +23,21 @@ def _controller(tmp_path):
     )
 
 
-def test_run_flow_selects_profile_and_passes_it_to_window(monkeypatch, tmp_path):
+def test_run_flow_tracks_top_level_monitor_before_start(monkeypatch, tmp_path):
     controller = _controller(tmp_path)
     recent = RecentFiles(tmp_path / "recent.json")
     captured = {}
+    events = []
 
     class Window:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
         def show(self):
-            pass
+            events.append("show")
+
+        def start(self):
+            events.append("start")
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
     monkeypatch.setattr(
@@ -47,19 +52,168 @@ def test_run_flow_selects_profile_and_passes_it_to_window(monkeypatch, tmp_path)
     )
 
     parent = object()
-    persistent_job_changed = lambda _job_id: None
+
+    def track(window):
+        assert isinstance(window, Window)
+        events.append("track")
+
     window = calculation_flow.run_calculation(
         controller,
         recent,
         parent,
-        persistent_job_changed=persistent_job_changed,
+        track_launch_monitor=track,
     )
 
     assert window is not None
     assert captured["profile_name"] == "cluster"
     assert captured["profile_description"] == "profile:cluster"
+    assert captured["parent"] is None
+    assert events == ["track", "show", "start"]
+
+
+def test_monitor_is_closed_when_ownership_transfer_fails(monkeypatch, tmp_path):
+    controller = _controller(tmp_path)
+    events = []
+
+    class Window:
+        def __init__(self, **_kwargs):
+            pass
+
+        def show(self):
+            raise AssertionError("show must not follow failed ownership transfer")
+
+        def start(self):
+            raise AssertionError("start must not follow failed ownership transfer")
+
+        def close(self):
+            events.append("close")
+
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
+    monkeypatch.setattr(
+        calculation_flow,
+        "_select_profile",
+        lambda _parent, **_kwargs: (True, None),
+    )
+    monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
+
+    def fail_track(_window):
+        events.append("track")
+        raise RuntimeError("cannot transfer ownership")
+
+    with pytest.raises(RuntimeError, match="cannot transfer ownership"):
+        calculation_flow.run_calculation(
+            controller,
+            RecentFiles(tmp_path / "recent.json"),
+            object(),
+            track_launch_monitor=fail_track,
+        )
+
+    assert events == ["track", "close"]
+
+
+def test_tracked_monitor_is_closed_and_start_error_propagates(monkeypatch, tmp_path):
+    controller = _controller(tmp_path)
+    events = []
+
+    class Window:
+        def __init__(self, **_kwargs):
+            pass
+
+        def show(self):
+            events.append("show")
+
+        def start(self):
+            events.append("start")
+            raise RuntimeError("worker creation failed")
+
+        def close(self):
+            events.append("close")
+
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
+    monkeypatch.setattr(
+        calculation_flow,
+        "_select_profile",
+        lambda _parent, **_kwargs: (True, None),
+    )
+    monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="worker creation failed"):
+        calculation_flow.run_calculation(
+            controller,
+            RecentFiles(tmp_path / "recent.json"),
+            object(),
+            track_launch_monitor=lambda _window: events.append("track"),
+        )
+
+    assert events == ["track", "show", "start", "close"]
+
+
+def test_tracked_monitor_is_closed_when_show_fails(monkeypatch, tmp_path):
+    controller = _controller(tmp_path)
+    events = []
+
+    class Window:
+        def __init__(self, **_kwargs):
+            pass
+
+        def show(self):
+            events.append("show")
+            raise RuntimeError("cannot show monitor")
+
+        def start(self):
+            raise AssertionError("start must not follow failed show")
+
+        def close(self):
+            events.append("close")
+
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
+    monkeypatch.setattr(
+        calculation_flow,
+        "_select_profile",
+        lambda _parent, **_kwargs: (True, None),
+    )
+    monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="cannot show monitor"):
+        calculation_flow.run_calculation(
+            controller,
+            RecentFiles(tmp_path / "recent.json"),
+            object(),
+            track_launch_monitor=lambda _window: events.append("track"),
+        )
+
+    assert events == ["track", "show", "close"]
+
+
+def test_standalone_run_keeps_parent_ownership(monkeypatch, tmp_path):
+    controller = _controller(tmp_path)
+    captured = {}
+
+    class Window:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def show(self):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)
+    monkeypatch.setattr(
+        calculation_flow,
+        "_select_profile",
+        lambda _parent, **_kwargs: (True, None),
+    )
+    monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
+
+    parent = object()
+    assert calculation_flow.run_calculation(
+        controller,
+        RecentFiles(tmp_path / "recent.json"),
+        parent,
+    ) is not None
     assert captured["parent"] is parent
-    assert captured["on_persistent_job_changed"] is persistent_job_changed
 
 
 def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_path):
@@ -94,6 +248,9 @@ def test_automatic_profile_is_distinct_from_cancel(monkeypatch, tmp_path):
             captured.update(kwargs)
 
         def show(self):
+            pass
+
+        def start(self):
             pass
 
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", Window)

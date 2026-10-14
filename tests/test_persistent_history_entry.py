@@ -12,12 +12,44 @@ from guy4ase.gui.application.projects import ProjectRepository
 from guy4ase.main import GuiApplication
 
 
+class _JobSource:
+    available = True
+    unavailable_reason = None
+    supports_refresh = False
+    supports_results = False
+    supports_attach = False
+    supports_result_file_check = False
+
+    def __init__(self) -> None:
+        self._listeners = []
+
+    def subscribe(self, listener):
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener) if listener in self._listeners else None
+
+    @staticmethod
+    def jobs():
+        return ()
+
+    @staticmethod
+    def job(_job_id):
+        return None
+
+    @staticmethod
+    def job_changed(_job_id):
+        return None
+
+    @staticmethod
+    def refresh():
+        return ()
+
+
 def test_workflow_project_entry_is_separate_from_workspace_results(tmp_path):
     _application = QApplication.instance() or QApplication([])
     gui = GuiApplication(
         recent_files_path=tmp_path / "recent.json",
         settings_path=tmp_path / "settings.json",
-        persistent_jobs=object(),
+        persistent_jobs=_JobSource(),
         project_repository=ProjectRepository(tmp_path / "projects"),
     )
     window = gui.create_workflow_window()
@@ -48,12 +80,12 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
         def __init__(
             self,
             repository,
-            job_source,
+            persistent_jobs_controller,
             *,
             active_project_id=None,
         ) -> None:
             self.repository = repository
-            self.job_source = job_source
+            self.persistent_jobs_controller = persistent_jobs_controller
             self.active_project_id = active_project_id
             self.destroyed = _Signal()
             self.activeProjectRequested = _Signal()
@@ -80,7 +112,7 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
 
     monkeypatch.setattr(main_module, "ProjectBrowserDialog", FakeProjectBrowserDialog)
     repository = ProjectRepository(tmp_path / "projects")
-    job_source = object()
+    job_source = _JobSource()
     gui = GuiApplication(
         recent_files_path=tmp_path / "recent.json",
         settings_path=tmp_path / "settings.json",
@@ -96,7 +128,7 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
 
     assert len(FakeProjectBrowserDialog.instances) == 1
     assert first_dialog.repository is repository
-    assert first_dialog.job_source is job_source
+    assert first_dialog.persistent_jobs_controller is gui.persistent_jobs_controller
     assert first_dialog.active_project_id is None
     assert first_dialog.delete_on_close
     assert [name for name, _dialog in events] == [
@@ -115,6 +147,7 @@ def test_project_browser_lifecycle_belongs_to_application(monkeypatch, tmp_path)
     assert len(FakeProjectBrowserDialog.instances) == 2
     second_dialog = FakeProjectBrowserDialog.instances[1]
     assert second_dialog is not first_dialog
+    assert second_dialog.persistent_jobs_controller is gui.persistent_jobs_controller
     assert second_dialog.delete_on_close
     assert events[-3:] == [
         ("show", second_dialog),

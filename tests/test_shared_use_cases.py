@@ -32,9 +32,13 @@ class _RunWindow:
         self.parent = parent
         self.on_finished = on_finished
         self.shown = False
+        self.started = False
 
     def show(self):
         self.shown = True
+
+    def start(self):
+        self.started = True
 
 
 def test_workspace_calculation_input_completeness_requires_all_inputs():
@@ -112,6 +116,7 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     )
     assert window is not None
     assert window.shown
+    assert window.started
 
     with pytest.raises(RuntimeError, match="broken adoption invariant"):
         window.on_finished(object())
@@ -145,6 +150,7 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
         select_profile=False,
     )
     assert window is not None
+    assert window.started
 
     window.on_finished(loaded)
 

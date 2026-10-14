@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.projects import (
     Project,
     ProjectConflictError,
@@ -27,7 +26,9 @@ from guy4ase.gui.application.projects import (
     ProjectRepositoryError,
 )
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.dialogs.calculation_history import PersistentJobsWidget
+from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
+from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.widgets.persistent_jobs import PersistentJobsWidget
 
 _PROJECT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _UNASSIGNED = "__unassigned__"
@@ -45,7 +46,7 @@ class ProjectBrowserDialog(QDialog):
     def __init__(
         self,
         repository: ProjectRepository,
-        job_source: PersistentJobSource,
+        persistent_jobs_controller: PersistentJobsController,
         parent: QWidget | None = None,
         *,
         active_project_id: str | None = None,
@@ -58,6 +59,7 @@ class ProjectBrowserDialog(QDialog):
             default_size=(1400, 760),
         )
         self._repository = repository
+        self._persistent_jobs_controller = persistent_jobs_controller
         self._projects: tuple[Project, ...] = ()
         self._projects_by_id: dict[str, Project] = {}
         self._selected_project_id: str | None = None
@@ -136,7 +138,11 @@ class ProjectBrowserDialog(QDialog):
         self.refresh_projects_button.clicked.connect(self._refresh_projects)
         project_layout.addWidget(self.refresh_projects_button)
 
-        self.jobs = PersistentJobsWidget(job_source, splitter)
+        self.jobs = PersistentJobsWidget(
+            lambda value, action: execute_value_action(value, action, self),
+            splitter,
+        )
+        self._persistent_jobs_controller.bind_view(self.jobs)
         self.jobs.jobsChanged.connect(self._refresh_project_projection)
 
         splitter.setStretchFactor(0, 0)

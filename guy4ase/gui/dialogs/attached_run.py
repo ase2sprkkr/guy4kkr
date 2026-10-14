@@ -78,14 +78,15 @@ class AttachedRunWorker(QObject):
                 self.error.emit(str(exc))
 
 
-def create_attached_run_monitor(
+def create_attached_run_monitor_window(
     job: PersistentJob,
     source: PersistentJobSource,
     parent: QWidget | None = None,
     *,
     on_finished: Callable[[Any], None] | None = None,
+    autostart: bool = True,
 ) -> RunMonitorWindow:
-    """Create the generic monitor configured for an existing persistent job."""
+    """Create the monitor window for an existing persistent job."""
     title = job.dataset or job.id
     return RunMonitorWindow(
         lambda cancellation: AttachedRunWorker(source, job.id, cancellation),
@@ -94,4 +95,5 @@ def create_attached_run_monitor(
         header=f"{title}\n{job.target} · {job.directory}",
         initial_status=state_label(job.state),
         on_finished=on_finished,
+        autostart=autostart,
     )

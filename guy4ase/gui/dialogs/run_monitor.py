@@ -101,7 +101,7 @@ class RunMonitorWindow(QDialog):
         layout.addLayout(buttons)
 
         if autostart:
-            self._start_worker()
+            self.start()
 
     @property
     def runner(self) -> Any | None:
@@ -114,6 +114,12 @@ class RunMonitorWindow(QDialog):
             event.ignore()
             return
         super().closeEvent(event)
+
+    def start(self) -> None:
+        """Start the worker exactly once after the caller has established ownership."""
+        if self._thread is not None:
+            raise RuntimeError("run monitor worker has already been started")
+        self._start_worker()
 
     def _start_worker(self) -> None:
         thread = QThread(self)

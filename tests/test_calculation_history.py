@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob
+from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
 
 
@@ -102,6 +103,10 @@ class _Source:
         return type("Result", (), {"output_values": {}})()
 
 
+def _dialog(source):
+    return CalculationHistoryDialog(PersistentJobsController(source))
+
+
 def _view(dialog):
     return dialog.jobs
 
@@ -127,7 +132,7 @@ def test_history_groups_jobs_and_shows_selected_metadata():
             ),
         )
     )
-    dialog = CalculationHistoryDialog(source)
+    dialog = _dialog(source)
     view = _view(dialog)
 
     assert dialog.windowTitle() == "Calculation Jobs"
@@ -169,7 +174,7 @@ def test_finished_job_shows_stable_finished_time_and_can_load_result():
         finished_at="2026-10-13T08:37:00+00:00",
     )
     source = _Source((job,))
-    dialog = CalculationHistoryDialog(source)
+    dialog = _dialog(source)
     view = _view(dialog)
 
     finished = _local_timestamp("2026-10-13T08:37:00+00:00")
@@ -178,7 +183,7 @@ def test_finished_job_shows_stable_finished_time_and_can_load_result():
     assert view.result_files_value.text() == "Current (stored, not checked)"
     assert view.monitor_button.isHidden()
     assert not view.load_result_button.isHidden()
-    view._load_selected_result()
+    view.load_result_button.click()
     assert source.loaded == [job.id]
     dialog.close()
 
@@ -215,7 +220,7 @@ def test_selected_final_job_verifies_result_files():
             )
 
     source = Source((job,))
-    dialog = CalculationHistoryDialog(source)
+    dialog = _dialog(source)
     view = _view(dialog)
 
     assert source.checked == [job.id]
@@ -243,7 +248,7 @@ def test_source_change_rebuilds_view_without_widget_owned_recovery():
         attachable=False,
     )
     source = _Source((running,))
-    dialog = CalculationHistoryDialog(source)
+    dialog = _dialog(source)
     view = _view(dialog)
 
     source.replace_job(finished)
@@ -269,14 +274,14 @@ def test_nonattachable_active_job_does_not_offer_monitor():
             ),
         )
     )
-    dialog = CalculationHistoryDialog(source)
+    dialog = _dialog(source)
     assert _view(dialog).monitor_button.isHidden()
     dialog.close()
 
 
 def test_empty_backend_shows_empty_state():
     _application = QApplication.instance() or QApplication([])
-    dialog = CalculationHistoryDialog(_Source(()))
+    dialog = _dialog(_Source(()))
     view = _view(dialog)
 
     assert not view.backend_notice.isHidden()
@@ -298,7 +303,7 @@ def test_unavailable_backend_is_an_empty_nonfatal_history():
         supports_attach = False
         supports_result_file_check = False
 
-    dialog = CalculationHistoryDialog(Source(()))
+    dialog = _dialog(Source(()))
     view = _view(dialog)
 
     assert not view.backend_notice.isHidden()

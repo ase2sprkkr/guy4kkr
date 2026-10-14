@@ -25,6 +25,8 @@ from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.input_parameters.tasks import is_guided_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
 
+LaunchMonitorTracker = Callable[[SprkkrRunWindow], None]
+
 
 def choose_working_directory(
     controller: WorkspaceController,
@@ -78,14 +80,15 @@ def run_calculation(
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
     ``position_like_window`` optionally reuses another managed window's
-    top-left corner for the profile picker and the run window. Their own sizes
-    stay independent. ``persistent_job_changed`` is an application observer of
-    stable persistent run ids; it never receives a parallel lifecycle snapshot.
+    top-left corner for the profile picker and run window. ``track_launch_monitor``
+    transfers ownership of an application-level top-level monitor before its
+    worker starts; standalone callers that omit it retain ordinary parent
+    ownership.
     """
     try:
         request = controller.create_calculation_request()
@@ -127,12 +130,21 @@ def run_calculation(
         request=request,
         profile_name=profile_name,
         profile_description=description,
-        parent=parent,
+        parent=None if track_launch_monitor is not None else parent,
         on_finished=finished,
-        on_persistent_job_changed=persistent_job_changed,
     )
-    _position_like_window(window, position_like_window)
-    window.show()
+    try:
+        if track_launch_monitor is not None:
+            track_launch_monitor(window)
+        _position_like_window(window, position_like_window)
+        window.show()
+        window.start()
+    except BaseException:
+        # Any failure after construction must retire the window through its
+        # normal Qt lifetime path. This also covers a failed ownership transfer,
+        # which may have partially installed application/controller references.
+        window.close()
+        raise
     return window
 
 
@@ -143,7 +155,7 @@ def configure_and_run_task(
     task: str,
     *,
     dataset_default_mode: str,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
@@ -188,7 +200,7 @@ def configure_and_run_task(
             recent_files,
             parent,
             position_like_window="guided-input",
-            persistent_job_changed=persistent_job_changed,
+            track_launch_monitor=track_launch_monitor,
         )
     except (ImportError, ModuleNotFoundError) as exc:
         QMessageBox.critical(
@@ -205,7 +217,7 @@ def recompute_result(
     parent: QWidget,
     result_id: int,
     *,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Re-run historical settings on the state active in the workspace.
 
@@ -267,5 +279,5 @@ def recompute_result(
         recent_files,
         parent,
         position_like_window=position_like_window,
-        persistent_job_changed=persistent_job_changed,
+        track_launch_monitor=track_launch_monitor,
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -19,8 +20,10 @@ from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
+from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.presenters.result_actions import ResultActionsPresenter
@@ -55,12 +58,22 @@ class GuiApplication(QObject):
         self.persistent_jobs = (
             persistent_jobs if persistent_jobs is not None else PersistentJobSource()
         )
+        self.persistent_jobs_controller = PersistentJobsController(
+            self.persistent_jobs,
+            parent=self,
+        )
+        self.persistent_jobs_controller.launchUpdated.connect(
+            self._persistent_launch_updated
+        )
         self.projects = (
             project_repository
             if project_repository is not None
             else ProjectRepository()
         )
         self._active_project_id: str | None = None
+        self._launch_projects: WeakKeyDictionary[SprkkrRunWindow, str | None] = (
+            WeakKeyDictionary()
+        )
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
@@ -77,7 +90,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 open_expert=self.show_main_window,
                 settings=self.settings,
-                persistent_job_changed=self._persistent_job_changed,
+                track_launch_monitor=self._track_launch_monitor,
             )
             self._wire_window(self._workflow_window)
         return self._workflow_window
@@ -89,7 +102,7 @@ class GuiApplication(QObject):
                 self.controller,
                 self.recent_files,
                 self.settings,
-                persistent_job_changed=self._persistent_job_changed,
+                track_launch_monitor=self._track_launch_monitor,
             )
             self._wire_window(self._main_window)
         return self._main_window
@@ -125,7 +138,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 target,
                 result_id,
-                persistent_job_changed=self._persistent_job_changed,
+                track_launch_monitor=self._track_launch_monitor,
             )
         )
 
@@ -152,50 +165,72 @@ class GuiApplication(QObject):
         if self._project_browser is not None:
             self._project_browser.set_active_project(project_id)
 
-    def _persistent_job_changed(self, job_id: str) -> None:
-        """Reload a live job and idempotently assign it to the active project."""
-        job = self.persistent_jobs.job_changed(job_id)
-        project_id = self._active_project_id
-        if job is None or project_id is None:
+    def _track_launch_monitor(self, monitor_window: SprkkrRunWindow) -> None:
+        """Capture launch-time project provenance before transferring GUI ownership."""
+        self._launch_projects[monitor_window] = self._active_project_id
+        try:
+            self.persistent_jobs_controller.track_launch_window(monitor_window)
+        except BaseException:
+            self._launch_projects.pop(monitor_window, None)
+            raise
+
+    def _persistent_launch_updated(
+        self,
+        job_id: str,
+        monitor_window: SprkkrRunWindow,
+    ) -> None:
+        """Idempotently assign a persistent launch to its launch-time project."""
+        if monitor_window not in self._launch_projects:
+            return
+        project_id = self._launch_projects[monitor_window]
+        if project_id is None:
+            self._launch_projects.pop(monitor_window, None)
+            return
+
+        job = self.persistent_jobs.job(job_id)
+        if job is None:
             return
         persistent_ref = job.id
 
-        # This is a concrete idempotent application operation, not repository
-        # merge policy. If another instance edits the project concurrently, read
-        # the new snapshot and retry this one add-run operation once.
+        # Retry this idempotent application operation on later launch lifecycle
+        # updates if repository I/O or repeated conflicts make this attempt fail.
         for attempt in range(2):
             try:
                 project = self.projects.project(project_id)
             except KeyError:
-                self.set_active_project(None)
+                self._launch_projects.pop(monitor_window, None)
+                if self._active_project_id == project_id:
+                    self.set_active_project(None)
                 return
             except (ProjectRepositoryError, ValueError):
                 logger.exception(
-                    "Cannot load active project %s for persistent run %s",
+                    "Cannot load launch project %s for persistent run %s",
                     project_id,
                     persistent_ref,
                 )
                 return
 
             if persistent_ref in project.persistent_refs:
+                self._launch_projects.pop(monitor_window, None)
                 return
             try:
                 self.projects.save(
                     project.add_run(persistent_ref),
                     expected_generation=project.generation,
                 )
+                self._launch_projects.pop(monitor_window, None)
                 return
             except ProjectConflictError:
                 if attempt == 0:
                     continue
                 logger.warning(
-                    "Active project %s changed repeatedly while assigning run %s",
+                    "Launch project %s changed repeatedly while assigning run %s",
                     project_id,
                     persistent_ref,
                 )
             except (ProjectRepositoryError, KeyError, ValueError):
                 logger.exception(
-                    "Cannot assign persistent run %s to active project %s",
+                    "Cannot assign persistent run %s to launch project %s",
                     persistent_ref,
                     project_id,
                 )
@@ -214,7 +249,7 @@ class GuiApplication(QObject):
         if self._project_browser is None:
             dialog = ProjectBrowserDialog(
                 self.projects,
-                self.persistent_jobs,
+                self.persistent_jobs_controller,
                 active_project_id=self._active_project_id,
             )
             dialog.activeProjectRequested.connect(self.set_active_project)

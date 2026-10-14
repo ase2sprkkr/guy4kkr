@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
         recent_files: RecentFiles,
         settings: ApplicationSettings,
         *,
-        persistent_job_changed: Callable[[str], None],
+        track_launch_monitor: calculation_flow.LaunchMonitorTracker,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.recent_history = recent_files
         self.settings = settings
-        self._persistent_job_changed = persistent_job_changed
+        self._track_launch_monitor = track_launch_monitor
         self._recent_menus: Dict[str, Optional[QMenu]] = {
             "structure": None,
             "input": None,
@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
             self.controller,
             self.recent_history,
             self,
-            persistent_job_changed=self._persistent_job_changed,
+            track_launch_monitor=self._track_launch_monitor,
         )
 
     def _on_about(self) -> None:

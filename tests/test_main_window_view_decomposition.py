@@ -110,7 +110,7 @@ def test_main_window_wires_controller_state_to_child_presentations(tmp_path):
         controller,
         RecentFiles(tmp_path / "recent.json"),
         ApplicationSettings(tmp_path / "settings.json"),
-        persistent_job_changed=lambda _job_id: None,
+        track_launch_monitor=lambda _window: None,
     )
 
     side_panel = window.findChild(ExpertSidePanel)
@@ -142,7 +142,7 @@ def test_main_window_reuses_recent_start_menu(tmp_path):
         WorkspaceController(),
         history,
         ApplicationSettings(tmp_path / "settings.json"),
-        persistent_job_changed=lambda _job_id: None,
+        track_launch_monitor=lambda _window: None,
     )
     overview = window.findChild(StructureOverviewWidget)
     assert overview is not None
