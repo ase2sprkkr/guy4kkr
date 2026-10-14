@@ -34,7 +34,6 @@ class _EmptySpheresBackendError(RuntimeError):
 
 
 def warn_if_structure_kind_is_unknown(atoms: Any, parent: QWidget) -> None:
-    """Explain that loaded atoms are not a supported bulk/layered document."""
     if detect_structure_kind(atoms) != "unknown":
         return
     QMessageBox.warning(
@@ -54,9 +53,9 @@ def edit_current_structure(
     *,
     error_title: str,
 ) -> bool:
-    """Edit a detached copy of the current structure and publish on success."""
-    generation = controller.generation
-    if controller.atoms is None:
+    """Edit the owned structure in-place behind a provenance checkout boundary."""
+    provenance = controller.structure_provenance
+    if provenance is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."
         )
@@ -64,7 +63,7 @@ def edit_current_structure(
 
     change = controller.apply_structure_edit(
         lambda candidate: editor(candidate, parent=parent),
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
     if change is None:
         return False
@@ -75,10 +74,9 @@ def edit_site_elements(
     controller: WorkspaceController,
     parent: QWidget,
 ) -> bool:
-    """Edit site occupations and commit the accepted draft transactionally."""
-    generation = controller.generation
+    provenance = controller.structure_provenance
     atoms = controller.atoms
-    if atoms is None:
+    if provenance is None or atoms is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."
         )
@@ -91,7 +89,7 @@ def edit_site_elements(
 
     change = controller.apply_structure_edit(
         lambda candidate: result.apply(candidate),
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
     if change is None:
         return False
@@ -101,7 +99,7 @@ def edit_site_elements(
 def create_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
-    generation = controller.generation
+    provenance = controller.structure_provenance
     candidate = create_structure_candidate(
         parent,
         chain=chain_dialogs,
@@ -110,20 +108,19 @@ def create_structure(
     )
     if candidate is None:
         return None
-    atoms = candidate.atoms
     change = controller.replace_structure(
-        atoms,
-        expected_generation=generation,
+        candidate.structure,
+        expected_provenance=provenance,
     )
     if not document_change_applied(parent, change):
         return None
-    return atoms
+    return candidate.atoms
 
 
 def create_structure_from_database(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
-    generation = controller.generation
+    provenance = controller.structure_provenance
     candidate = create_structure_from_database_candidate(
         parent,
         chain=chain_dialogs,
@@ -133,36 +130,34 @@ def create_structure_from_database(
     )
     if candidate is None:
         return None
-    atoms = candidate.atoms
     change = controller.replace_structure(
-        atoms,
-        expected_generation=generation,
+        candidate.structure,
+        expected_provenance=provenance,
     )
     if not document_change_applied(parent, change):
         return None
-    warn_if_structure_kind_is_unknown(atoms, parent)
-    return atoms
+    warn_if_structure_kind_is_unknown(candidate.atoms, parent)
+    return candidate.atoms
 
 
 def download_structure(
     controller: WorkspaceController, parent: QWidget
 ) -> Any | None:
-    generation = controller.generation
+    provenance = controller.structure_provenance
     candidate = download_structure_candidate(
         parent,
         selector=select_online_structure,
     )
     if candidate is None:
         return None
-    atoms = candidate.atoms
     change = controller.replace_structure(
-        atoms,
-        expected_generation=generation,
+        candidate.structure,
+        expected_provenance=provenance,
     )
     if not document_change_applied(parent, change):
         return None
-    warn_if_structure_kind_is_unknown(atoms, parent)
-    return atoms
+    warn_if_structure_kind_is_unknown(candidate.atoms, parent)
+    return candidate.atoms
 
 
 def build_2d_structure(
@@ -172,8 +167,8 @@ def build_2d_structure(
     *,
     surface_mode: bool = False,
 ) -> Any | None:
-    generation = controller.generation
-    if controller.atoms is None:
+    provenance = controller.structure_provenance
+    if provenance is None:
         QMessageBox.information(
             parent, "No Structure", "Load or create a structure first."
         )
@@ -196,7 +191,7 @@ def build_2d_structure(
 
     change = controller.apply_structure_edit(
         lambda candidate: edit(candidate, parent=parent),
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
     if change is None:
         return None
@@ -208,7 +203,6 @@ def build_2d_structure(
 def update_empty_spheres(
     controller: WorkspaceController, parent: QWidget
 ) -> bool:
-    """Find empty spheres explicitly and publish the resulting structure."""
     if controller.empty_spheres_action() is None:
         QMessageBox.information(
             parent,
@@ -217,7 +211,8 @@ def update_empty_spheres(
         )
         return False
 
-    generation = controller.generation
+    provenance = controller.structure_provenance
+    assert provenance is not None
     previous_state = controller.empty_spheres
     recalculate = previous_state is not None
     initial_parameters = (
@@ -275,7 +270,7 @@ def update_empty_spheres(
     try:
         change = controller.update_empty_spheres(
             edit,
-            expected_generation=generation,
+            expected_provenance=provenance,
             parameters=parameters,
         )
     except _EmptySpheresBackendError as exc:
