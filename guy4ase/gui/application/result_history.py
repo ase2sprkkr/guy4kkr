@@ -8,20 +8,10 @@ from typing import Any, Iterator
 
 from guy4ase.gui.application.file_version import FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.structure_snapshot import StructureSnapshot
+from guy4ase.gui.application.structure_provenance import StructureProvenance
 from guy4ase.gui.application.workspace import EmptySpheresState
 
 _KEEP_EMPTY_SPHERES = object()
-
-
-@dataclass(frozen=True)
-class CapturedStructure:
-    """Detached physical structure provenance ready for history mutation."""
-
-    formula: str
-    potential_path: Path | None
-    potential_version: PotentialFileVersion | None
-    structure_snapshot: StructureSnapshot | None
 
 
 @dataclass(frozen=True)
@@ -39,7 +29,7 @@ class CapturedResult:
 
 @dataclass(frozen=True)
 class StructureRecord:
-    """Identity of one user-visible physical structure."""
+    """Identity of one user-visible physical structure lineage."""
 
     id: int
     formula: str
@@ -53,12 +43,22 @@ class CalculationStateRecord:
     structure_id: int
     parent_id: int | None
     branch_id: int
-    potential_path: Path | None
-    potential_version: PotentialFileVersion | None
-    structure_snapshot: StructureSnapshot | None = None
+    structure_provenance: StructureProvenance
     empty_spheres: EmptySpheresState | None = None
     produced_by_result_id: int | None = None
     potential_source_result_id: int | None = None
+
+    @property
+    def potential_path(self) -> Path | None:
+        return self.structure_provenance.potential_path
+
+    @property
+    def potential_version(self) -> PotentialFileVersion | None:
+        return self.structure_provenance.potential_version
+
+    @property
+    def structure_snapshot(self):
+        return self.structure_provenance.structure_snapshot
 
 
 @dataclass(frozen=True)
@@ -197,27 +197,6 @@ class ResultHistory:
             return None
         return self._results[result_ids[-1]]
 
-    @staticmethod
-    def _validate_captured_structure(captured: CapturedStructure) -> None:
-        version = captured.potential_version
-        path = captured.potential_path
-        snapshot = captured.structure_snapshot
-        if version is None:
-            if path is not None:
-                raise AssertionError("A potential path requires a captured version.")
-            if snapshot is None:
-                raise ValueError("A state without a potential requires a structure snapshot.")
-            return
-        if path is None:
-            raise AssertionError("A captured potential version requires its potential path.")
-        if path != version.path:
-            raise AssertionError("Captured potential version does not match potential path.")
-        if version.available:
-            if snapshot is not None:
-                raise AssertionError("A usable potential must be the sole structure authority.")
-        elif snapshot is None:
-            raise ValueError("An unavailable potential requires a structure snapshot.")
-
     def _validate_result_reference(
         self,
         result_id: int | None,
@@ -233,28 +212,25 @@ class ResultHistory:
 
     def _prepare_structure_state(
         self,
-        captured: CapturedStructure,
+        provenance: StructureProvenance,
         *,
         empty_spheres: EmptySpheresState | None = None,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> _PreparedState:
-        self._validate_captured_structure(captured)
         source_result_id = (
             potential_source_result_id
-            if captured.potential_version is not None
-            and captured.potential_version.available
+            if provenance.potential_version is not None
+            and provenance.potential_version.available
             else None
         )
-        structure = StructureRecord(self._next_structure_id, captured.formula)
+        structure = StructureRecord(self._next_structure_id, provenance.formula)
         state = CalculationStateRecord(
             id=self._next_state_id,
             structure_id=structure.id,
             parent_id=None,
             branch_id=self._next_branch_id,
-            potential_path=captured.potential_path,
-            potential_version=captured.potential_version,
-            structure_snapshot=captured.structure_snapshot,
+            structure_provenance=provenance,
             empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=source_result_id,
@@ -265,7 +241,7 @@ class ResultHistory:
         self,
         parent_id: int,
         *,
-        structure: CapturedStructure | None = None,
+        structure: StructureProvenance | None = None,
         empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
@@ -274,15 +250,11 @@ class ResultHistory:
     ) -> _PreparedState:
         parent = self.state(parent_id)
         if structure is None:
-            resolved_path = parent.potential_path
-            resolved_version = parent.potential_version
-            resolved_snapshot = parent.structure_snapshot
+            resolved_structure = parent.structure_provenance
             resolved_source = parent.potential_source_result_id
         else:
-            self._validate_captured_structure(structure)
-            resolved_path = structure.potential_path
+            resolved_structure = structure
             resolved_version = structure.potential_version
-            resolved_snapshot = structure.structure_snapshot
             if resolved_version is None or not resolved_version.available:
                 resolved_source = None
             elif source_result_explicit:
@@ -308,9 +280,7 @@ class ResultHistory:
             structure_id=parent.structure_id,
             parent_id=parent.id,
             branch_id=branch_id,
-            potential_path=resolved_path,
-            potential_version=resolved_version,
-            structure_snapshot=resolved_snapshot,
+            structure_provenance=resolved_structure,
             empty_spheres=resolved_empty_spheres,
             produced_by_result_id=produced_by_result_id,
             potential_source_result_id=resolved_source,
@@ -369,12 +339,12 @@ class ResultHistory:
 
     def add_structure_state(
         self,
-        captured: CapturedStructure,
+        provenance: StructureProvenance,
         *,
         empty_spheres: EmptySpheresState | None = None,
     ) -> tuple[int, int]:
         prepared = self._prepare_structure_state(
-            captured,
+            provenance,
             empty_spheres=empty_spheres,
         )
         self._commit_prepared_state(prepared)
@@ -385,7 +355,7 @@ class ResultHistory:
         self,
         parent_id: int,
         *,
-        structure: CapturedStructure | None = None,
+        structure: StructureProvenance | None = None,
         empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         new_branch: bool = False,
     ) -> int:
@@ -440,7 +410,7 @@ class ResultHistory:
         directory: str | None,
         persistent_ref: str | None = None,
         restart_scf: bool = False,
-        output_structure: CapturedStructure | None = None,
+        output_structure: StructureProvenance | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         imported: bool = False,
     ) -> ResultRecord:
@@ -478,7 +448,7 @@ class ResultHistory:
         if produces_state:
             if structure_id is None:
                 if output_structure is None:
-                    raise ValueError("A new structure state requires captured structure.")
+                    raise ValueError("A new structure state requires structure provenance.")
                 root_empty_spheres = (
                     None
                     if output_empty_spheres is _KEEP_EMPTY_SPHERES
@@ -529,7 +499,7 @@ class ResultHistory:
         self,
         captured: CapturedResult,
         *,
-        structure: CapturedStructure | None,
+        structure: StructureProvenance | None,
         directory: str | None,
         produces_state: bool,
         persistent_ref: str | None = None,
