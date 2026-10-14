@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 from ase import Atoms
 
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_capture import capture_result, capture_structure
 from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -27,9 +28,7 @@ def test_state_without_usable_potential_keeps_lightweight_structure_snapshot():
     atoms.potential = object()
     history = ResultHistory()
 
-    _, state_id = history.add_structure_state(
-        capture_structure(atoms, potential_path=None)
-    )
+    _, state_id = history.add_structure_state(capture_structure(atoms))
     state = history.state(state_id)
 
     assert state.structure_snapshot is not None
@@ -45,17 +44,18 @@ def test_state_without_usable_potential_keeps_lightweight_structure_snapshot():
     assert not hasattr(restored, "potential")
 
 
-def test_state_with_usable_potential_uses_potential_as_structure_authority(tmp_path):
+def test_state_with_usable_potential_uses_exact_version_as_structure_authority(tmp_path):
     potential = tmp_path / "Fe.pot"
     potential.write_text("potential", encoding="utf-8")
+    version = PotentialFileVersion.capture(potential)
     history = ResultHistory()
 
     _, state_id = history.add_structure_state(
-        capture_structure(_atoms(), potential_path=potential)
+        capture_structure(_atoms(), potential_version=version)
     )
     state = history.state(state_id)
 
-    assert state.potential_version is not None
+    assert state.potential_version is version
     assert state.potential_version.available
     assert state.potential_path == potential.resolve()
     assert state.structure_snapshot is None
@@ -63,9 +63,7 @@ def test_state_with_usable_potential_uses_potential_as_structure_authority(tmp_p
 
 def test_result_payload_is_not_used_as_mutable_provenance():
     history = ResultHistory()
-    structure_id, state_id = history.add_structure_state(
-        capture_structure(Atoms("Fe"), potential_path=None)
-    )
+    structure_id, state_id = history.add_structure_state(capture_structure(Atoms("Fe")))
     result = SimpleNamespace(task_name="dos", output_values={})
     captured = capture_result(
         result,
