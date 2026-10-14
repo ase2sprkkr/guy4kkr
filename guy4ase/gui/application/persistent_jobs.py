@@ -343,7 +343,14 @@ class PersistentJobSource:
             completed_synchronously = True
             with self._lock:
                 self._recovery_runners.pop(job_id, None)
-            self.job_changed(job_id)
+            try:
+                self.job_changed(job_id)
+            except Exception:  # noqa: BLE001 - recovery completion boundary
+                logger.exception(
+                    "Recovered persistent run %s completed, but its metadata "
+                    "could not be refreshed",
+                    job_id,
+                )
 
         try:
             runner = self.attach(job_id, callback=completed)
