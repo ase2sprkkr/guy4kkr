@@ -6,7 +6,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.dialogs import profiles as profiles_module
+from guy4ase.gui.application.execution_profiles import ProfileDraft
+from guy4ase.gui.widgets.execution_profiles import MpiEditor, ProfileForm
 
 
 def _app():
@@ -15,7 +16,7 @@ def _app():
 
 def test_profile_form_exposes_all_execution_types():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
     kinds = [form.kind.itemData(index) for index in range(form.kind.count())]
     labels = [form.kind.itemText(index) for index in range(form.kind.count())]
@@ -32,7 +33,7 @@ def test_profile_form_exposes_all_execution_types():
 
 def test_profile_form_explains_selected_run_target():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
     expected = {
         "local": "Run directly on this computer.",
@@ -54,7 +55,7 @@ def test_profile_form_explains_selected_run_target():
 
 def test_profile_form_serializes_all_execution_types():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
     form.kind.setCurrentIndex(form.kind.findData("local"))
     assert form.values()["executor"] == "local"
@@ -83,7 +84,7 @@ def test_profile_form_serializes_all_execution_types():
 
 def test_profile_form_shows_only_backend_specific_sections():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
     form.kind.setCurrentIndex(form.kind.findData("local"))
     assert form.ssh_box.isHidden()
@@ -105,7 +106,7 @@ def test_profile_form_shows_only_backend_specific_sections():
 
 def test_mpi_editor_supports_all_modes():
     _application = _app()
-    editor = profiles_module._MpiEditor()
+    editor = MpiEditor()
 
     assert not hasattr(editor, "setText")
 
@@ -131,7 +132,7 @@ def test_mpi_editor_supports_all_modes():
 
 def test_mpi_editor_loads_existing_typed_values():
     _application = _app()
-    editor = profiles_module._MpiEditor()
+    editor = MpiEditor()
 
     for value, mode in (
         (None, "auto"),
@@ -150,7 +151,7 @@ def test_mpi_editor_loads_existing_typed_values():
 
 def test_mpi_warning_is_visible_only_for_autodetection_and_is_preserved():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
     form.mpi.set_value("auto")
     assert not form.mpi_warning.isHidden()
@@ -169,13 +170,13 @@ def test_mpi_warning_is_visible_only_for_autodetection_and_is_preserved():
 
 def test_profile_form_loads_mpi_warning_with_true_default():
     _application = _app()
-    form = profiles_module._ProfileForm()
+    form = ProfileForm()
 
-    form.load(profiles_module._ProfileDraft("default", {"mpi": "auto"}))
+    form.load(ProfileDraft("default", {"mpi": "auto"}))
     assert form.mpi_warning.isChecked()
 
     form.load(
-        profiles_module._ProfileDraft(
+        ProfileDraft(
             "quiet",
             {"mpi": "auto", "mpi_warning": False},
         )

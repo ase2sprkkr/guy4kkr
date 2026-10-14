@@ -6,6 +6,7 @@ from typing import Callable
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from guy4ase.gui.application.execution_profiles import profile_description
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.window_geometry import window_placement
 from guy4ase.gui.application.workspace_controller import (
@@ -17,10 +18,7 @@ from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
     select_guided_input_parameters,
 )
-from guy4ase.gui.dialogs.profiles import (
-    ProfileSelectionDialog,
-    profile_description,
-)
+from guy4ase.gui.dialogs.profiles import ProfileSelectionDialog
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.input_parameters.tasks import is_guided_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
