@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
@@ -20,6 +20,8 @@ from guy4ase.gui.flows import calculation as calculation_flow
 
 class GuiApplication(QObject):
     """Compose and own one shared GUI session and its top-level windows."""
+
+    persistentJobChanged = pyqtSignal(str)
 
     def __init__(
         self,
@@ -47,6 +49,10 @@ class GuiApplication(QObject):
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
+        self.persistentJobChanged.connect(
+            self._persistent_job_changed,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
     @property
     def project_repository(self) -> ProjectRepository:
@@ -66,6 +72,10 @@ class GuiApplication(QObject):
             self._persistent_jobs = source
         return source
 
+    def _persistent_job_changed(self, job_id: str) -> None:
+        """Reload one run on the GUI thread from its persistent identity."""
+        self.persistent_jobs.job_changed(job_id)
+
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
         if self._workflow_window is None:
@@ -74,6 +84,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 open_expert=self.show_main_window,
                 settings=self.settings,
+                persistent_job_changed=self.persistentJobChanged.emit,
             )
             self._wire_window(self._workflow_window)
         return self._workflow_window
@@ -85,6 +96,7 @@ class GuiApplication(QObject):
                 self.controller,
                 self.recent_files,
                 self.settings,
+                persistent_job_changed=self.persistentJobChanged.emit,
             )
             self._wire_window(self._main_window)
         return self._main_window
@@ -116,6 +128,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 target,
                 result_id,
+                persistent_job_changed=self.persistentJobChanged.emit,
             )
         )
         self.controller.structureChanged.connect(refresh_result_context)

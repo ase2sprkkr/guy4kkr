@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
@@ -75,6 +76,7 @@ def run_calculation(
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
@@ -131,6 +133,7 @@ def run_calculation(
         request=request,
         profile_name=profile_name,
         profile_description=description,
+        persistent_job_changed=persistent_job_changed,
         parent=parent,
         on_finished=finished,
     )
@@ -146,6 +149,7 @@ def configure_and_run_task(
     task: str,
     *,
     dataset_default_mode: str,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
     try:
@@ -198,6 +202,7 @@ def configure_and_run_task(
             recent_files,
             parent,
             position_like_window="guided-input",
+            persistent_job_changed=persistent_job_changed,
         )
     except (ImportError, ModuleNotFoundError) as exc:
         QMessageBox.critical(
@@ -213,6 +218,8 @@ def recompute_result(
     recent_files: RecentFiles,
     parent: QWidget,
     result_id: int,
+    *,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
     """Re-run historical settings on the state active in the workspace.
 
@@ -274,4 +281,5 @@ def recompute_result(
         recent_files,
         parent,
         position_like_window="guided-input",
+        persistent_job_changed=persistent_job_changed,
     )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from threading import Thread
-from typing import Any
+from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -33,6 +33,7 @@ class _SprkkrRunWorker(QObject):
         cancellation: RunCancellation | None = None,
         *,
         profile_name: str | None = None,
+        persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
         self._cancellation = cancellation or RunCancellation()
@@ -43,6 +44,7 @@ class _SprkkrRunWorker(QObject):
             output=self.output.emit,
             status=self.status.emit,
             warning=self.warning.emit,
+            persistent_job_changed=persistent_job_changed,
         )
 
     def _emit_cancelled(self) -> None:
@@ -70,6 +72,7 @@ class SprkkrRunWindow(RunMonitorWindow):
         *,
         profile_name: str | None = None,
         profile_description: str | None = None,
+        persistent_job_changed: Callable[[str], None] | None = None,
         on_finished=None,
     ) -> None:
         header = f"Directory: {request.directory}"
@@ -80,6 +83,7 @@ class SprkkrRunWindow(RunMonitorWindow):
                 request,
                 cancellation,
                 profile_name=profile_name,
+                persistent_job_changed=persistent_job_changed,
             ),
             parent,
             title="SPRKKR Run",
