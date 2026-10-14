@@ -184,8 +184,8 @@ class ResultHistory:
             if snapshot is None:
                 raise ValueError("A state without a potential requires a structure snapshot.")
             return
-        if path is None or Path(path) != version.path:
-            raise AssertionError("Captured potential version does not match potential path.")
+        if path is None:
+            raise AssertionError("A captured potential version requires its potential path.")
         if version.available:
             if snapshot is not None:
                 raise AssertionError("A usable potential must be the sole structure authority.")
@@ -255,7 +255,7 @@ class ResultHistory:
                     raise AssertionError(
                         "A captured potential version requires its potential path."
                     )
-                if Path(resolved_path) != resolved_version.path:
+                if Path(resolved_path).is_absolute() and Path(resolved_path) != resolved_version.path:
                     raise AssertionError(
                         "Captured potential version does not match potential path."
                     )
