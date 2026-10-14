@@ -6,17 +6,14 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
+
+from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.application.file_version import FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.structure_snapshot import StructureSnapshot
 from guy4ase.physics.composition import structure_formula
-
-
-@runtime_checkable
-class _CopyValues(Protocol):
-    def copy(self, *, copy_values: bool) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -51,18 +48,13 @@ def task_name(result: Any) -> str:
 
 
 def snapshot_input_parameters(parameters: Any | None) -> Any | None:
-    """Detach small mutable input provenance from its live source object.
-
-    Mapping values are copied structurally. Objects implementing the explicit
-    ``copy(copy_values=True)`` contract are copied through that contract and any
-    failure propagates; ``TypeError`` is not used as feature detection.
-    """
+    """Detach mutable input provenance using explicit supported contracts."""
     if parameters is None:
         return None
+    if isinstance(parameters, InputParameters):
+        return parameters.copy(copy_values=True)
     if isinstance(parameters, Mapping):
         return deepcopy(dict(parameters))
-    if isinstance(parameters, _CopyValues):
-        return parameters.copy(copy_values=True)
     return deepcopy(parameters)
 
 
@@ -133,11 +125,6 @@ def capture_structure(
     )
 
 
-def capture_structure_snapshot(atoms: Any) -> StructureSnapshot:
-    """Capture an output structure before entering history mutation."""
-    return StructureSnapshot.capture(atoms)
-
-
 def capture_result(
     result: Any,
     *,
@@ -149,6 +136,8 @@ def capture_result(
     """Capture result provenance that may inspect mutable objects or files."""
     resolved_output = Path(output_path) if output_path is not None else None
     resolved_potential = Path(potential_path) if potential_path is not None else None
+    if output_version is not None and resolved_output is None:
+        raise ValueError("An output version requires its output path.")
     return CapturedResult(
         result=result,
         task_name=task_name(result),
@@ -157,8 +146,8 @@ def capture_result(
         output_path=resolved_output,
         output_version=(
             output_version
-            if resolved_output is not None
-            else None
-        ) if output_version is not None else capture_file_version(resolved_output),
+            if output_version is not None
+            else capture_file_version(resolved_output)
+        ),
         potential_path=resolved_potential,
     )
