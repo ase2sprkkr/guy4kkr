@@ -1,4 +1,4 @@
-"""Behavioral regressions for versioned read-only workspace structures."""
+"""Behavioral regressions for provenance-backed workspace structures."""
 from __future__ import annotations
 
 from threading import Event, Thread
@@ -39,53 +39,55 @@ class _Cancellation:
         return True
 
 
-def test_confirmed_structure_edit_is_copy_on_write():
+def test_confirmed_structure_edit_mutates_owned_atoms_in_place():
     atoms = Atoms("Fe")
-    controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
-    )
+    controller = WorkspaceController(WorkspaceState(atoms=atoms))
     structures = []
     results = []
     controller.structureChanged.connect(structures.append)
     controller.resultChanged.connect(results.append)
-    generation = controller.generation
+    provenance = controller.structure_provenance
 
     def edit(candidate):
-        assert candidate is not atoms
+        assert candidate is atoms
         candidate.symbols = "Cu"
         return candidate
 
-    returned = controller.apply_structure_edit(edit, expected_generation=generation)
+    returned = controller.apply_structure_edit(
+        edit,
+        expected_provenance=provenance,
+    )
 
     assert returned is DocumentChange.APPLIED
-    assert controller.atoms is not atoms
-    assert atoms.get_chemical_symbols() == ["Fe"]
-    assert controller.atoms.get_chemical_symbols() == ["Cu"]
+    assert controller.atoms is atoms
+    assert atoms.get_chemical_symbols() == ["Cu"]
+    assert controller.structure_provenance != provenance
     assert controller.result is None
     assert controller.potential_path is None
-    assert controller.generation == generation.next()
-    assert structures == [controller.atoms]
+    assert structures == [atoms]
     assert results == []
 
 
-def test_failed_structure_edit_leaves_published_atoms_untouched():
+def test_failed_structure_edit_discards_mutated_realization():
     atoms = Atoms("Fe")
     controller = WorkspaceController(WorkspaceState(atoms=atoms))
-    generation = controller.generation
+    provenance = controller.structure_provenance
 
     def fail(candidate):
+        assert candidate is atoms
         candidate.symbols = "Cu"
         raise RuntimeError("edit failed")
 
     with pytest.raises(RuntimeError, match="edit failed"):
-        controller.apply_structure_edit(fail, expected_generation=generation)
+        controller.apply_structure_edit(fail, expected_provenance=provenance)
 
-    assert controller.atoms is atoms
-    assert atoms.get_chemical_symbols() == ["Fe"]
-    assert controller.generation == generation
+    restored = controller.atoms
+    assert restored is not atoms
+    assert restored.get_chemical_symbols() == ["Fe"]
+    assert controller.structure_provenance is provenance
 
 
-def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
+def test_run_request_borrows_atoms_and_snapshots_structure_provenance(tmp_path):
     class UncopyableAtoms(Atoms):
         def copy(self):  # pragma: no cover - request creation must not copy Atoms
             raise AssertionError("calculation request must not copy Atoms")
@@ -104,15 +106,15 @@ def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
     parameters.value = 11
 
     assert request.atoms is atoms
+    assert request.structure_provenance is controller.structure_provenance
     assert request.input_parameters is not parameters
     assert request.input_parameters.value == 7
     assert parameters.copy_calls == [True]
-    assert request.generation == controller.generation
     assert request.structure_id == controller.structure_id
     assert request.state_id == controller.state_id
 
 
-def test_backend_preparation_does_not_block_new_workspace_version(monkeypatch, tmp_path):
+def test_backend_preparation_does_not_block_new_workspace_structure(monkeypatch, tmp_path):
     preparation_entered = Event()
     release_preparation = Event()
     process_entered = Event()
@@ -158,10 +160,10 @@ def test_backend_preparation_does_not_block_new_workspace_version(monkeypatch, t
     assert preparation_entered.wait(5)
 
     replacement = Atoms("Ni")
-    generation = controller.generation
+    previous = controller.structure_provenance
     assert controller.replace_structure(replacement) is DocumentChange.APPLIED
     assert controller.atoms is replacement
-    assert controller.generation == generation.next()
+    assert controller.structure_provenance != previous
 
     release_preparation.set()
     assert process_entered.wait(5)
@@ -199,7 +201,7 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
             directory=str(tmp_path),
         )
     )
-    source_generation = controller.generation
+    source_provenance = controller.structure_provenance
     draft = ElementAssignmentDraft(controller.atoms)
     request = controller.create_calculation_request()
     replacement = Atoms("Cu")
@@ -215,26 +217,25 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
-        expected_generation=source_generation,
+        expected_provenance=source_provenance,
     )
     assert change is DocumentChange.STALE
     assert controller.atoms is replacement
 
 
-def test_reset_advances_instead_of_resetting_generation():
+def test_reset_changes_structure_provenance_instead_of_resetting_identity():
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
-    controller.replace_structure(controller.atoms)
-    before_reset = controller.generation
+    provenance = controller.structure_provenance
 
     controller.reset()
 
-    assert controller.generation == before_reset.next()
+    assert controller.structure_provenance is None
+    assert provenance is not None
 
 
-def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_path):
+def test_structure_file_load_survives_unrelated_parameter_change(monkeypatch, tmp_path):
     loaded_atoms = Atoms("Fe")
     structure_controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
-    original_structure = structure_controller.atoms
     structure_history = RecentFiles(tmp_path / "structure-recent.json")
 
     def read_structure(_path):
@@ -254,9 +255,9 @@ def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_p
         object(),
     )
 
-    assert not structure_loaded
-    assert structure_controller.atoms is original_structure
-    assert structure_history.paths("structure") == ()
+    assert structure_loaded
+    assert structure_controller.atoms is loaded_atoms
+    assert structure_history.paths("structure") == ((tmp_path / "Fe.cif").resolve(),)
 
 
 def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp_path):
@@ -268,7 +269,9 @@ def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp
     )
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
     original_structure = controller.atoms
-    loaded_result = load_result_file(tmp_path / "Fe.out")
+    output = tmp_path / "Fe.out"
+    output.write_text("result", encoding="utf-8")
+    loaded_result = load_result_file(output)
 
     controller.replace_input_parameters(object())
     adoption = controller.adopt_external_result(loaded_result)
@@ -302,7 +305,7 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
     assert controller.directory == str(next_directory)
 
 
-def test_structure_file_is_parsed_before_revision_checked(monkeypatch, tmp_path):
+def test_structure_file_is_parsed_before_provenance_checked(monkeypatch, tmp_path):
     _application = QApplication.instance() or QApplication([])
     parent = QWidget()
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
@@ -322,9 +325,9 @@ def test_structure_file_is_parsed_before_revision_checked(monkeypatch, tmp_path)
         lambda _parent, change: change is DocumentChange.APPLIED,
     )
 
-    assert not file_flows.load_structure(
+    assert file_flows.load_structure(
         controller, history, tmp_path / "Fe.cif", parent
     )
     assert reads == [(tmp_path / "Fe.cif").resolve()]
-    assert history.paths("structure") == ()
+    assert history.paths("structure") == ((tmp_path / "Fe.cif").resolve(),)
     parent.close()
