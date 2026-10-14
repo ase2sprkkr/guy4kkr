@@ -483,20 +483,68 @@ class WorkspaceController(QObject):
         self.directoryChanged.emit(None)
 
     def use_for_new_calculation(
-        self, *, expected_generation: Generation | None = None
+        self,
+        *,
+        result_id: int | None = None,
+        expected_potential: PotentialFileVersion | None = None,
+        expected_generation: Generation | None = None,
     ) -> DocumentChange:
+        """Create one new calculation branch from active or historical state.
+
+        Historical restoration and branch creation are one observable workspace
+        transition: all filesystem-dependent reconstruction is completed before
+        provenance or workspace state is mutated, then exactly one branch state is
+        committed and published.
+        """
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        state_id = self._workspace.state_id
-        if state_id is None:
-            raise ValueError("No calculation state is active.")
-        self._workspace.state_id = self._results.new_child_state(
-            state_id,
+
+        child_kwargs: dict[str, Any] = {}
+        if result_id is None:
+            atoms = self.atoms
+            parent_state_id = self.state_id
+        else:
+            resolution = resolve_historical_state(
+                self._results,
+                result_id,
+                active_state_id=self.state_id,
+                expected_potential=expected_potential,
+            )
+            if not self._generation_is_current(expected_generation):
+                return DocumentChange.STALE
+
+            if isinstance(resolution, HistoricalStateAlreadyActive):
+                atoms = self.atoms
+                parent_state_id = self.state_id
+            elif isinstance(resolution, NewHistoricalPotential):
+                atoms = resolution.atoms
+                parent_state_id = resolution.parent_state.id
+                child_kwargs = {
+                    "potential_path": str(resolution.potential_version.path),
+                    "potential_version": resolution.potential_version,
+                    "empty_spheres": None,
+                }
+            else:
+                atoms = resolution.atoms
+                parent_state_id = resolution.state.id
+
+        if atoms is None or parent_state_id is None:
+            raise ValueError("No calculation state is available for a new branch.")
+
+        state_id = self._results.new_child_state(
+            parent_state_id,
             new_branch=True,
+            **child_kwargs,
         )
+        state = self._results.state(state_id)
+        self._workspace.atoms = atoms
+        self._workspace.potential_path = state.potential_path
+        self._workspace.structure_id = state.structure_id
+        self._workspace.state_id = state.id
+        self._workspace.empty_spheres = state.empty_spheres
         self._workspace.restarted = True
         self._changed()
-        self.structureChanged.emit(self.atoms)
+        self.structureChanged.emit(atoms)
         return DocumentChange.APPLIED
 
     def update_empty_spheres(
