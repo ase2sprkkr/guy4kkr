@@ -1,0 +1,131 @@
+"""Qt renderer for an already-resolved Guided workflow plan."""
+from __future__ import annotations
+
+from PyQt6.QtCore import QSize, pyqtSignal
+from PyQt6.QtGui import QIcon, QPalette
+from PyQt6.QtWidgets import (
+    QLabel,
+    QPushButton,
+    QStyle,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.presentation import RecentLaunch
+from guy4ase.gui.style import SPACE_LG, SPACE_SM, heading_font
+from guy4ase.gui.widgets.action_card import configure_action_card
+from guy4ase.gui.widgets.recent_launcher import build_recent_launch_menu
+from guy4ase.gui.workflow.model import (
+    ActionIcon,
+    AvailableAction,
+    ContinueRecent,
+    WorkflowCommand,
+    WorkflowPlan,
+)
+
+
+class WorkflowActionsWidget(QWidget):
+    """Render a workflow plan and emit semantic commands for user actions."""
+
+    commandRequested = pyqtSignal(object)
+
+    def __init__(self, recent_files: RecentFiles, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._recent_files = recent_files
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(SPACE_LG)
+
+    def set_plan(self, plan: WorkflowPlan) -> None:
+        """Replace the rendered actions with ``plan`` exactly as ordered."""
+        self._clear()
+        for group in plan.groups:
+            group_widget = QWidget(self)
+            group_layout = QVBoxLayout(group_widget)
+            group_layout.setContentsMargins(0, 0, 0, 0)
+            group_layout.setSpacing(SPACE_SM)
+
+            label = QLabel(group.title, group_widget)
+            label.setObjectName("workflowActionGroupLabel")
+            label.setForegroundRole(QPalette.ColorRole.WindowText)
+            label.setFont(heading_font(label.font(), "section"))
+            group_layout.addWidget(label)
+
+            for action in group.actions:
+                group_layout.addWidget(self._action_button(action, group_widget))
+            self._layout.addWidget(group_widget)
+
+    def _clear(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _action_button(
+        self,
+        action: AvailableAction,
+        parent: QWidget,
+    ) -> QPushButton | QToolButton:
+        if isinstance(action.command, ContinueRecent):
+            button = QToolButton(parent)
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+            button.setToolTip(action.command.launch.path)
+            button.setMenu(
+                build_recent_launch_menu(
+                    button,
+                    self._recent_files,
+                    self._recent_requested,
+                )
+            )
+            icon_size = QSize(24, 24)
+            minimum_height = 52
+            menu_button = True
+        else:
+            button = QPushButton(parent)
+            icon_size = None
+            minimum_height = 68
+            menu_button = False
+
+        configure_action_card(
+            button,
+            action.title,
+            action.description,
+            self._icon(action.icon),
+            category=action.category,
+            icon_size=icon_size,
+            minimum_height=minimum_height,
+            menu_button=menu_button,
+            subtle=action.category == "neutral",
+        )
+        button.clicked.connect(
+            lambda _checked=False, command=action.command: self.commandRequested.emit(
+                command
+            )
+        )
+        return button
+
+    def _recent_requested(self, kind: str, path: str) -> None:
+        self.commandRequested.emit(ContinueRecent(RecentLaunch(kind, path)))
+
+    def _icon(self, icon: ActionIcon) -> QIcon:
+        standard = {
+            ActionIcon.OPEN: QStyle.StandardPixmap.SP_DialogOpenButton,
+            ActionIcon.DOWNLOAD: QStyle.StandardPixmap.SP_ArrowDown,
+            ActionIcon.FILE: QStyle.StandardPixmap.SP_FileIcon,
+            ActionIcon.RESULT: QStyle.StandardPixmap.SP_FileDialogContentsView,
+            ActionIcon.VIEW: QStyle.StandardPixmap.SP_FileDialogContentsView,
+            ActionIcon.CONTINUE: QStyle.StandardPixmap.SP_ArrowForward,
+            ActionIcon.RESET: QStyle.StandardPixmap.SP_BrowserReload,
+        }
+        resource = {
+            ActionIcon.RUN: "system-run.svg",
+            ActionIcon.EMPTY_SPHERES: "run-build-clean.svg",
+            ActionIcon.NEW_CALCULATION: "run-build-clean.svg",
+        }
+        if icon in resource:
+            return QIcon(str(icon_path(resource[icon])))
+        return self.style().standardIcon(standard[icon])
