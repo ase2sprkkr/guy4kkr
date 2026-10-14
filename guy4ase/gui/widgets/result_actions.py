@@ -235,12 +235,6 @@ class ResultActionsWidget(QWidget):
         else:
             self._show_empty("No actions available.")
 
-    def set_workspace_state(self, _structure_id: int | None, _state_id: int | None) -> None:
-        """Compatibility no-op: workspace semantics belong to the presenter."""
-
-    def set_results(self, _results: Any) -> None:
-        """Compatibility no-op: callers must provide a ``ResultTreeModel``."""
-
     def _tree_item(self, node: ResultTreeNode) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.label])
         if node.result_id is None:
