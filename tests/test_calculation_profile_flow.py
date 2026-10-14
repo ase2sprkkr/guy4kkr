@@ -47,12 +47,19 @@ def test_run_flow_selects_profile_and_passes_it_to_window(monkeypatch, tmp_path)
     )
 
     parent = object()
-    window = calculation_flow.run_calculation(controller, recent, parent)
+    persistent_job_changed = lambda _job_id: None
+    window = calculation_flow.run_calculation(
+        controller,
+        recent,
+        parent,
+        persistent_job_changed=persistent_job_changed,
+    )
 
     assert window is not None
     assert captured["profile_name"] == "cluster"
     assert captured["profile_description"] == "profile:cluster"
     assert captured["parent"] is parent
+    assert captured["on_persistent_job_changed"] is persistent_job_changed
 
 
 def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_path):

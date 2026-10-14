@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -61,6 +61,8 @@ class MainWindow(QMainWindow):
         controller: WorkspaceController,
         recent_files: RecentFiles,
         settings: ApplicationSettings,
+        *,
+        persistent_job_changed: Callable[[str], None],
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -74,6 +76,7 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.recent_history = recent_files
         self.settings = settings
+        self._persistent_job_changed = persistent_job_changed
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -760,7 +763,10 @@ class MainWindow(QMainWindow):
     def _on_run_sprkkr_calculation(self) -> None:
         """Start the shared calculation workflow."""
         calculation_flow.run_calculation(
-            self.controller, self.recent_history, self
+            self.controller,
+            self.recent_history,
+            self,
+            persistent_job_changed=self._persistent_job_changed,
         )
 
     def _refresh_result_panel(self) -> None:

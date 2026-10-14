@@ -62,6 +62,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 open_expert=self.show_main_window,
                 settings=self.settings,
+                persistent_job_changed=self._persistent_job_changed,
             )
             self._wire_window(self._workflow_window)
         return self._workflow_window
@@ -73,6 +74,7 @@ class GuiApplication(QObject):
                 self.controller,
                 self.recent_files,
                 self.settings,
+                persistent_job_changed=self._persistent_job_changed,
             )
             self._wire_window(self._main_window)
         return self._main_window
@@ -104,6 +106,7 @@ class GuiApplication(QObject):
                 self.recent_files,
                 target,
                 result_id,
+                persistent_job_changed=self._persistent_job_changed,
             )
         )
         self.controller.structureChanged.connect(refresh_result_context)
@@ -111,6 +114,10 @@ class GuiApplication(QObject):
         self.controller.resultSelectionRequested.connect(widget.select_result)
         self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
+
+    def _persistent_job_changed(self, job_id: str) -> None:
+        """Reload authoritative metadata after a live persistent-run change."""
+        self.persistent_jobs.job_changed(job_id)
 
     def show_workflow_window(self) -> None:
         """Show and activate the workflow view."""
