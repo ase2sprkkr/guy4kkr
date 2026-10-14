@@ -7,18 +7,19 @@ from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    CalculationRequest,
+    WorkspaceController,
+)
 
 
 def test_scf_does_not_fast_forward_across_use_for_new_calculation():
     controller = WorkspaceController(
         WorkspaceState(atoms=Atoms("Fe"), potential_path="P0.pot")
     )
-    request = controller.create_calculation_request() if controller.input_parameters else None
-    # Construct the launch snapshot explicitly because this test intentionally has
-    # no real InputParameters object.
-    from guy4ase.gui.application.workspace_controller import CalculationRequest
-
+    assert controller.structure_provenance is not None
+    assert controller.structure_id is not None
+    assert controller.state_id is not None
     request = CalculationRequest(
         atoms=controller.atoms,
         structure_provenance=controller.structure_provenance,
