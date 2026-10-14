@@ -8,13 +8,32 @@ from pathlib import Path
 from typing import Any
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort durability barrier for a directory entry update."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        descriptor = os.open(directory, flags)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            # Some platforms/filesystems do not support fsync on directories.
+            pass
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write_text(
     path: str | Path,
     text: str,
     *,
     encoding: str = "utf-8",
 ) -> None:
-    """Replace *path* only after the complete new contents are written and flushed.
+    """Atomically replace *path* after flushing file and directory metadata.
 
     The temporary file lives next to the destination so :func:`os.replace` is
     an atomic same-filesystem operation. A write/flush failure therefore leaves
@@ -39,6 +58,7 @@ def atomic_write_text(
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
         temporary = None
+        _fsync_directory(destination.parent)
     finally:
         if temporary is not None:
             try:
