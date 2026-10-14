@@ -110,8 +110,8 @@ def capture_structure(
     potential_version: PotentialFileVersion | None = None,
 ) -> CapturedStructure:
     """Capture all external structure state required by the provenance graph."""
-    path = str(potential_path) if potential_path is not None else None
     version = resolve_potential_version(potential_path, potential_version)
+    path = str(version.path) if version is not None else None
     snapshot = (
         StructureSnapshot.capture(atoms)
         if version is None or not version.available
@@ -134,10 +134,19 @@ def capture_result(
     output_version: FileVersion | None = None,
 ) -> CapturedResult:
     """Capture result provenance that may inspect mutable objects or files."""
-    resolved_output = Path(output_path) if output_path is not None else None
-    resolved_potential = Path(potential_path) if potential_path is not None else None
-    if output_version is not None and resolved_output is None:
-        raise ValueError("An output version requires its output path.")
+    resolved_output = (
+        Path(output_path).expanduser().resolve() if output_path is not None else None
+    )
+    resolved_potential = (
+        Path(potential_path).expanduser().resolve()
+        if potential_path is not None
+        else None
+    )
+    if output_version is not None:
+        if resolved_output is None:
+            raise ValueError("An output version requires its output path.")
+        if output_version.path != resolved_output:
+            raise ValueError("Captured output version does not match output path.")
     return CapturedResult(
         result=result,
         task_name=task_name(result),
