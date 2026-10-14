@@ -101,7 +101,7 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
     assert current.workspace_updated
 
     before = present_result_record(
-        controller.result_store,
+        controller.result_history,
         historical.record,
         current_structure_id=controller.structure_id,
         current_state_id=controller.state_id,
@@ -111,7 +111,7 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
 
     historical_path.write_text("replacement file", encoding="utf-8")
     after = present_result_record(
-        controller.result_store,
+        controller.result_history,
         historical.record,
         current_structure_id=controller.structure_id,
         current_state_id=controller.state_id,
@@ -121,5 +121,5 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
     assert after.actions.use_state.label == "Continue with current version of this potential"
     assert after.actions.use_state.expected_potential is not None
     assert after.actions.use_state.expected_potential != (
-        controller.result_store.state_for_result(historical.record).potential_version
+        controller.result_history.state_for_result(historical.record).potential_version
     )
