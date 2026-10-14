@@ -94,6 +94,12 @@ class GuidedInputParametersDialog(QDialog):
         self.session = create_input_parameters_session(parameters, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
         self._navigation: dict[str, NavigationView] = {}
+        self._pending_history_navigation = None
+        self._history_navigation_timer = QTimer(self)
+        self._history_navigation_timer.setSingleShot(True)
+        self._history_navigation_timer.timeout.connect(
+            self._apply_pending_history_navigation
+        )
 
         self.setWindowTitle(self.spec.title)
         manage_window_geometry(
@@ -233,9 +239,21 @@ class GuidedInputParametersDialog(QDialog):
 
     def _history_applied(self, paths, source_page, field_indices) -> None:
         """Defer history navigation until restoring the undo command has finished."""
-        # Wait until QUndoStack finishes restoring the command before focus
-        # changes can emit editingFinished from another control.
-        QTimer.singleShot(0, lambda: self._reveal_history_field(paths, source_page, field_indices))
+        # A dialog-owned timer is essential here. Static QTimer.singleShot keeps
+        # its Python callback alive after the dialog's C++ object is destroyed;
+        # the next event-loop iteration can then invoke a stale wrapper.
+        self._pending_history_navigation = (
+            tuple(paths),
+            source_page,
+            dict(field_indices),
+        )
+        self._history_navigation_timer.start(0)
+
+    def _apply_pending_history_navigation(self) -> None:
+        pending = self._pending_history_navigation
+        self._pending_history_navigation = None
+        if pending is not None:
+            self._reveal_history_field(*pending)
 
     def _reveal_history_field(self, paths, source_page, field_indices) -> None:
         """Reveal the source-page editor if available, otherwise its primary placement."""
