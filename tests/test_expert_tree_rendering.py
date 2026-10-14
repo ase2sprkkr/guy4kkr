@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from ase2sprkkr.common.grammar_types import Array, Integer, Real, Sequence, Table
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
@@ -211,13 +211,18 @@ def test_nested_fixed_array_draft_inside_defaultdict_is_atomic(application, monk
     )
     assert session.undo_stack.count() == 0
 
-    components[2].setValue(3.0)
+    with QSignalBlocker(components[2]):
+        components[2].setValue(3.0)
+    with pytest.raises(RuntimeError, match="reject nested draft"):
+        components[2].commit()
     np.testing.assert_array_equal(
         session.value(("MODE", "MDIR"))[2], initial, strict=False
     )
     assert session.undo_stack.count() == 0
 
-    components[2].setValue(4.0)
+    with QSignalBlocker(components[2]):
+        components[2].setValue(4.0)
+    assert components[2].commit()
     application.processEvents()
     np.testing.assert_array_equal(session.value(("MODE", "MDIR"))[2], [1.0, 2.0, 4.0])
     assert session.undo_stack.count() == 1
