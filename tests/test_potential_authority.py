@@ -295,6 +295,7 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     assert current_version != historical_version
 
     loaded_atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
+    loaded_atoms._potential = SimpleNamespace(atoms=loaded_atoms)
     calls = []
 
     def load(version):

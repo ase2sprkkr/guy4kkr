@@ -35,13 +35,16 @@ def test_result_loading_resolves_relative_artifacts_from_result_directory(
         input_parameters=parameters,
     )
     result.path_to = lambda key: result.files[key]
+
+    def read_potential(path, *, check_file_unchanged):
+        assert check_file_unchanged
+        potential_reads.append(path)
+        return SimpleNamespace(atoms=atoms)
+
     monkeypatch.setattr(
         result_loading_module.Potential,
         "from_file",
-        staticmethod(
-            lambda path: potential_reads.append(path)
-            or SimpleNamespace(atoms=atoms)
-        ),
+        staticmethod(read_potential),
     )
 
     loaded = load_result(result, fallback_directory=tmp_path / "unused-fallback")
@@ -93,10 +96,15 @@ def test_result_loading_uses_potential_fallbacks_and_fallback_directory(
         potential_filename=potential_filename,
     )
     result.path_to = lambda key: result.files[key]
+
+    def read_potential(_path, *, check_file_unchanged):
+        assert check_file_unchanged
+        return SimpleNamespace(atoms=atoms)
+
     monkeypatch.setattr(
         result_loading_module.Potential,
         "from_file",
-        staticmethod(lambda _path: SimpleNamespace(atoms=atoms)),
+        staticmethod(read_potential),
     )
 
     loaded = load_result(result, fallback_directory=tmp_path)

@@ -162,7 +162,8 @@ def test_edit_current_structure_reads_published_structure_and_commits_replacemen
 
     def edit(atoms, *, parent):
         assert parent is None
-        assert atoms is original
+        assert atoms is not original
+        assert atoms.get_chemical_symbols() == original.get_chemical_symbols()
         edited = atoms.copy()
         edited.symbols = "Cu"
         return edited

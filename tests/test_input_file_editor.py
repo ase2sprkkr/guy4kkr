@@ -113,11 +113,12 @@ def test_parameter_copy_error_propagates_without_becoming_input_error(applicatio
     parameters = InputParameters.create("scf")
     error = RuntimeError("broken parameter copy")
 
-    def broken_copy(*, copy_values):
+    def broken_copy(self, *, copy_values):
+        assert self is parameters
         assert copy_values
         raise error
 
-    monkeypatch.setattr(parameters, "copy", broken_copy)
+    monkeypatch.setattr(type(parameters), "copy", broken_copy)
     editor = InputFileEditor(parameters)
 
     with pytest.raises(RuntimeError, match="broken parameter copy") as raised:

@@ -6,9 +6,11 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.build import bulk as build_bulk
 from PyQt6.QtWidgets import QApplication
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.definitions.bsf import bsf_mode
+from ase2sprkkr.sprkkr.build import semiinfinite_system
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
@@ -217,8 +219,9 @@ def test_relative_fixed_energy_and_missing_geometry_validation(application):
 
 
 def test_bsf_bulk_and_layered_integration_fields(application):
-    for pbc, expected in [(True, "NKTAB"), ((True, True, False), "NKTAB2D")]:
-        atoms = Atoms("Fe", cell=(2.8, 2.8, 8.), pbc=pbc)
+    bulk = Atoms("Fe", cell=(2.8, 2.8, 8.), pbc=True)
+    layered = semiinfinite_system(build_bulk("Fe", "bcc", a=2.8), (0, 0))
+    for atoms, expected in [(bulk, "NKTAB"), (layered, "NKTAB2D")]:
         dialog = GuidedInputParametersDialog("bsf", kk_parameters(), atoms=atoms)
         assert dialog.editors_for(("TAU", expected))
         dialog.close()

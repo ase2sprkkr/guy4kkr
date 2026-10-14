@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 from ase import Atoms
 from ase2sprkkr import SPRKKRAtoms
 
@@ -18,9 +19,9 @@ class _Parameters:
         return self
 
 
-def _atoms_with_potential(marker: str):
+def _atoms_with_potential(marker: str, *, x: float = 0.0):
     atoms = SPRKKRAtoms.promote_ase_atoms(
-        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+        Atoms("Fe", positions=[[x, 0.0, 0.0]], cell=(2.8, 2.8, 2.8), pbc=True),
         symmetry=False,
     )
     atoms._potential = SimpleNamespace(atoms=atoms, marker=marker)
@@ -49,14 +50,14 @@ def test_use_result_state_never_substitutes_current_atoms_for_historical_state(t
     current_request = controller.create_calculation_request()
     historical_request = controller.create_calculation_request()
 
-    current_atoms = _atoms_with_potential("current")
+    current_atoms = _atoms_with_potential("current", x=0.1)
     current = controller.adopt_calculation_result(
         _loaded_scf(current_atoms),
         request=current_request,
     )
     assert current.workspace_updated
 
-    historical_atoms = _atoms_with_potential("historical")
+    historical_atoms = _atoms_with_potential("historical", x=0.2)
     historical = controller.adopt_calculation_result(
         _loaded_scf(historical_atoms),
         request=historical_request,
@@ -68,9 +69,10 @@ def test_use_result_state_never_substitutes_current_atoms_for_historical_state(t
     controller.use_result_state(historical.record.id)
 
     assert controller.state_id == historical.record.output_state_id
-    assert controller.atoms is historical_atoms
     assert controller.atoms is not current_atoms
-    assert controller.atoms.potential.marker == "historical"
+    assert controller.atoms is not historical_atoms
+    np.testing.assert_allclose(controller.atoms.positions, historical_atoms.positions)
+    assert not np.array_equal(controller.atoms.positions, current_atoms.positions)
 
 
 def test_restore_presentation_never_silently_treats_overwritten_potential_as_exact(tmp_path):

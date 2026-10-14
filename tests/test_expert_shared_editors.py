@@ -400,10 +400,18 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
     remove_button = tree.itemWidget(override, 3)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.toolTip() == 'Remove repeated value 2'
-    assert item.child(2).text(0) == '[3]'
-    assert item.child(2).text(4) == 'Add numbered value'
-    assert item.child(2).childCount() == 0
-    append_editor = tree.itemWidget(item.child(2), 2)
+    append = item.child(2)
+    assert append.text(0) == '[3]'
+    assert append.text(4) == 'Add numbered value'
+    assert append.childCount() == 3
+    assert [append.child(index).text(0) for index in range(3)] == [
+        '[0]', '[1]', '[2]',
+    ]
+    assert all(
+        isinstance(tree.itemWidget(append.child(index), 2), RealEditor)
+        for index in range(3)
+    )
+    append_editor = tree.itemWidget(append, 2)
     assert append_editor.placeholderText() == 'Add value…'
 
     override_editor.setText('{.25,.5,.75}')
@@ -515,7 +523,7 @@ def test_clicking_tree_row_after_repeated_edit_keeps_scroll_position(application
     application.processEvents()
 
     assert scrollbar.value() == position
-    assert item.child(1) is child
+    assert item.child(1).text(0) == '[2]'
     np.testing.assert_allclose(
         dialog.parameters().MODE.MDIR(all_values=True)[2],
         [.2, .3, .4],

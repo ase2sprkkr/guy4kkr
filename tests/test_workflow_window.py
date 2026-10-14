@@ -236,6 +236,7 @@ def test_structure_actions_follow_requested_group_order(tmp_path):
 
     assert _group_titles(window) == [
         "Calculate",
+        "View",
         "Create derived structure",
         "And now something completely different...",
     ]

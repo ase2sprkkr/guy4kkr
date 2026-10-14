@@ -1,6 +1,7 @@
 """Qt tests for reusable persistent calculation-job browsing."""
 from __future__ import annotations
 
+from datetime import datetime
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -9,6 +10,10 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
+
+
+def _local_timestamp(value: str) -> str:
+    return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _job(
@@ -138,7 +143,7 @@ def test_history_groups_jobs_and_shows_selected_metadata():
     assert view.tree.topLevelItem(0).text(0) == "2026-10-13"
     assert view.detail_title.text() == "Fe-SCF"
     assert view.status_value.text() == "Running"
-    assert view.started_value.text() == "2026-10-13 10:00:00"
+    assert view.started_value.text() == _local_timestamp("2026-10-13T08:00:00+00:00")
     assert view.finished_value.text() == "—"
     assert view.result_files_value.text() == "—"
     assert view.result_widget._history_button is None
@@ -167,8 +172,9 @@ def test_finished_job_shows_stable_finished_time_and_can_load_result():
     dialog = CalculationHistoryDialog(source)
     view = _view(dialog)
 
-    assert view.finished_value.text() == "2026-10-13 10:37:00"
-    assert view.tree.topLevelItem(0).child(0).text(3) == "2026-10-13 10:37:00"
+    finished = _local_timestamp("2026-10-13T08:37:00+00:00")
+    assert view.finished_value.text() == finished
+    assert view.tree.topLevelItem(0).child(0).text(3) == finished
     assert view.result_files_value.text() == "Current (stored, not checked)"
     assert view.monitor_button.isHidden()
     assert not view.load_result_button.isHidden()

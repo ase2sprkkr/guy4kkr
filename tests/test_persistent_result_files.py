@@ -53,6 +53,11 @@ def test_explicit_result_file_check_marks_state_as_verified():
         def runs():
             return (stored,)
 
+        @staticmethod
+        def get(run_id):
+            assert run_id == stored.id
+            return stored
+
     class Manager:
         store = Store()
 
@@ -85,6 +90,11 @@ def test_result_file_check_requires_backend_operation():
         @staticmethod
         def runs():
             return (record,)
+
+        @staticmethod
+        def get(run_id):
+            assert run_id == record.id
+            return record
 
     source = PersistentJobSource(SimpleNamespace(store=Store()))
 

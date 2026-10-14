@@ -431,21 +431,39 @@ def sequence_item_binding(
     )
 
 
+_MAPPING_DEFAULT = object()
+
+
 def mapping_value_binding(
     parent: Any,
     key: Any,
     placement: Any,
     *,
     value_type: Any,
-    default: Any = None,
+    default: Any = _MAPPING_DEFAULT,
     allows_unset: bool = False,
     allow_empty: bool = False,
     read_only: bool = False,
     project_state: Callable[[FieldValue], FieldValue] | None = None,
 ) -> ProjectedFieldBinding:
-    """Project a mapping occurrence, copying mappings for every replacement."""
+    """Project a mapping occurrence, copying mappings for every replacement.
+
+    When no explicit fallback is supplied, a missing numbered occurrence inherits
+    the mapping's ``def`` value. This mirrors SPR-KKR repeated-dictionary
+    semantics and lets a newly appended override start from the effective
+    default rather than from an empty value.
+    """
+    def fallback(value: Any) -> Any:
+        if default is not _MAPPING_DEFAULT:
+            return default
+        if isinstance(value, Mapping) and key != "def":
+            return value.get("def")
+        return None
+
     def project(value: Any) -> Any:
-        return value.get(key, default) if isinstance(value, Mapping) else default
+        if isinstance(value, Mapping) and key in value:
+            return value[key]
+        return fallback(value)
 
     def replace(value: Any, child: Any) -> Any:
         result = dict(value) if isinstance(value, Mapping) else {}
@@ -460,7 +478,7 @@ def mapping_value_binding(
         value = project(parent_state.value)
         return FieldValue(
             value,
-            default,
+            fallback(parent_state.value),
             implicit_default=not explicit and value is not None,
             explicit=explicit,
         )

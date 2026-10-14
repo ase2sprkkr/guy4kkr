@@ -86,19 +86,32 @@ def build_recent_launch_menu(
     menu: QMenu | None = None,
     base: str | Path | None = None,
 ) -> QMenu:
-    """Build or refresh the shared Structures/Outputs Continue menu."""
+    """Build or refresh the shared Structures/Outputs Continue menu.
+
+    Reuse existing submenus when refreshing. ``QMenu.clear()`` removes their
+    actions but does not destroy child menu objects immediately, so recreating
+    the submenus on every history update would retain an ever-growing set of
+    QObject children on the long-lived parent menu.
+    """
     if menu is None and isinstance(parent, QToolButton):
         menu = parent.menu()
     if menu is None:
         menu = QMenu(parent)
-    else:
-        menu.clear()
+
+    existing_submenus = {
+        submenu.title(): submenu
+        for action in menu.actions()
+        if (submenu := action.menu()) is not None
+    }
+    menu.clear()
 
     for title, kind in (
         ("Structures", "structure"),
         ("Outputs", "output"),
     ):
-        submenu = menu.addMenu(title)
+        submenu = existing_submenus.pop(title, None)
+        if submenu is None:
+            submenu = QMenu(title, menu)
         populate_recent_menu(
             submenu,
             history,
@@ -106,4 +119,8 @@ def build_recent_launch_menu(
             lambda path, item_kind=kind: open_recent(item_kind, path),
             base=base,
         )
+        menu.addMenu(submenu)
+
+    for obsolete in existing_submenus.values():
+        obsolete.deleteLater()
     return menu
