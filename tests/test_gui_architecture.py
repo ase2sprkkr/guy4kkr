@@ -95,6 +95,19 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
                         "guy4ase.gui.dialogs",
                         "guy4ase.gui.widgets",
                         "guy4ase.gui.flows",
+                        "guy4ase.gui.workflow",
+                    )
+                )
+                for target in targets
+            ), module
+        if module.startswith("guy4ase.gui.workflow"):
+            assert not any(
+                target.startswith(
+                    (
+                        "guy4ase.gui.controllers",
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.widgets",
+                        "guy4ase.gui.flows",
                     )
                 )
                 for target in targets
@@ -160,6 +173,33 @@ assert EXPERT_FIELDS
 assert guided_task_definition('scf').backend_task == 'scf'
 assert not any(name.startswith('PyQt6') for name in sys.modules)
 assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        timeout=30,
+    )
+
+
+def test_workflow_presentation_imports_without_qt_layers():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from guy4ase.gui.presentation import RecentLaunch
+from guy4ase.gui.workflow.model import RunTask
+from guy4ase.gui.workflow.planner import WorkflowPlanner
+assert RecentLaunch and RunTask and WorkflowPlanner
+assert not any(name.startswith('PyQt6') for name in sys.modules)
+for prefix in (
+    'guy4ase.gui.controllers.',
+    'guy4ase.gui.dialogs.',
+    'guy4ase.gui.widgets.',
+    'guy4ase.gui.flows.',
+):
+    assert not any(name.startswith(prefix) for name in sys.modules)
 """,
         ],
         cwd=ROOT,

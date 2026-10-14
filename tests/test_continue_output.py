@@ -9,6 +9,8 @@ from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import files as file_flows
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.workflow.model import RunTask
 from guy4ase.main import GuiApplication
 
 
@@ -28,17 +30,12 @@ def _loaded_scf(path, *, atoms=None) -> LoadedResult:
     )
 
 
-def _calculate_actions(window) -> list[str]:
-    layout = window._action_group_layouts.get(window._GROUP_CALCULATE)
-    if layout is None:
-        return []
-    return [
-        str(
-            layout.itemAt(index).widget().property("workflowActionTitle")
-            or layout.itemAt(index).widget().text().splitlines()[0]
-        )
-        for index in range(1, layout.count())
-    ]
+def _commands(window):
+    return tuple(
+        action.command
+        for group in window.workflow_plan.groups
+        for action in group.actions
+    )
 
 
 def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkeypatch):
@@ -80,7 +77,9 @@ def test_restart_after_continue_keeps_scf_action_available(tmp_path, monkeypatch
     assert controller.scf_status() == "START"
 
 
-def test_workflow_shows_scf_action_after_continue_and_restart(tmp_path, monkeypatch):
+def test_workflow_keeps_semantic_scf_action_after_continue_and_restart(
+    tmp_path, monkeypatch
+):
     application = QApplication.instance() or QApplication([])
     output = tmp_path / "SCF.out"
     output.write_text("calculation", encoding="utf-8")
@@ -92,16 +91,17 @@ def test_workflow_shows_scf_action_after_continue_and_restart(tmp_path, monkeypa
         settings_path=tmp_path / "settings.json",
     )
     window = gui.create_workflow_window()
+    scf_command = RunTask(guided_task_definition("scf"))
 
     window._continue_recent("output", str(output))
     application.processEvents()
-    assert "Converge SCF" in _calculate_actions(window)
+    assert scf_command in _commands(window)
 
     gui.controller.use_for_new_calculation(
         expected_generation=gui.controller.generation,
     )
     application.processEvents()
-    assert "Converge SCF" in _calculate_actions(window)
+    assert scf_command in _commands(window)
     window.close()
 
 

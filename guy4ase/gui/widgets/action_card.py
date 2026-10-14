@@ -1,8 +1,6 @@
 """Reusable Guided-style action cards."""
 from __future__ import annotations
 
-from typing import Literal
-
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import (
@@ -15,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.presentation import ActionCategory as _ActionCategory
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -22,12 +21,8 @@ from guy4ase.gui.style import (
     heading_font,
 )
 
-ActionCategory = Literal[
-    "structure", "load", "calculation", "destructive", "neutral"
-]
 
-
-def action_card_accent(palette: QPalette, category: ActionCategory) -> QColor:
+def action_card_accent(palette: QPalette, category: _ActionCategory) -> QColor:
     """Return the semantic accent used by Guided action cards."""
     return {
         "structure": QColor("#3979b8"),
@@ -44,7 +39,7 @@ def configure_action_card(
     description: str,
     icon: QIcon,
     *,
-    category: ActionCategory = "structure",
+    category: _ActionCategory = "structure",
     icon_size: QSize | None = None,
     minimum_height: int = 68,
     menu_button: bool = False,

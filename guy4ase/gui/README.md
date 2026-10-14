@@ -12,7 +12,9 @@ alternate APIs.
   `dialogs.structures`.
 - `widgets`: reusable Qt controls. `widgets.input_parameters` contains the
   concrete value editors shared by guided and expert parameter editing;
-  structure-specific controls live in `widgets.structures`.
+  structure-specific controls live in `widgets.structures`. Presentation
+  widgets render already-resolved semantic models and emit semantic intents;
+  they do not decide workflow availability or ordering.
 - `controllers`: application-owned Qt workflow coordinators for reusable views.
   They may bridge GUI intents to application services and own GUI-wide window
   identity/lifecycle, but they do not become a second source of domain state.
@@ -29,6 +31,15 @@ alternate APIs.
   Specs describe layout and presentation only; selection of a layout for a
   backend task belongs to `input_parameters.tasks`, together with task identity
   and workflow policy.
+- `workflow`: Qt-independent Guided workflow planning and command model.
+  `WorkflowPlanner` consumes workspace facts plus the canonical Guided task
+  registry and is the single owner of recommended action availability, grouping,
+  ordering, and contextual workflow presentation. Its output is an immutable
+  `WorkflowPlan` containing typed commands; it does not perform GUI actions.
+- `presentation.py`: the small Qt-independent semantic presentation vocabulary
+  shared across otherwise separate views, such as action categories and the
+  selected recent structure/output used by Continue. Concrete colors, icons,
+  layouts, and Qt mechanics remain in widgets/style.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
   next calculation; `ResultStore` owns calculation history independently of
@@ -54,6 +65,15 @@ and injects the same shared objects into the relevant top-level windows. The
 windows do not construct another application state or another top-level window.
 Result selection is presentation state; the composition root wires explicit
 result-selection intent separately from result history updates.
+
+The Guided workflow has one explicit presentation path. `WorkflowPlanner` reads
+`WorkspaceController` facts and `input_parameters.tasks`, then produces a
+`WorkflowPlan`. `WorkflowActionsWidget` renders that plan in its given order and
+emits the plan's typed commands. `WorkflowWindow` refreshes the plan and
+mechanically dispatches those commands to existing flows/controller operations.
+It must not independently reimplement SCF-stage interpretation, task lists,
+empty-sphere recommendation, grouping, ordering, or contextual action text.
+Changing user-visible copy must not be used as a semantic command identity.
 
 `PersistentJobSource` is authoritative for persistent run metadata, backend
 operations, and persisted-run recovery. `PersistentJobsController` subscribes
@@ -228,17 +248,23 @@ an explicit stored value.
 
 - `guy4ase.main.GuiApplication` is the composition root for shared application
   state and top-level windows.
-- `application` does not import dialogs, widgets, controllers, or flows.
+- `application` does not import workflow, dialogs, widgets, controllers, or
+  flows. It owns application state/services rather than Guided presentation.
+- `workflow` is Qt-independent. It may consume application read contracts,
+  `input_parameters.tasks`, `presentation`, and pure physics helpers, but it
+  must not depend on dialogs, widgets, controllers, or flows.
 - `controllers` coordinate reusable Qt workflows and may depend on application
   services, reusable widgets, and leaf dialogs, but reusable widgets do not
   depend back on controllers.
 - Windows render controller state and invoke flows/controller transitions; they
-  do not assign workspace fields directly.
+  do not assign workspace fields directly. `WorkflowWindow` obtains recommended
+  actions from `WorkflowPlanner`; it does not duplicate workflow policy.
 - `flows` may compose application state and leaf dialogs, but must not import
   `MainWindow` or `WorkflowWindow`.
-- Widgets may use parameter services and small helpers, but must not import
-  concrete application dialogs. Use signals/callbacks for actions owned by a
-  higher layer.
+- Widgets may use parameter services, semantic workflow models, and small
+  helpers, but must not import concrete application dialogs. Use
+  signals/callbacks for actions owned by a higher layer. Widgets do not import
+  `WorkflowPlanner` to decide availability themselves.
 - `input_parameters` must not depend on concrete dialogs or widgets.
 - `input_parameters.tasks` may depend on declarative specs but not on concrete
   dialogs/widgets; workflow metadata here is presentation policy, not execution
@@ -253,14 +279,18 @@ an explicit stored value.
 The checks in `tests/test_gui_architecture.py` protect the broad layer
 directions, acyclic GUI imports, and lightweight import boundaries. Tests should
 protect invariants and public contracts, not freeze incidental implementation
-layout. Backend execution behavior is tested through `SprkkrExecution`; only Qt
-signal/thread adaptation belongs in worker-level tests.
+layout. Guided workflow policy is tested against `WorkflowPlan` and typed
+commands; Qt renderer/window tests verify presentation and dispatch rather than
+re-deriving semantic identity from button text. Backend execution behavior is
+tested through `SprkkrExecution`; only Qt signal/thread adaptation belongs in
+worker-level tests.
 
 ## Common canonical imports
 
 ```python
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_actions import EmptySpheresAction
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
@@ -271,5 +301,8 @@ from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.presentation import ActionCategory, RecentLaunch
+from guy4ase.gui.workflow.model import RunTask, WorkflowPlan
+from guy4ase.gui.workflow.planner import WorkflowPlanner
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```

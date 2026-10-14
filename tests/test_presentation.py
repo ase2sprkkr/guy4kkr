@@ -1,4 +1,6 @@
-from guy4ase.gui.widgets.recent_launcher import recent_launch
+import pytest
+
+from guy4ase.gui.presentation import RecentLaunch, recent_launch
 
 
 class RecentHistory:
@@ -26,9 +28,7 @@ def test_recent_launch_uses_last_kind_when_available():
         )
     )
 
-    assert launch is not None
-    assert launch.kind == "structure"
-    assert launch.path == "structure.cif"
+    assert launch == RecentLaunch("structure", "structure.cif")
     assert launch.title == "Continue: structure.cif"
 
 
@@ -41,19 +41,17 @@ def test_recent_launch_falls_back_to_output():
         )
     )
 
-    assert launch is not None
-    assert launch.kind == "output"
-    assert launch.path == "calculation.out"
+    assert launch == RecentLaunch("output", "calculation.out")
 
 
 def test_recent_launch_falls_back_when_last_kind_is_empty():
     launch = recent_launch(
-        RecentHistory(
-            structures=("structure.cif",),
-            last_kind="output",
-        )
+        RecentHistory(structures=("structure.cif",), last_kind="output")
     )
 
-    assert launch is not None
-    assert launch.kind == "structure"
-    assert launch.path == "structure.cif"
+    assert launch == RecentLaunch("structure", "structure.cif")
+
+
+def test_recent_launch_rejects_input_history_kind():
+    with pytest.raises(ValueError, match="structure.*output"):
+        RecentLaunch("input", "input.inp")  # type: ignore[arg-type]
