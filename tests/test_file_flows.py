@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 from ase import Atoms
 
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.structure_provenance import materialize_structure
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import DocumentChange, WorkspaceController
 from guy4ase.gui.flows import files as file_flows
@@ -14,8 +16,15 @@ from guy4ase.gui.flows import structures as structure_flows
 def test_structure_flow_loads_potential_and_document_metadata(tmp_path, monkeypatch, suffix):
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     path = tmp_path / f"Fe{suffix}"
+    path.write_text("potential", encoding="utf-8")
+    version = PotentialFileVersion.capture(path)
+    structure = materialize_structure(atoms, potential_version=version)
     reads = []
-    monkeypatch.setattr(file_flows, "ase_read", lambda value: reads.append(value) or atoms)
+    monkeypatch.setattr(
+        file_flows,
+        "load_potential_materialized",
+        lambda value: reads.append(value) or structure,
+    )
     parameters = object()
     controller = WorkspaceController(WorkspaceState(input_parameters=parameters))
     history = RecentFiles(tmp_path / "recent.json")
@@ -23,6 +32,7 @@ def test_structure_flow_loads_potential_and_document_metadata(tmp_path, monkeypa
     assert file_flows.load_structure(controller, history, path, object())
     assert reads == [path.resolve()]
     assert controller.atoms is atoms
+    assert controller.structure_provenance is structure.provenance
     assert controller.directory == str(tmp_path.resolve())
     assert controller.potential_path == str(path.resolve())
     assert controller.input_parameters is parameters
@@ -33,9 +43,13 @@ def test_loading_nonpotential_structure_drops_old_potential_source(tmp_path, mon
     atoms = Atoms("Cu", cell=(2.8, 2.8, 2.8), pbc=True)
     path = tmp_path / "Cu.xyz"
     monkeypatch.setattr(file_flows, "ase_read", lambda _path: atoms)
-    controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe"), potential_path="Fe.pot")
+    old_path = tmp_path / "Fe.pot"
+    old_path.write_text("potential", encoding="utf-8")
+    old_structure = materialize_structure(
+        Atoms("Fe"),
+        potential_version=PotentialFileVersion.capture(old_path),
     )
+    controller = WorkspaceController(WorkspaceState(structure=old_structure))
 
     assert file_flows.load_structure(
         controller,
