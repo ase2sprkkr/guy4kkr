@@ -178,7 +178,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
 
     assert adoption.potential_path == missing.resolve()
     assert isinstance(adoption.potential_error, FileNotFoundError)
-    assert controller.result_store.results[0].result is result
+    assert controller.result_history.results[0].result is result
     assert controller.atoms is original_atoms
     assert controller.potential_path == "Cu.pot"
 
@@ -205,4 +205,4 @@ def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatc
     assert controller.atoms is atoms
     assert controller.directory == "original"
     assert controller.potential_path == "Cu.pot"
-    assert controller.result_store.results == ()
+    assert controller.result_history.results == ()
