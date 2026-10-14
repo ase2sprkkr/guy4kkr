@@ -8,12 +8,14 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.projects import (
     ProjectConflictError,
     ProjectRepository,
     ProjectRepositoryError,
 )
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -21,6 +23,7 @@ from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
+from guy4ase.gui.presenters.result_actions import ResultActionsPresenter
 
 logger = logging.getLogger(__name__)
 
@@ -99,20 +102,24 @@ class GuiApplication(QObject):
         )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
-        """Connect explicit result actions and one authoritative result store."""
+        """Compose result presentation and route its top-level mutation intents."""
         widget = window.result_actions_widget
         if widget is None:
             return
 
-        def refresh_result_context(*_args) -> None:
-            widget.set_workspace_state(
-                self.controller.structure_id,
-                self.controller.state_id,
+        presenter = ResultActionsPresenter(
+            self.controller,
+            widget,
+            parent=window,
+        )
+        presenter.useStateRequested.connect(
+            lambda result_id, expected_potential, owner=presenter: self._use_result_state(
+                owner,
+                result_id,
+                expected_potential,
             )
-            widget.set_results(self.controller.result_store)
-
-        widget.useStateRequested.connect(self.controller.use_result_state)
-        widget.recomputeRequested.connect(
+        )
+        presenter.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
                 self.recent_files,
@@ -121,11 +128,18 @@ class GuiApplication(QObject):
                 persistent_job_changed=self._persistent_job_changed,
             )
         )
-        self.controller.structureChanged.connect(refresh_result_context)
-        self.controller.resultChanged.connect(refresh_result_context)
-        self.controller.resultSelectionRequested.connect(widget.select_result)
-        self.recent_files.changed.connect(refresh_result_context)
-        refresh_result_context()
+
+    def _use_result_state(
+        self,
+        presenter: ResultActionsPresenter,
+        result_id: int,
+        expected_potential: PotentialFileVersion | None,
+    ) -> None:
+        """Route a presenter-validated restore intent to the workspace mutation."""
+        try:
+            self.controller.use_result_state(result_id, expected_potential)
+        except PotentialVersionChanged:
+            presenter.refresh()
 
     def set_active_project(self, project_id: str | None) -> None:
         """Select the project that receives subsequently created persistent runs."""
