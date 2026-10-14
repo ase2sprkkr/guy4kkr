@@ -31,11 +31,9 @@ def _loaded_scf(path, *, atoms=None) -> LoadedResult:
 
 
 def _commands(window):
-    plan = window._actions.plan
-    assert plan is not None
     return tuple(
         action.command
-        for group in plan.groups
+        for group in window.workflow_plan.groups
         for action in group.actions
     )
 
