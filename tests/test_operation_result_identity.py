@@ -1,3 +1,4 @@
+import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
@@ -17,3 +18,22 @@ def test_empty_spheres_result_has_stable_task_identity():
     )
 
     assert record.task_name == "empty_spheres"
+
+
+def test_result_without_task_identity_is_rejected():
+    class MissingTaskIdentity:
+        produces_potential = False
+        output_values = {}
+
+    store = ResultStore()
+
+    with pytest.raises(AttributeError):
+        store.add_result(
+            MissingTaskIdentity(),
+            structure_id=None,
+            input_state_id=None,
+            input_parameters=None,
+            directory=None,
+        )
+
+    assert len(store) == 0

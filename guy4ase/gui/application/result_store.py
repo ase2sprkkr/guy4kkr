@@ -9,6 +9,7 @@ from typing import Any, Iterator
 
 from guy4ase.gui.application.file_version import FileState, FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_contract import ResultCapabilities
 from guy4ase.gui.application.result_files import capture_result_files
 from guy4ase.gui.application.structure_snapshot import StructureSnapshot
 from guy4ase.gui.application.workspace import EmptySpheresState
@@ -20,12 +21,9 @@ _KEEP_POTENTIAL_SOURCE = object()
 _KEEP_STRUCTURE = object()
 
 
-def _task_name(result: Any) -> str:
+def _task_name(result: ResultCapabilities) -> str:
     """Capture a stable normalized task identity from a result."""
-    try:
-        return str(result.task_name).strip().lower()
-    except (AttributeError, TypeError, ValueError):
-        return type(result).__name__.lower()
+    return str(result.task_name).strip().lower()
 
 
 def _snapshot_input_parameters(parameters: Any | None) -> Any | None:
@@ -563,7 +561,7 @@ class ResultStore:
 
     def add_result(
         self,
-        result: Any,
+        result: ResultCapabilities,
         *,
         structure_id: int | None,
         input_state_id: int | None,
@@ -593,8 +591,6 @@ class ResultStore:
                     f"{input_state.structure_id}, not {structure_id}."
                 )
 
-        # Complete everything that can call user/backend code or inspect mutable
-        # files before committing any counters, states or indexes.
         task_name = _task_name(result)
         parameter_snapshot = _snapshot_input_parameters(input_parameters)
         result_files = capture_result_files(result)
@@ -676,7 +672,7 @@ class ResultStore:
 
     def add_external_result(
         self,
-        result: Any,
+        result: ResultCapabilities,
         *,
         atoms: Any | None,
         input_parameters: Any | None,

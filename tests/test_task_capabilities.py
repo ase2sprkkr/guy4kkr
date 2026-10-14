@@ -25,18 +25,6 @@ from guy4ase.gui.input_parameters.tasks import (
 from guy4ase.main import GuiApplication
 
 
-class _Parameters:
-    def __init__(self, task_name: str) -> None:
-        self.task_name = task_name
-
-    def copy(self, *, copy_values: bool):
-        assert copy_values
-        return _Parameters(self.task_name)
-
-    def to_string(self, *, validate: bool = False) -> str:
-        return f"TASK {self.task_name.upper()}"
-
-
 def _scf_atoms(status="CONVERGED"):
     atoms = SPRKKRAtoms.promote_ase_atoms(
         Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
@@ -70,8 +58,9 @@ def test_guided_registry_integrates_with_backend_definitions():
     for definition in definitions:
         parameters = InputParameters.create(definition.backend_task)
         assert parameters.task_name.lower() == definition.backend_task
-        for path in definition.build_spec().all_paths():
-            resolve_option(parameters, path)
+        for is_2d in (False, True):
+            for path in definition.build_spec(is_2d=is_2d).all_paths():
+                resolve_option(parameters, path)
 
 
 def test_guided_workflow_stages_are_presentation_metadata():

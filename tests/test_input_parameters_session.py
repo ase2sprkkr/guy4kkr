@@ -17,7 +17,10 @@ from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.single_site_contour import SingleSiteContourPlugin
 from guy4ase.gui.input_parameters.specs.schema import FieldRole
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.tasks import (
+    guided_task_definition,
+    guided_task_definitions,
+)
 
 
 def _first(value):
@@ -112,18 +115,19 @@ def test_quick_mirror_and_primary_editor_stay_synchronised_through_undo():
 
 
 def test_every_mirror_has_one_primary_location():
-    for task in ("scf", "dos", "xas", "arpes", "bsf", "jxc"):
-        spec = task_dialog_spec(task)
-        primary = spec.primary_pages()
-        mirrors = [
-            field.path
-            for page in spec.pages
-            for group in page.groups
-            for field in group.fields
-            if field.role is FieldRole.MIRROR
-        ]
-        assert mirrors
-        assert all(path in primary for path in mirrors)
+    for definition in guided_task_definitions():
+        for is_2d in (False, True):
+            spec = definition.build_spec(is_2d=is_2d)
+            primary = spec.primary_pages()
+            mirrors = [
+                field.path
+                for page in spec.pages
+                for group in page.groups
+                for field in group.fields
+                if field.role is FieldRole.MIRROR
+            ]
+            assert mirrors
+            assert all(path in primary for path in mirrors)
 
 
 def test_finishing_untouched_dialog_does_not_commit_visual_fallbacks():
@@ -172,7 +176,7 @@ def test_scf_accuracy_page_uses_2d_kpoint_controls_for_layered_structure():
 
 
 def test_scf_spec_covers_xband_and_common_input_groups():
-    spec = task_dialog_spec("scf")
+    spec = guided_task_definition("scf").build_spec()
     paths = set(spec.all_paths())
 
     assert len(paths) >= 60
