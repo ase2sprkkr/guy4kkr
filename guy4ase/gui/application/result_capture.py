@@ -74,13 +74,15 @@ def capture_result_files(result: Any) -> Mapping[str, FileVersion]:
 def capture_structure(
     atoms: Any,
     *,
-    potential_path: str | Path | None,
     potential_version: PotentialFileVersion | None = None,
 ) -> StructureProvenance:
-    """Capture one physical structure state as immutable provenance."""
+    """Capture one physical structure state as immutable provenance.
+
+    A POT-backed state may only be created from an exact version already bound to
+    ``atoms`` by the stable loader. This function never discovers a POTFIL by path.
+    """
     return StructureProvenance.capture(
         atoms,
-        potential_path=potential_path,
         potential_version=potential_version,
     )
 
