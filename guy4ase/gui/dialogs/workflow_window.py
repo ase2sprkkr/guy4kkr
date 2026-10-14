@@ -60,6 +60,7 @@ from guy4ase.gui.workflow.model import (
     UseForNewCalculation,
     VisualizeStructure,
     WorkflowCommand,
+    WorkflowPlan,
 )
 from guy4ase.gui.workflow.planner import WorkflowPlanner
 
@@ -105,6 +106,14 @@ class WorkflowWindow(QMainWindow):
         """Return the session-independent browser entry points."""
         return self._browser_panel
 
+    @property
+    def workflow_plan(self) -> WorkflowPlan:
+        """Return the semantic action plan currently rendered by the window."""
+        plan = self._actions.plan
+        if plan is None:
+            raise RuntimeError("Workflow plan has not been rendered yet.")
+        return plan
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -132,7 +141,7 @@ class WorkflowWindow(QMainWindow):
         content_layout.addSpacing(SPACE_XL)
 
         self._actions = WorkflowActionsWidget(self.recent_history, content)
-        self._actions.commandRequested.connect(self._dispatch_workflow_command)
+        self._actions.commandRequested.connect(self.execute_workflow_command)
         content_layout.addWidget(self._actions)
 
         content_layout.addStretch(1)
@@ -306,7 +315,7 @@ class WorkflowWindow(QMainWindow):
         self._subtitle.setText(plan.subtitle)
         self._actions.set_plan(plan)
 
-    def _dispatch_workflow_command(self, command: WorkflowCommand) -> None:
+    def execute_workflow_command(self, command: WorkflowCommand) -> None:
         """Mechanically route one already-approved workflow command."""
         if isinstance(command, RunTask):
             self._prepare_task(command.task.backend_task)
