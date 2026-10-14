@@ -7,12 +7,13 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
+from guy4ase.gui.application.projects import ProjectRepository
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
 from guy4ase.gui.dialogs.main_window import MainWindow
+from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
 
@@ -27,6 +28,7 @@ class GuiApplication(QObject):
         recent_files_path: str | Path | None = None,
         settings_path: str | Path | None = None,
         persistent_jobs: PersistentJobSource | None = None,
+        project_repository: ProjectRepository | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -43,9 +45,14 @@ class GuiApplication(QObject):
         self.persistent_jobs = (
             persistent_jobs if persistent_jobs is not None else PersistentJobSource()
         )
+        self.projects = (
+            project_repository
+            if project_repository is not None
+            else ProjectRepository()
+        )
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
-        self._calculation_history: CalculationHistoryDialog | None = None
+        self._project_browser: ProjectBrowserDialog | None = None
 
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
@@ -73,8 +80,8 @@ class GuiApplication(QObject):
     def _wire_window(self, window: WorkflowWindow | MainWindow) -> None:
         """Connect application-owned actions exposed by a top-level window."""
         self._wire_result_actions(window)
-        window.browser_panel.calculationJobsRequested.connect(
-            self.show_calculation_jobs
+        window.browser_panel.projectBrowserRequested.connect(
+            self.show_project_browser
         )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
@@ -113,17 +120,20 @@ class GuiApplication(QObject):
         """Show and activate the expert view."""
         self._show_window(self.create_main_window())
 
-    def show_calculation_jobs(self) -> None:
-        """Show and activate the application-owned calculation-job browser."""
-        if self._calculation_history is None:
-            dialog = CalculationHistoryDialog(self.persistent_jobs)
+    def show_project_browser(self) -> None:
+        """Show and activate the application-owned project browser."""
+        if self._project_browser is None:
+            dialog = ProjectBrowserDialog(
+                self.projects,
+                self.persistent_jobs,
+            )
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            dialog.destroyed.connect(self._calculation_history_closed)
-            self._calculation_history = dialog
-        self._show_window(self._calculation_history)
+            dialog.destroyed.connect(self._project_browser_closed)
+            self._project_browser = dialog
+        self._show_window(self._project_browser)
 
-    def _calculation_history_closed(self, *_args) -> None:
-        self._calculation_history = None
+    def _project_browser_closed(self, *_args) -> None:
+        self._project_browser = None
 
     @staticmethod
     def _show_window(window: QWidget) -> None:
