@@ -576,6 +576,7 @@ class ResultStore:
         output_atoms: Any | None = None,
         output_potential_path: str | None = None,
         output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
+        produces_potential: bool = False,
         imported: bool = False,
     ) -> ResultRecord:
         if (structure_id is None) != (input_state_id is None):
@@ -604,7 +605,7 @@ class ResultStore:
         result_id = self._next_result_id
         potential_source_result_id = (
             result_id
-            if task_name == "scf" and output_potential_path is not None
+            if produces_potential and output_potential_path is not None
             else None
         )
 
@@ -684,6 +685,7 @@ class ResultStore:
         output_path: Path | None,
         potential_path: Path | None,
         produces_state: bool,
+        produces_potential: bool = False,
         persistent_ref: str | None = None,
     ) -> ResultRecord:
         existing = self.result_for_external_source(
@@ -703,6 +705,7 @@ class ResultStore:
                 persistent_ref=persistent_ref,
                 output_path=output_path,
                 potential_path=potential_path,
+                produces_potential=produces_potential,
                 imported=True,
             )
 
@@ -718,6 +721,7 @@ class ResultStore:
                 potential_path=potential_path,
                 output_atoms=atoms,
                 output_potential_path=(str(potential_path) if potential_path else None),
+                produces_potential=produces_potential,
                 imported=True,
             )
 
