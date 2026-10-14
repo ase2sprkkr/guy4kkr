@@ -161,6 +161,25 @@ assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
     )
 
 
+def test_execution_cancellation_imports_without_qt_or_dialogs():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from guy4ase.gui.application.execution_cancellation import RunCancellation
+assert RunCancellation
+assert not any(name.startswith('PyQt6') for name in sys.modules)
+assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        timeout=30,
+    )
+
+
 def test_domain_element_assignment_import_does_not_pull_in_gui():
     subprocess.run(
         [
