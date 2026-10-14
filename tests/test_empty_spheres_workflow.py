@@ -8,17 +8,18 @@ from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
+    EmptySpheresAction,
     WorkspaceController,
 )
 
 
 def test_empty_sphere_search_state_allows_repeated_failed_search():
     workspace = WorkspaceState(atoms=Atoms("Fe"))
-    assert workspace.empty_spheres_action() == "add"
-
     controller = WorkspaceController(workspace)
+    assert controller.empty_spheres_action() is EmptySpheresAction.ADD
+
     generation = controller.generation
-    state_id = controller.state_id
+    input_state_id = controller.state_id
     change = controller.update_empty_spheres(
         lambda atoms, _previous: (atoms, 0, False),
         expected_generation=generation,
@@ -27,13 +28,40 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert change is DocumentChange.APPLIED
     assert workspace.empty_spheres == EmptySpheresState(count=0)
     assert workspace.empty_spheres_added == 0
-    assert workspace.empty_spheres_action() == "recalculate"
-    record = controller.result_history.results[0]
-    assert record.result == EmptySpheresResult(found=0)
-    assert record.input_state_id == state_id
-    assert record.output_state_id is None
-    assert controller.state_id == state_id
-    assert controller.generation == generation
+    assert controller.empty_spheres_action() is EmptySpheresAction.RECALCULATE
+    first_record = controller.result_history.results[0]
+    assert first_record.result == EmptySpheresResult(found=0)
+    assert first_record.input_state_id == input_state_id
+    assert first_record.output_state_id == controller.state_id
+    first_output_state_id = controller.state_id
+    assert first_output_state_id != input_state_id
+    first_state = controller.result_history.state(first_output_state_id)
+    assert first_state.parent_id == input_state_id
+    assert first_state.empty_spheres == workspace.empty_spheres
+    assert controller.generation == generation.next()
+
+    second_generation = controller.generation
+
+    def repeat_search(atoms, previous_count):
+        assert previous_count == 0
+        return atoms, 0, False
+
+    change = controller.update_empty_spheres(
+        repeat_search,
+        expected_generation=second_generation,
+    )
+
+    assert change is DocumentChange.APPLIED
+    assert len(controller.result_history.results) == 2
+    second_record = controller.result_history.results[0]
+    assert second_record.result == EmptySpheresResult(found=0)
+    assert second_record.input_state_id == first_output_state_id
+    assert second_record.output_state_id == controller.state_id
+    assert controller.state_id != first_output_state_id
+    second_state = controller.result_history.state(controller.state_id)
+    assert second_state.parent_id == first_output_state_id
+    assert second_state.empty_spheres == workspace.empty_spheres
+    assert controller.generation == second_generation.next()
 
 
 def test_empty_sphere_update_publishes_found_count_and_new_state():
@@ -180,8 +208,13 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():
-    workspace = WorkspaceState(atoms=Atoms("X"))
-    assert workspace.empty_spheres_action() is None
+    controller = WorkspaceController(WorkspaceState(atoms=Atoms("X")))
+    assert controller.empty_spheres_action() is None
 
-    workspace.empty_spheres = EmptySpheresState(1)
-    assert workspace.empty_spheres_action() == "recalculate"
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("X"),
+            empty_spheres=EmptySpheresState(1),
+        )
+    )
+    assert controller.empty_spheres_action() is EmptySpheresAction.RECALCULATE
