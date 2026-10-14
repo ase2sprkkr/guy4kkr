@@ -65,6 +65,7 @@ def test_empty_spheres_breaks_potential_source_provenance():
         directory="run",
         output_atoms=Atoms("Fe"),
         output_potential_path="Fe.pot",
+        produces_potential=True,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
@@ -118,6 +119,7 @@ def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
         directory="run",
         output_atoms=Atoms("Fe"),
         output_potential_path=str(first),
+        produces_potential=True,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
@@ -147,6 +149,7 @@ def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path)
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
         produces_state=True,
+        produces_potential=True,
     )
     state_id = imported_scf.output_state_id
     assert state_id is not None
@@ -191,6 +194,7 @@ def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
         produces_state=True,
+        produces_potential=True,
     )
     imported_state = imported_scf.output_state_id
     assert imported_state is not None
