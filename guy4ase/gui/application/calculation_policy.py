@@ -1,7 +1,7 @@
 """Policy for presenting calculations in the Guided workflow."""
 from __future__ import annotations
 
-from guy4ase.gui.input_parameters.tasks import GuidedTaskDefinition
+from guy4ase.gui.input_parameters.tasks import GuidedTaskDefinition, WorkflowStage
 
 
 def guided_task_is_recommended(
@@ -18,6 +18,6 @@ def guided_task_is_recommended(
     """
     if not has_structure:
         return False
-    if definition.workflow.after_converged_scf:
+    if definition.workflow.stage is WorkflowStage.POST_SCF:
         return scf_converged
     return True
