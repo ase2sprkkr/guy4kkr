@@ -91,6 +91,18 @@ class ExpertInputTreeEditor(QWidget):
             parent=self,
         )
 
+        self._pending_session_paths: dict[InputParameterPath, None] = {}
+        self._session_update_timer = QTimer(self)
+        self._session_update_timer.setSingleShot(True)
+        self._session_update_timer.timeout.connect(self._flush_session_changes)
+
+        self._pending_append_focus: tuple[
+            InputParameterPath, tuple[int, ...]
+        ] | None = None
+        self._append_focus_timer = QTimer(self)
+        self._append_focus_timer.setSingleShot(True)
+        self._append_focus_timer.timeout.connect(self._restore_pending_append_focus)
+
         self.filter_edit.textChanged.connect(self.apply_filter)
         clear_button.clicked.connect(self.clear_filter)
         self.changed_only_checkbox.toggled.connect(
@@ -179,10 +191,22 @@ class ExpertInputTreeEditor(QWidget):
 
     def _session_changed(self, paths, reset: bool) -> None:
         if reset:
+            self._session_update_timer.stop()
+            self._pending_session_paths.clear()
+            self._append_focus_timer.stop()
+            self._pending_append_focus = None
             self.rebuild()
             return
-        changed_paths = tuple(paths)
-        QTimer.singleShot(0, lambda: self._apply_session_changes(changed_paths))
+        for path in paths:
+            self._pending_session_paths[path] = None
+        if self._pending_session_paths:
+            self._session_update_timer.start(0)
+
+    def _flush_session_changes(self) -> None:
+        changed_paths = tuple(self._pending_session_paths)
+        self._pending_session_paths.clear()
+        if changed_paths:
+            self._apply_session_changes(changed_paths)
 
     def _apply_session_changes(self, changed_paths: tuple[InputParameterPath, ...]) -> None:
         refreshed: set[int] = set()
@@ -204,12 +228,8 @@ class ExpertInputTreeEditor(QWidget):
                 )
                 self._collapse_groups(item)
                 if append_container is not None:
-                    QTimer.singleShot(
-                        0,
-                        lambda current=item, path=append_container: self._focus_append_editor(
-                            current, path
-                        ),
-                    )
+                    self._pending_append_focus = (path, append_container)
+                    self._append_focus_timer.start(0)
             else:
                 self._refresh_subtree(item, refreshed)
             self._update_changed_style(option, item, refresh_filter=False)
@@ -235,6 +255,16 @@ class ExpertInputTreeEditor(QWidget):
                     refresh_filter=False,
                 )
         self.apply_filter(self.filter_edit.text())
+
+    def _restore_pending_append_focus(self) -> None:
+        pending = self._pending_append_focus
+        self._pending_append_focus = None
+        if pending is None:
+            return
+        path, container_path = pending
+        item = self._runtime.option_item(path)
+        if item is not None:
+            self._focus_append_editor(item, container_path)
 
     def _refresh_subtree(self, item: QTreeWidgetItem, refreshed: set[int]) -> None:
         editor = self.tree.itemWidget(item, 2)
