@@ -47,7 +47,7 @@ def test_generation_is_a_regular_value_type_without_integer_compatibility():
     assert generation != (1,)
 
 
-def test_controller_restores_workspace_generation():
+def test_controller_restores_non_structural_workspace_generation():
     generation = Generation(8)
     workspace = WorkspaceState(generation=generation)
 
@@ -91,9 +91,9 @@ def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_p
     )
 
 
-def test_result_completion_does_not_stale_pending_draft_operation(tmp_path):
+def test_result_completion_does_not_stale_pending_structure_operation(tmp_path):
     controller = _controller(tmp_path)
-    generation = controller.generation
+    provenance = controller.structure_provenance
     request = controller.create_calculation_request()
     controller.adopt_calculation_result(
         _loaded(SimpleNamespace(task_name="DOS")),
@@ -102,20 +102,33 @@ def test_result_completion_does_not_stale_pending_draft_operation(tmp_path):
 
     change = controller.apply_structure_edit(
         lambda atoms: atoms,
-        expected_generation=generation,
+        expected_provenance=provenance,
     )
 
     assert change is DocumentChange.APPLIED
 
 
-def test_draft_change_still_rejects_delayed_draft_callback(tmp_path):
+def test_unrelated_parameter_change_does_not_stale_structure_edit(tmp_path):
     controller = _controller(tmp_path)
-    generation = controller.generation
+    provenance = controller.structure_provenance
 
     controller.replace_input_parameters(_Parameters())
     change = controller.apply_structure_edit(
         lambda atoms: atoms,
-        expected_generation=generation,
+        expected_provenance=provenance,
+    )
+
+    assert change is DocumentChange.APPLIED
+
+
+def test_structure_change_rejects_delayed_structure_edit(tmp_path):
+    controller = _controller(tmp_path)
+    provenance = controller.structure_provenance
+
+    controller.replace_structure(Atoms("Cu"))
+    change = controller.apply_structure_edit(
+        lambda atoms: atoms,
+        expected_provenance=provenance,
     )
 
     assert change is DocumentChange.STALE
