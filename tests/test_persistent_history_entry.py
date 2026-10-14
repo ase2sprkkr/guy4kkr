@@ -1,4 +1,4 @@
-"""Regression tests for access to persistent calculation jobs."""
+"""Regression tests for access to persistent project history."""
 from __future__ import annotations
 
 import os
@@ -11,7 +11,7 @@ import guy4ase.main as main_module
 from guy4ase.main import GuiApplication
 
 
-def test_workflow_job_entry_is_separate_from_workspace_results(tmp_path):
+def test_workflow_project_entry_is_separate_from_workspace_results(tmp_path):
     _application = QApplication.instance() or QApplication([])
     gui = GuiApplication(
         recent_files_path=tmp_path / "recent.json",
@@ -20,13 +20,18 @@ def test_workflow_job_entry_is_separate_from_workspace_results(tmp_path):
     window = gui.create_workflow_window()
 
     assert not gui.controller.result_store.results
-    assert window.browser_panel.calculation_jobs_button.text() == "Calculation Jobs…"
+    assert window.browser_panel.project_browser_button.text() == "Project Browser…"
     window.close()
 
 
-def test_calculation_history_lifecycle_belongs_to_application(monkeypatch, tmp_path):
+def test_project_browser_lifecycle_and_sources_belong_to_application(
+    monkeypatch,
+    tmp_path,
+):
     _application = QApplication.instance() or QApplication([])
     events: list[tuple[str, object]] = []
+    repository = object()
+    job_source = object()
 
     class _Signal:
         def __init__(self) -> None:
@@ -39,16 +44,20 @@ def test_calculation_history_lifecycle_belongs_to_application(monkeypatch, tmp_p
             for callback in tuple(self._callbacks):
                 callback()
 
-    class FakeHistoryDialog:
-        instances: list["FakeHistoryDialog"] = []
+    class FakeProjectBrowserDialog:
+        instances: list["FakeProjectBrowserDialog"] = []
 
-        def __init__(self) -> None:
+        def __init__(self, received_repository, received_job_source) -> None:
+            assert received_repository is repository
+            assert received_job_source is job_source
             self.destroyed = _Signal()
             self.delete_on_close = False
             type(self).instances.append(self)
 
         def setAttribute(self, attribute) -> None:
-            self.delete_on_close = attribute == main_module.Qt.WidgetAttribute.WA_DeleteOnClose
+            self.delete_on_close = (
+                attribute == main_module.Qt.WidgetAttribute.WA_DeleteOnClose
+            )
 
         def show(self) -> None:
             events.append(("show", self))
@@ -62,19 +71,25 @@ def test_calculation_history_lifecycle_belongs_to_application(monkeypatch, tmp_p
         def close(self) -> None:
             self.destroyed.emit()
 
-    monkeypatch.setattr(main_module, "CalculationHistoryDialog", FakeHistoryDialog)
+    monkeypatch.setattr(
+        main_module,
+        "ProjectBrowserDialog",
+        FakeProjectBrowserDialog,
+    )
     gui = GuiApplication(
         recent_files_path=tmp_path / "recent.json",
         settings_path=tmp_path / "settings.json",
+        project_repository=repository,
+        persistent_jobs=job_source,
     )
     workflow = gui.create_workflow_window()
     expert = gui.create_main_window()
 
-    workflow.browser_panel.calculation_jobs_button.click()
-    first_dialog = FakeHistoryDialog.instances[0]
-    expert.browser_panel.calculation_jobs_button.click()
+    workflow.browser_panel.project_browser_button.click()
+    first_dialog = FakeProjectBrowserDialog.instances[0]
+    expert.browser_panel.project_browser_button.click()
 
-    assert len(FakeHistoryDialog.instances) == 1
+    assert len(FakeProjectBrowserDialog.instances) == 1
     assert first_dialog.delete_on_close
     assert [name for name, _dialog in events] == [
         "show",
@@ -87,10 +102,10 @@ def test_calculation_history_lifecycle_belongs_to_application(monkeypatch, tmp_p
     assert all(dialog is first_dialog for _name, dialog in events)
 
     first_dialog.close()
-    workflow.browser_panel.calculation_jobs_button.click()
+    workflow.browser_panel.project_browser_button.click()
 
-    assert len(FakeHistoryDialog.instances) == 2
-    second_dialog = FakeHistoryDialog.instances[1]
+    assert len(FakeProjectBrowserDialog.instances) == 2
+    second_dialog = FakeProjectBrowserDialog.instances[1]
     assert second_dialog is not first_dialog
     assert second_dialog.delete_on_close
     assert events[-3:] == [

@@ -6,16 +6,16 @@ from PyQt6.QtWidgets import QGroupBox, QPushButton, QVBoxLayout, QWidget
 
 
 class BrowserPanel(QGroupBox):
-    """Request browsers that are broader than the current workspace results."""
+    """Request application-owned browsers broader than workspace results."""
 
-    calculationJobsRequested = pyqtSignal()
+    projectBrowserRequested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Browse", parent)
 
         layout = QVBoxLayout(self)
-        self.calculation_jobs_button = QPushButton("Calculation Jobs…", self)
-        self.calculation_jobs_button.clicked.connect(
-            lambda _checked=False: self.calculationJobsRequested.emit()
+        self.project_browser_button = QPushButton("Project Browser…", self)
+        self.project_browser_button.clicked.connect(
+            lambda _checked=False: self.projectBrowserRequested.emit()
         )
-        layout.addWidget(self.calculation_jobs_button)
+        layout.addWidget(self.project_browser_button)
