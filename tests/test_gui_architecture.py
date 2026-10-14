@@ -148,9 +148,10 @@ def test_lightweight_input_parameter_modules_import_without_qt_or_dialogs():
             """
 import sys
 from guy4ase.gui.input_parameters.expert_fields import EXPERT_FIELDS
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.specs.registry import guided_task_definition
 assert EXPERT_FIELDS
-assert task_dialog_spec('scf').task == 'scf'
+assert guided_task_definition('scf').parameter_task == 'scf'
+assert guided_task_definition('scf').build_spec().title == 'SCF Calculation Setup'
 assert not any(name.startswith('PyQt6') for name in sys.modules)
 assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
 """,
