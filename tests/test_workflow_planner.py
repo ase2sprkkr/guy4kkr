@@ -116,6 +116,25 @@ def test_initial_plan_uses_typed_commands_and_recent_action():
     assert continue_action.icon is ActionIcon.CONTINUE
 
 
+def test_current_structure_plan_has_canonical_group_order_without_output_loader():
+    plan = WorkflowPlanner().for_workspace(
+        Workspace(atoms=FormulaAtoms(), build_2d=True)
+    )
+
+    assert tuple(group.section for group in plan.groups) == (
+        WorkflowSection.CALCULATE,
+        WorkflowSection.VIEW,
+        WorkflowSection.CREATE,
+        WorkflowSection.OTHER,
+    )
+    assert plan.group(WorkflowSection.LOAD) is None
+    assert all(
+        command != Load(LoadKind.OUTPUT)
+        for group in plan.groups
+        for command in (action.command for action in group.actions)
+    )
+
+
 def test_calculation_order_follows_canonical_task_registry():
     scf = guided_task_definition("scf")
     before = WorkflowPlanner().for_workspace(
