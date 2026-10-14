@@ -46,7 +46,6 @@ class GuiApplication(QObject):
         self._calculation_history: CalculationHistoryDialog | None = None
 
     def create_workflow_window(self) -> WorkflowWindow:
-        """Return the session's workflow view, creating it lazily."""
         if self._workflow_window is None:
             self._workflow_window = WorkflowWindow(
                 self.controller,
@@ -58,7 +57,6 @@ class GuiApplication(QObject):
         return self._workflow_window
 
     def create_main_window(self) -> MainWindow:
-        """Return the session's expert view, creating it lazily."""
         if self._main_window is None:
             self._main_window = MainWindow(
                 self.controller,
@@ -69,14 +67,12 @@ class GuiApplication(QObject):
         return self._main_window
 
     def _wire_window(self, window: WorkflowWindow | MainWindow) -> None:
-        """Connect application-owned actions exposed by a top-level window."""
         self._wire_result_actions(window)
         window.browser_panel.calculationJobsRequested.connect(
             self.show_calculation_jobs
         )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
-        """Resolve result policy outside widgets and connect explicit user intents."""
         widget = window.result_actions_widget
         if widget is None:
             return
@@ -92,7 +88,7 @@ class GuiApplication(QObject):
             )
             widget.set_model(
                 present_result_tree(
-                    self.controller.result_store,
+                    self.controller.result_history,
                     current_structure_id=self.controller.structure_id,
                     current_state_id=self.controller.state_id,
                     selected_result_id=selected,
@@ -103,10 +99,10 @@ class GuiApplication(QObject):
             refresh_result_context(selected_result_id=result_id)
 
         def use_result_state(result_id: int) -> None:
-            store = self.controller.result_store
-            record = store.result(result_id)
+            history = self.controller.result_history
+            record = history.result(result_id)
             action = result_action_availability(
-                store,
+                history,
                 record,
                 current_structure_id=self.controller.structure_id,
                 current_state_id=self.controller.state_id,
@@ -120,8 +116,6 @@ class GuiApplication(QObject):
                     action.expected_potential,
                 )
             except PotentialVersionChanged:
-                # The controller remains the final TOCTOU boundary. If the file
-                # changed after policy evaluation, refresh the offered action.
                 refresh_result_context(selected_result_id=result_id)
 
         widget.selectionRequested.connect(select_result)
@@ -142,15 +136,12 @@ class GuiApplication(QObject):
         refresh_result_context()
 
     def show_workflow_window(self) -> None:
-        """Show and activate the workflow view."""
         self._show_window(self.create_workflow_window())
 
     def show_main_window(self) -> None:
-        """Show and activate the expert view."""
         self._show_window(self.create_main_window())
 
     def show_calculation_jobs(self) -> None:
-        """Show and activate the application-owned calculation-job browser."""
         if self._calculation_history is None:
             dialog = CalculationHistoryDialog()
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
