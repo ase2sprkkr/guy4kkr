@@ -1,14 +1,10 @@
-"""Tests for the persistent ASE2SPRKKR run-history adapter."""
+"""Tests for the persistent ASE2SPRKKR run-history source."""
 from __future__ import annotations
 
 from enum import Enum
 from types import SimpleNamespace
 
-from guy4ase.gui.application.persistent_jobs import (
-    PersistentJob,
-    PersistentJobRecovery,
-    PersistentJobSource,
-)
+from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
 
 class _State(str, Enum):
@@ -35,6 +31,36 @@ def _record(*, state=_State.RUNNING, endpoint=None, reference=None, finished_at=
     )
 
 
+def _finishing_record():
+    return _record(
+        state=_State.FINISHING,
+        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+        reference=SimpleNamespace(
+            executor="local",
+            native_id="1234567890abcdef",
+            computer=None,
+        ),
+    )
+
+
+class _Store:
+    def __init__(self, records=()):
+        self.records = {str(record.id): record for record in records}
+        self.runs_calls = 0
+        self.get_calls = []
+
+    def runs(self):
+        self.runs_calls += 1
+        return tuple(self.records.values())
+
+    def get(self, job_id):
+        self.get_calls.append(job_id)
+        try:
+            return self.records[str(job_id)]
+        except KeyError as exc:
+            raise FileNotFoundError(job_id) from exc
+
+
 def test_persistent_job_maps_endpoint_metadata():
     record = _record(
         endpoint=SimpleNamespace(
@@ -43,7 +69,6 @@ def test_persistent_job_maps_endpoint_metadata():
             psij_backend="slurm",
         )
     )
-
     job = PersistentJob.from_run_record(record)
 
     assert job.state == "running"
@@ -61,7 +86,6 @@ def test_persistent_job_maps_stable_finished_at_independently_of_updated_at():
         finished_at="2026-10-13T06:20:00+00:00",
     )
     record.updated_at = "2026-10-13T08:45:00+00:00"
-
     job = PersistentJob.from_run_record(record)
 
     assert job.finished_at == "2026-10-13T06:20:00+00:00"
@@ -77,10 +101,7 @@ def test_active_reconnectable_job_is_attachable():
             computer=None,
         ),
     )
-
-    job = PersistentJob.from_run_record(record)
-
-    assert job.attachable
+    assert PersistentJob.from_run_record(record).attachable
 
 
 def test_legacy_pid_only_local_job_is_not_attachable():
@@ -92,7 +113,6 @@ def test_legacy_pid_only_local_job_is_not_attachable():
             computer=None,
         ),
     )
-
     assert not PersistentJob.from_run_record(record).attachable
 
 
@@ -104,7 +124,6 @@ def test_active_legacy_job_without_endpoint_is_not_attachable_after_restart():
             computer="cluster.example",
         )
     )
-
     assert not PersistentJob.from_run_record(record).attachable
 
 
@@ -113,7 +132,6 @@ def test_persistent_job_uses_legacy_reference_when_endpoint_is_missing():
         state=_State.FINISHED,
         reference=SimpleNamespace(executor="slurm", computer="login01", native_id="42"),
     )
-
     job = PersistentJob.from_run_record(record)
 
     assert job.target == "slurm · login01"
@@ -121,75 +139,84 @@ def test_persistent_job_uses_legacy_reference_when_endpoint_is_missing():
     assert not job.attachable
 
 
-def test_source_lists_without_requiring_newest_keyword():
+def test_source_initial_load_populates_cache_once():
     record = _record()
-
-    class Store:
-        def __init__(self):
-            self.calls = 0
-
-        def runs(self):
-            self.calls += 1
-            return (record,)
-
-    store = Store()
+    store = _Store((record,))
     source = PersistentJobSource(SimpleNamespace(store=store))
 
-    jobs = source.jobs()
+    assert store.runs_calls == 1
+    assert tuple(job.id for job in source.jobs()) == (record.id,)
+    assert source.jobs()[0] is source.job(record.id)
+    assert store.runs_calls == 1
 
-    assert store.calls == 1
-    assert tuple(job.id for job in jobs) == (record.id,)
 
-
-def test_source_refreshes_then_reloads_metadata():
+def test_job_changed_reloads_one_authoritative_record_and_notifies():
     record = _record()
+    store = _Store((record,))
+    source = PersistentJobSource(SimpleNamespace(store=store))
+    changes = []
+    source.subscribe(changes.append)
 
-    class Store:
-        @staticmethod
-        def runs():
-            return (record,)
+    updated = _record(state=_State.FINISHED, finished_at="2026-10-13T07:00:00+00:00")
+    updated.updated_at = "2026-10-13T07:00:00+00:00"
+    store.records[record.id] = updated
+
+    job = source.job_changed(record.id)
+
+    assert store.get_calls == [record.id]
+    assert job is source.job(record.id)
+    assert job.state == "finished"
+    assert changes == [record.id]
+
+
+def test_source_refreshes_backend_then_reloads_metadata():
+    record = _record()
+    store = _Store((record,))
 
     class Manager:
-        store = Store()
-
         def __init__(self):
+            self.store = store
             self.refresh_calls = 0
 
         def refresh(self):
             self.refresh_calls += 1
+            updated = _record(
+                state=_State.FINISHED,
+                finished_at="2026-10-13T07:00:00+00:00",
+            )
+            updated.updated_at = "2026-10-13T07:00:00+00:00"
+            self.store.records[updated.id] = updated
 
     manager = Manager()
     source = PersistentJobSource(manager)
+    changes = []
+    source.subscribe(changes.append)
 
     jobs = source.refresh()
 
     assert manager.refresh_calls == 1
-    assert jobs[0].id == record.id
+    assert jobs[0].state == "finished"
+    assert changes == [record.id]
 
 
 def test_source_attach_forwards_output_listener_atomically():
     record = _record()
+    store = _Store((record,))
     replay = []
     runner = object()
 
-    class Store:
-        @staticmethod
-        def runs():
-            return (record,)
-
     class Manager:
-        store = Store()
+        def __init__(self):
+            self.store = store
 
         @staticmethod
         def attach(job_id, *, output_listener=None):
             assert job_id == record.id
-            assert output_listener is not None
             output_listener("already written\n", "out")
             return runner
 
     source = PersistentJobSource(Manager())
 
-    assert source.supports_attach
     assert source.attach(
         record.id,
         output_listener=lambda text, kind: replay.append((text, kind)),
@@ -197,81 +224,58 @@ def test_source_attach_forwards_output_listener_atomically():
     assert replay == [("already written\n", "out")]
 
 
-def test_source_attach_forwards_completion_callback():
-    record = _record()
-    callback = object()
+def test_source_owns_finishing_recovery_until_completion():
+    record = _finishing_record()
+    store = _Store((record,))
+    callbacks = {}
     runner = object()
-
-    class Store:
-        @staticmethod
-        def runs():
-            return (record,)
 
     class Manager:
-        store = Store()
-
-        @staticmethod
-        def attach(job_id, *, callback=None, output_listener=None):
-            assert job_id == record.id
-            assert callback is expected_callback
-            return runner
-
-    expected_callback = callback
-    source = PersistentJobSource(Manager())
-
-    assert source.attach(record.id, callback=callback) is runner
-
-
-def _finishing_job():
-    return PersistentJob.from_run_record(
-        _record(
-            state=_State.FINISHING,
-            endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
-            reference=SimpleNamespace(
-                executor="local",
-                native_id="1234567890abcdef",
-                computer=None,
-            ),
-        )
-    )
-
-
-def test_recovery_retains_finishing_runner_until_completion():
-    job = _finishing_job()
-    runner = object()
-    callbacks = {}
-
-    class Source:
-        supports_attach = True
+        def __init__(self):
+            self.store = store
 
         @staticmethod
         def attach(job_id, *, callback=None, output_listener=None):
             callbacks[job_id] = callback
             return runner
 
-    recovery = PersistentJobRecovery(Source())
-    recovery.recover_finishing((job,))
+    source = PersistentJobSource(Manager())
 
-    assert recovery.active_ids == (job.id,)
-    callbacks[job.id](object())
-    assert recovery.active_ids == ()
+    assert source.active_recovery_ids == (record.id,)
+    finished = _record(
+        state=_State.FINISHED,
+        finished_at="2026-10-13T07:00:00+00:00",
+    )
+    finished.updated_at = "2026-10-13T07:00:00+00:00"
+    store.records[record.id] = finished
+    callbacks[record.id](object())
+
+    assert source.active_recovery_ids == ()
+    assert source.job(record.id).state == "finished"
+    assert store.get_calls == [record.id]
 
 
-def test_recovery_handles_synchronous_completion_without_stale_runner():
-    job = _finishing_job()
+def test_source_recovery_handles_synchronous_completion_without_stale_runner():
+    record = _finishing_record()
+    finished = _record(
+        state=_State.FINISHED,
+        finished_at="2026-10-13T07:00:00+00:00",
+    )
+    store = _Store((record,))
 
-    class Source:
-        supports_attach = True
+    class Manager:
+        def __init__(self):
+            self.store = store
 
-        @staticmethod
-        def attach(job_id, *, callback=None, output_listener=None):
+        def attach(self, job_id, *, callback=None, output_listener=None):
+            self.store.records[job_id] = finished
             callback(object())
             return object()
 
-    recovery = PersistentJobRecovery(Source())
-    recovery.recover_finishing((job,))
+    source = PersistentJobSource(Manager())
 
-    assert recovery.active_ids == ()
+    assert source.active_recovery_ids == ()
+    assert source.job(record.id).state == "finished"
 
 
 def test_incomplete_manager_becomes_empty_source():

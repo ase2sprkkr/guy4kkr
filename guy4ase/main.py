@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -25,6 +26,7 @@ class GuiApplication(QObject):
         workspace: WorkspaceState | None = None,
         recent_files_path: str | Path | None = None,
         settings_path: str | Path | None = None,
+        persistent_jobs: PersistentJobSource | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -38,6 +40,9 @@ class GuiApplication(QObject):
             Path(settings_path) if settings_path is not None else None
         )
         self.settings.load()
+        self.persistent_jobs = (
+            persistent_jobs if persistent_jobs is not None else PersistentJobSource()
+        )
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._calculation_history: CalculationHistoryDialog | None = None
@@ -111,7 +116,7 @@ class GuiApplication(QObject):
     def show_calculation_jobs(self) -> None:
         """Show and activate the application-owned calculation-job browser."""
         if self._calculation_history is None:
-            dialog = CalculationHistoryDialog()
+            dialog = CalculationHistoryDialog(self.persistent_jobs)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(self._calculation_history_closed)
             self._calculation_history = dialog
