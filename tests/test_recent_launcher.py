@@ -1,4 +1,6 @@
-from guy4ase.gui.widgets.recent_launcher import recent_launch
+import pytest
+
+from guy4ase.gui.application.recent_presentation import RecentLaunch, recent_launch
 
 
 class RecentHistory:
@@ -57,3 +59,8 @@ def test_recent_launch_falls_back_when_last_kind_is_empty():
     assert launch is not None
     assert launch.kind == "structure"
     assert launch.path == "structure.cif"
+
+
+def test_recent_launch_rejects_input_history_kind():
+    with pytest.raises(ValueError, match="structure.*output"):
+        RecentLaunch("input", "input.inp")  # type: ignore[arg-type]
