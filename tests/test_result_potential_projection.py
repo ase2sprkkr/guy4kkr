@@ -10,8 +10,13 @@ from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_capture import (
+    capture_result,
+    capture_structure,
+    resolve_potential_version,
+)
+from guy4ase.gui.application.result_history import ResultHistory
 from guy4ase.gui.application.result_presentation import present_result_tree
-from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -37,6 +42,21 @@ def _result(task: str, name: str):
     )
 
 
+def _capture(result, parameters=object(), *, output_path=None, potential_path=None):
+    return capture_result(
+        result,
+        input_parameters=parameters,
+        output_path=output_path,
+        potential_path=potential_path,
+    )
+
+
+def _add_structure(history: ResultHistory, atoms=Atoms("Fe"), potential_path=None):
+    return history.add_structure_state(
+        capture_structure(atoms, potential_path=potential_path)
+    )
+
+
 def _widget() -> ResultActionsWidget:
     return ResultActionsWidget(
         lambda _value, _action: None,
@@ -44,10 +64,10 @@ def _widget() -> ResultActionsWidget:
     )
 
 
-def _set_store(widget: ResultActionsWidget, store: ResultStore) -> None:
+def _set_history(widget: ResultActionsWidget, history: ResultHistory) -> None:
     widget.set_model(
         present_result_tree(
-            store,
+            history,
             current_structure_id=None,
             current_state_id=None,
         )
@@ -55,45 +75,45 @@ def _set_store(widget: ResultActionsWidget, store: ResultStore) -> None:
 
 
 def test_empty_spheres_breaks_potential_source_provenance():
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    scf = store.add_result(
-        _result("scf", "scf"),
+    history = ResultHistory()
+    structure_id, root = _add_structure(history)
+    scf_output = capture_structure(Atoms("Fe"), potential_path="Fe.pot")
+    scf = history.add_result(
+        _capture(_result("scf", "scf")),
         structure_id=structure_id,
         input_state_id=root,
-        input_parameters=object(),
         directory="run",
-        output_atoms=Atoms("Fe"),
-        output_potential_path="Fe.pot",
+        output_structure_snapshot=scf_output.structure_snapshot,
+        output_potential_path=scf_output.potential_path,
+        output_potential_version=scf_output.potential_version,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
-    assert store.potential_source_result(scf_state) is None
+    assert history.potential_source_result(scf_state) is None
 
-    empty_spheres = store.add_result(
-        EmptySpheresResult(found=1),
+    empty_output = capture_structure(Atoms("FeX"), potential_path=None)
+    empty_spheres = history.add_result(
+        _capture(EmptySpheresResult(found=1), {}),
         structure_id=structure_id,
         input_state_id=scf_state,
-        input_parameters={},
         directory="run",
-        output_atoms=Atoms("FeX"),
+        output_structure_snapshot=empty_output.structure_snapshot,
         output_potential_path=None,
     )
     empty_state = empty_spheres.output_state_id
     assert empty_state is not None
-    assert store.potential_source_result(empty_state) is None
+    assert history.potential_source_result(empty_state) is None
 
-    dos = store.add_result(
-        _result("dos", "dos"),
+    dos = history.add_result(
+        _capture(_result("dos", "dos")),
         structure_id=structure_id,
         input_state_id=empty_state,
-        input_parameters=object(),
         directory="run",
     )
 
     _application = QApplication.instance() or QApplication([])
     widget = _widget()
-    _set_store(widget, store)
+    _set_history(widget, history)
     structure = widget._selector.topLevelItem(0)
     labels = [structure.child(i).text(0).split(" — ", 1)[0] for i in range(3)]
     assert labels == ["SCF", "Empty spheres", "DOS"]
@@ -108,61 +128,64 @@ def test_explicit_potential_replacement_does_not_inherit_old_source(tmp_path):
     external = tmp_path / "external.pot"
     external.write_text("external")
 
-    store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    scf = store.add_result(
-        _result("scf", "scf"),
+    history = ResultHistory()
+    structure_id, root = _add_structure(history)
+    scf_output = capture_structure(Atoms("Fe"), potential_path=first)
+    scf = history.add_result(
+        _capture(_result("scf", "scf")),
         structure_id=structure_id,
         input_state_id=root,
-        input_parameters=object(),
         directory="run",
-        output_atoms=Atoms("Fe"),
-        output_potential_path=str(first),
+        output_structure_snapshot=scf_output.structure_snapshot,
+        output_potential_path=scf_output.potential_path,
+        output_potential_version=scf_output.potential_version,
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
-    assert store.potential_source_result(scf_state) is scf
+    assert history.potential_source_result(scf_state) is scf
 
-    replacement = store.new_child_state(
+    replacement = history.add_child_state(
         scf_state,
         potential_path=str(external),
+        potential_version=resolve_potential_version(external),
     )
 
-    assert store.state(replacement).potential_path == str(external)
-    assert store.potential_source_result(replacement) is None
+    assert history.state(replacement).potential_path == str(external)
+    assert history.potential_source_result(replacement) is None
 
 
 def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path):
     _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
+    history = ResultHistory()
     directory = str(tmp_path / "imported")
     potential = Path(directory) / "Fe.pot"
     potential.parent.mkdir()
     potential.write_text("potential")
-    imported_scf = store.add_external_result(
-        _result("scf", "imported"),
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
+    structure = capture_structure(Atoms("Fe"), potential_path=potential)
+    imported_scf = history.add_external_result(
+        _capture(
+            _result("scf", "imported"),
+            output_path=Path(directory) / "scf.out",
+            potential_path=potential,
+        ),
+        structure=structure,
         directory=directory,
-        output_path=Path(directory) / "scf.out",
-        potential_path=potential,
         produces_state=True,
     )
     state_id = imported_scf.output_state_id
     assert state_id is not None
     assert imported_scf.imported
-    assert store.potential_source_result(state_id) is imported_scf
+    assert history.potential_source_result(state_id) is imported_scf
 
-    dos = store.add_result(
-        _result("dos", "native"),
+    dos = history.add_result(
+        _capture(_result("dos", "native")),
         structure_id=imported_scf.structure_id,
         input_state_id=state_id,
-        input_parameters=object(),
         directory="new-run",
     )
 
     widget = _widget()
-    _set_store(widget, store)
+    _set_history(widget, history)
 
     assert widget._selector.topLevelItemCount() == 1
     directory_item = widget._selector.topLevelItem(0)
@@ -178,44 +201,41 @@ def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path)
 
 def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
     _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
+    history = ResultHistory()
     directory = str(tmp_path / "imported")
     potential = Path(directory) / "Fe.pot"
     potential.parent.mkdir()
     potential.write_text("potential")
-    imported_scf = store.add_external_result(
-        _result("scf", "imported"),
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
+    structure = capture_structure(Atoms("Fe"), potential_path=potential)
+    imported_scf = history.add_external_result(
+        _capture(
+            _result("scf", "imported"),
+            output_path=Path(directory) / "scf.out",
+            potential_path=potential,
+        ),
+        structure=structure,
         directory=directory,
-        output_path=Path(directory) / "scf.out",
-        potential_path=potential,
         produces_state=True,
     )
     imported_state = imported_scf.output_state_id
     assert imported_state is not None
-    store.add_result(
-        _result("dos", "native-from-import"),
+    history.add_result(
+        _capture(_result("dos", "native-from-import")),
         structure_id=imported_scf.structure_id,
         input_state_id=imported_state,
-        input_parameters=object(),
         directory="new-run",
     )
 
-    visible_structure, visible_state = store.new_structure_state(
-        Atoms("Fe"),
-        potential_path=None,
-    )
-    store.add_result(
-        _result("dos", "visible"),
+    visible_structure, visible_state = _add_structure(history)
+    history.add_result(
+        _capture(_result("dos", "visible")),
         structure_id=visible_structure,
         input_state_id=visible_state,
-        input_parameters=object(),
         directory="visible-run",
     )
 
     widget = _widget()
-    _set_store(widget, store)
+    _set_history(widget, history)
 
     assert widget._selector.topLevelItemCount() == 2
     assert widget._selector.topLevelItem(0).text(0) == "Fe"
