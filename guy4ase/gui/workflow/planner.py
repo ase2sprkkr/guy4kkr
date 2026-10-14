@@ -4,7 +4,6 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Any, Protocol
 
-from guy4ase.gui.application.workspace_actions import EmptySpheresAction
 from guy4ase.gui.input_parameters.tasks import (
     WorkflowStage,
     guided_task_definition,
@@ -48,7 +47,7 @@ class WorkflowWorkspace(Protocol):
 
     def is_scf_converged(self) -> bool: ...
 
-    def empty_spheres_action(self) -> EmptySpheresAction | None: ...
+    def empty_spheres_action(self) -> Enum | None: ...
 
     def structure_change_requires_scf_restart(self) -> bool: ...
 
@@ -233,7 +232,7 @@ class WorkflowPlanner:
                         UpdateEmptySpheres(),
                         (
                             "Recalculate Empty Spheres"
-                            if empty_spheres is EmptySpheresAction.RECALCULATE
+                            if empty_spheres.name == "RECALCULATE"
                             else "Add Empty Spheres"
                         ),
                         "Find empty spheres explicitly before the SCF calculation",
