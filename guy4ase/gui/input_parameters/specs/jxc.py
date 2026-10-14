@@ -14,7 +14,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     jxc_radius = field("TASK", "CLURAD", "Interaction cluster radius:", "real", minimum=0., maximum=100., step=.1)
     dmi = field("TASK", "DMI", "Dzyaloshinskii-Moriya interaction:", "boolean")
     jxc_ne = main_energy_mesh_field("NE", "Energy points:", "integer", minimum=1, maximum=10000)
-    jxc = TaskDialogSpec("jxc", "jxc", "JXC Calculation Setup", (
+    jxc = TaskDialogSpec("JXC Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common JXC settings", (
             mirror(jxc_radius), mirror(dmi), mirror(jxc_ne),
         )),), QUICK_COLOR, quick=True),
