@@ -111,6 +111,11 @@ class MainWindow(QMainWindow):
         """Return the result browser owned by this window."""
         return self._result_actions_widget
 
+    @property
+    def browser_panel(self) -> BrowserPanel:
+        """Return the session-independent browser entry points."""
+        return self._browser_panel
+
     def _connect_workspace(self) -> None:
         """Render controller changes without moving view logic into the model."""
         self.controller.structureChanged.connect(

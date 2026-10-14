@@ -3,13 +3,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QObject
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.dialogs.calculation_history import CalculationHistoryDialog
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.workflow_window import WorkflowWindow
 from guy4ase.gui.flows import calculation as calculation_flow
@@ -39,6 +40,7 @@ class GuiApplication(QObject):
         self.settings.load()
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
+        self._calculation_history: CalculationHistoryDialog | None = None
 
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
@@ -49,7 +51,7 @@ class GuiApplication(QObject):
                 open_expert=self.show_main_window,
                 settings=self.settings,
             )
-            self._wire_result_actions(self._workflow_window)
+            self._wire_window(self._workflow_window)
         return self._workflow_window
 
     def create_main_window(self) -> MainWindow:
@@ -60,8 +62,15 @@ class GuiApplication(QObject):
                 self.recent_files,
                 self.settings,
             )
-            self._wire_result_actions(self._main_window)
+            self._wire_window(self._main_window)
         return self._main_window
+
+    def _wire_window(self, window: WorkflowWindow | MainWindow) -> None:
+        """Connect application-owned actions exposed by a top-level window."""
+        self._wire_result_actions(window)
+        window.browser_panel.calculationJobsRequested.connect(
+            self.show_calculation_jobs
+        )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
         """Connect explicit result actions and one authoritative result store."""
@@ -99,8 +108,20 @@ class GuiApplication(QObject):
         """Show and activate the expert view."""
         self._show_window(self.create_main_window())
 
+    def show_calculation_jobs(self) -> None:
+        """Show and activate the application-owned calculation-job browser."""
+        if self._calculation_history is None:
+            dialog = CalculationHistoryDialog()
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(self._calculation_history_closed)
+            self._calculation_history = dialog
+        self._show_window(self._calculation_history)
+
+    def _calculation_history_closed(self, *_args) -> None:
+        self._calculation_history = None
+
     @staticmethod
-    def _show_window(window: WorkflowWindow | MainWindow) -> None:
+    def _show_window(window: QWidget) -> None:
         window.show()
         window.raise_()
         window.activateWindow()

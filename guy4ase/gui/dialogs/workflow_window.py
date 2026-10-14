@@ -101,6 +101,11 @@ class WorkflowWindow(QMainWindow):
         """Return the result browser owned by this window."""
         return self._result_actions_widget
 
+    @property
+    def browser_panel(self) -> BrowserPanel:
+        """Return the session-independent browser entry points."""
+        return self._browser_panel
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
