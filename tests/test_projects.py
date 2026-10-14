@@ -144,6 +144,42 @@ def test_delete_rejects_root_and_project_with_children(tmp_path):
         repository.project(child.id)
 
 
+def test_repository_publishes_local_changes(tmp_path):
+    repository = ProjectRepository(tmp_path / "projects")
+    changed = []
+    repository.subscribe(changed.append)
+
+    root = repository.create("Root")
+    child = repository.create("Child", parent_id=root.id)
+    child = repository.save(
+        child.rename("Renamed"), expected_generation=child.generation
+    )
+    repository.delete(child.id, expected_generation=child.generation)
+
+    assert changed == [root.id, child.id, child.id, child.id]
+
+
+def test_refresh_publishes_external_project_change(tmp_path):
+    directory = tmp_path / "projects"
+    first = ProjectRepository(directory)
+    project = first.create("Original")
+    first.projects()  # establish the snapshot seen by this application instance
+    changed = []
+    first.subscribe(changed.append)
+
+    second = ProjectRepository(directory)
+    second_snapshot = second.project(project.id)
+    second.save(
+        second_snapshot.rename("Elsewhere"),
+        expected_generation=second_snapshot.generation,
+    )
+
+    refreshed = first.refresh()
+
+    assert refreshed[0].name == "Elsewhere"
+    assert changed == [project.id]
+
+
 def test_project_lock_serializes_generation_check_and_write(tmp_path):
     if multiprocessing.get_start_method(allow_none=True) == "spawn":
         pytest.skip("lock timing test relies on inherited process primitives")

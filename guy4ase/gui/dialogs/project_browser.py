@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -33,6 +33,10 @@ _PROJECT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _UNASSIGNED = "__unassigned__"
 
 
+class _RepositorySignals(QObject):
+    changed = pyqtSignal(str)
+
+
 class ProjectBrowserDialog(QDialog):
     """Browse and edit project-owned persistent-run references."""
 
@@ -53,6 +57,13 @@ class ProjectBrowserDialog(QDialog):
         self._projects: tuple[Project, ...] = ()
         self._projects_by_id: dict[str, Project] = {}
         self._selected_project_id: str | None = None
+
+        self._repository_signals = _RepositorySignals(self)
+        self._repository_signals.changed.connect(self._repository_changed)
+        self._unsubscribe_projects = self._repository.subscribe(
+            self._repository_signals.changed.emit
+        )
+        self.destroyed.connect(lambda *_args: self._unsubscribe_projects())
 
         root = QVBoxLayout(self)
         self.project_notice = QLabel(self)
@@ -104,7 +115,7 @@ class ProjectBrowserDialog(QDialog):
         project_layout.addLayout(membership_buttons)
 
         self.refresh_projects_button = QPushButton("Refresh projects", project_panel)
-        self.refresh_projects_button.clicked.connect(self.reload_projects)
+        self.refresh_projects_button.clicked.connect(self._refresh_projects)
         project_layout.addWidget(self.refresh_projects_button)
 
         self.jobs = PersistentJobsWidget(job_source, splitter)
@@ -114,6 +125,18 @@ class ProjectBrowserDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 1100])
 
+        self.reload_projects()
+
+    @pyqtSlot(str)
+    def _repository_changed(self, _project_id: str) -> None:
+        self.reload_projects()
+
+    def _refresh_projects(self) -> None:
+        try:
+            self._repository.refresh()
+        except (ProjectRepositoryError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Project Refresh Failed", str(exc))
+            return
         self.reload_projects()
 
     def reload_projects(self) -> None:
@@ -137,6 +160,7 @@ class ProjectBrowserDialog(QDialog):
     def _refresh_project_projection(self) -> None:
         self._populate_project_tree()
         self._apply_project_selection()
+        self._refresh_action_availability()
 
     def _populate_project_tree(self) -> None:
         previous = self._selected_project_id
@@ -202,7 +226,6 @@ class ProjectBrowserDialog(QDialog):
                 )
         finally:
             self.project_tree.blockSignals(False)
-        self._refresh_action_availability()
 
     def _project_selection_changed(
         self,

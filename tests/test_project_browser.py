@@ -156,3 +156,25 @@ def test_job_source_change_recomputes_project_projection(tmp_path):
 
     assert _find_project_item(dialog, "Unassigned").text(1) == "2"
     dialog.close()
+
+
+def test_repository_refresh_updates_open_project_browser(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    directory = tmp_path / "projects"
+    repository = ProjectRepository(directory)
+    project = repository.create("Original")
+    source = _JobSource(())
+    dialog = ProjectBrowserDialog(repository, source)
+
+    second = ProjectRepository(directory)
+    snapshot = second.project(project.id)
+    second.save(
+        snapshot.rename("Changed elsewhere"),
+        expected_generation=snapshot.generation,
+    )
+
+    repository.refresh()
+    application.processEvents()
+
+    assert _find_project_item(dialog, "Changed elsewhere").text(0) == "Changed elsewhere"
+    dialog.close()
