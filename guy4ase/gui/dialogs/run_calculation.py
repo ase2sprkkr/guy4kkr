@@ -6,12 +6,13 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from guy4ase.gui.application.execution_cancellation import RunCancellation
 from guy4ase.gui.application.sprkkr_execution import (
     ExecutionCancelled,
     SprkkrExecution,
 )
 from guy4ase.gui.application.workspace_controller import CalculationRequest
-from guy4ase.gui.dialogs.run_monitor import RunCancellation, RunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
 
 
 logger = logging.getLogger(__name__)

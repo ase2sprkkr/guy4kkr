@@ -5,25 +5,17 @@ import asyncio
 import logging
 import warnings
 from dataclasses import replace
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 from ase2sprkkr.execution import MpiNotFoundWarning
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 
+from guy4ase.gui.application.execution_cancellation import Cancellation
 from guy4ase.gui.application.result_loading import LoadedResult, load_result
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
 
 logger = logging.getLogger(__name__)
-
-
-class Cancellation(Protocol):
-    """Cancellation state required by :class:`SprkkrExecution`."""
-
-    @property
-    def requested(self) -> bool: ...
-
-    def register(self, runner: Any) -> bool: ...
 
 
 class ExecutionCancelled(Exception):

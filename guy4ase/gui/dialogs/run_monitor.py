@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from threading import Lock, Thread
+from threading import Thread
 from typing import Any
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.execution_cancellation import RunCancellation
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,54 +28,6 @@ logger = logging.getLogger(__name__)
 def state_label(state: Any) -> str:
     value = getattr(state, "value", state)
     return str(value).replace("_", " ").capitalize()
-
-
-class RunCancellation:
-    """Bridge a GUI stop request to a runner that may not exist yet."""
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._requested = False
-        self._runner: Any | None = None
-
-    @property
-    def requested(self) -> bool:
-        with self._lock:
-            return self._requested
-
-    @property
-    def runner(self) -> Any | None:
-        with self._lock:
-            return self._runner
-
-    def register(self, runner: Any) -> bool:
-        with self._lock:
-            if self._requested:
-                return False
-            self._runner = runner
-            return True
-
-    @staticmethod
-    def _cancel_runner(runner: Any) -> None:
-        try:
-            runner.cancel()
-        except Exception:  # noqa: BLE001 - backend cancellation boundary
-            logger.exception("Failed to cancel calculation")
-
-    def request(self) -> None:
-        with self._lock:
-            if self._requested:
-                return
-            self._requested = True
-            runner = self._runner
-
-        if runner is not None:
-            Thread(
-                target=self._cancel_runner,
-                args=(runner,),
-                name="run-cancel",
-                daemon=True,
-            ).start()
 
 
 class RunMonitorWindow(QDialog):

@@ -9,12 +9,9 @@ from typing import Any
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget
 
+from guy4ase.gui.application.execution_cancellation import RunCancellation
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
-from guy4ase.gui.dialogs.run_monitor import (
-    RunCancellation,
-    RunMonitorWindow,
-    state_label,
-)
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, state_label
 
 
 logger = logging.getLogger(__name__)
