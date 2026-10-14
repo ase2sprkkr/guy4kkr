@@ -173,6 +173,25 @@ class ResultHistory:
             return None
         return self._results[result_ids[-1]]
 
+    @staticmethod
+    def _validate_captured_structure(captured: CapturedStructure) -> None:
+        version = captured.potential_version
+        path = captured.potential_path
+        snapshot = captured.structure_snapshot
+        if version is None:
+            if path is not None:
+                raise AssertionError("A potential path requires a captured version.")
+            if snapshot is None:
+                raise ValueError("A state without a potential requires a structure snapshot.")
+            return
+        if path is None or Path(path) != version.path:
+            raise AssertionError("Captured potential version does not match potential path.")
+        if version.available:
+            if snapshot is not None:
+                raise AssertionError("A usable potential must be the sole structure authority.")
+        elif snapshot is None:
+            raise ValueError("An unavailable potential requires a structure snapshot.")
+
     def _prepare_structure_state(
         self,
         captured: CapturedStructure,
@@ -181,6 +200,7 @@ class ResultHistory:
         produced_by_result_id: int | None = None,
         potential_source_result_id: int | None = None,
     ) -> _PreparedState:
+        self._validate_captured_structure(captured)
         source_result_id = (
             potential_source_result_id
             if captured.potential_version is not None
@@ -235,7 +255,7 @@ class ResultHistory:
                     raise AssertionError(
                         "A captured potential version requires its potential path."
                     )
-                if resolved_version.path != Path(resolved_path).expanduser().resolve():
+                if Path(resolved_path) != resolved_version.path:
                     raise AssertionError(
                         "Captured potential version does not match potential path."
                     )
