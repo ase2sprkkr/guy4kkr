@@ -54,6 +54,7 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
         output_potential_path=str(potential),
+        produces_potential=True,
     )
     assert scf1.output_state_id is not None
 
@@ -66,9 +67,31 @@ def _make_two_scf_versions(controller, potential, tmp_path):
         directory=str(tmp_path),
         output_atoms=Atoms("Fe"),
         output_potential_path=str(potential),
+        produces_potential=True,
     )
     assert scf2.output_state_id is not None
     return scf1, scf2
+
+
+def test_potential_source_uses_semantics_not_task_name(tmp_path):
+    potential = tmp_path / "semantic.pot"
+    potential.write_text("potential", encoding="utf-8")
+    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    store = controller.result_store
+
+    record = store.add_result(
+        _result("not-scf"),
+        structure_id=controller.structure_id,
+        input_state_id=controller.state_id,
+        input_parameters=None,
+        directory=str(tmp_path),
+        output_atoms=Atoms("Fe"),
+        output_potential_path=str(potential),
+        produces_potential=True,
+    )
+
+    assert record.output_state_id is not None
+    assert store.potential_source_result(record.output_state_id) is record
 
 
 def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
