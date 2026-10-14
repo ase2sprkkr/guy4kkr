@@ -19,6 +19,11 @@ from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.workflow_facts import (
+    EmptySpheresAction,
+    ScfProgress,
+    classify_scf_progress,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
@@ -43,13 +48,6 @@ class DocumentChange(Enum):
 
     APPLIED = auto()
     STALE = auto()
-
-
-class EmptySpheresAction(Enum):
-    """Recommended empty-sphere action for the current workspace draft."""
-
-    ADD = auto()
-    RECALCULATE = auto()
 
 
 class CalculationNotReady(RuntimeError):
@@ -213,6 +211,13 @@ class WorkspaceController(QObject):
 
     def is_scf_converged(self) -> bool:
         return self._workspace.is_scf_converged()
+
+    def scf_progress(self) -> ScfProgress:
+        """Return normalized SCF progress without exposing backend status strings."""
+        return classify_scf_progress(
+            self.scf_status(),
+            converged=self.is_scf_converged(),
+        )
 
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()

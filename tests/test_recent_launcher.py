@@ -1,4 +1,4 @@
-from guy4ase.gui.widgets.recent_launcher import recent_launch
+from guy4ase.gui.application.recent_presentation import recent_launch
 
 
 class RecentHistory:
