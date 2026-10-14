@@ -103,7 +103,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     nk2 = field("TASK", "NK2", "Points along K2:", "integer", minimum=1, maximum=100000,
                 nullable=True, visible_when=kk_mode, required_when=kk_mode)
     physical, kkr = _bsf_pages(is_2d)
-    return TaskDialogSpec("bsf", "bsf", "BSF Calculation Setup", (
+    return TaskDialogSpec("BSF Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common BSF settings", (
             mirror(bsf_ne), mirror(bsf_emin), mirror(bsf_emax), mirror(bsf_im),
             mirror(kpath), mirror(nk), mirror(nk1), mirror(nk2),
