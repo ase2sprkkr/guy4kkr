@@ -34,6 +34,10 @@ from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
+from guy4ase.gui.input_parameters.specs.registry import (
+    WorkflowStage,
+    workflow_task_definitions,
+)
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.gui.style import (
@@ -83,9 +87,7 @@ class WorkflowWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
-        manage_window_geometry(
-            self, "workflow", default_size=(1120, 700)
-        )
+        manage_window_geometry(self, "workflow", default_size=(1120, 700))
         self.controller = controller
         self.recent_history = recent_files
         self.settings = settings
@@ -283,9 +285,7 @@ class WorkflowWindow(QMainWindow):
                 self.palette(), self.palette().color(QPalette.ColorRole.Highlight)
             )
         )
-        side_layout.addWidget(
-            expert_box, alignment=Qt.AlignmentFlag.AlignBottom
-        )
+        side_layout.addWidget(expert_box, alignment=Qt.AlignmentFlag.AlignBottom)
         splitter.addWidget(side)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -312,8 +312,7 @@ class WorkflowWindow(QMainWindow):
         layout.setSpacing(SPACE_SM)
         display_title = (
             "Create derived structure"
-            if title == self._GROUP_CREATE
-            and self.controller.atoms is not None
+            if title == self._GROUP_CREATE and self.controller.atoms is not None
             else title
         )
         label = QLabel(display_title, group)
@@ -324,9 +323,7 @@ class WorkflowWindow(QMainWindow):
 
         position = sum(
             group_title in self._action_group_layouts
-            for group_title in self._ACTION_GROUPS[
-                :self._ACTION_GROUPS.index(title)
-            ]
+            for group_title in self._ACTION_GROUPS[:self._ACTION_GROUPS.index(title)]
         )
         self._actions_layout.insertWidget(position, group)
         self._action_group_layouts[title] = layout
@@ -414,8 +411,14 @@ class WorkflowWindow(QMainWindow):
         self._clear_actions()
         atoms = self.controller.atoms
         if atoms is None:
-            self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
-            self._add_action("Create a 3D Structure", "Build a periodic bulk crystal", self._create_3d)
+            self._subtitle.setText(
+                "Start by creating a new atomic structure or loading an existing one."
+            )
+            self._add_action(
+                "Create a 3D Structure",
+                "Build a periodic bulk crystal",
+                self._create_3d,
+            )
             self._add_action(
                 "Create Structure from Prototype Database",
                 "Start from a crystallographic structure prototype",
@@ -426,17 +429,25 @@ class WorkflowWindow(QMainWindow):
                 "Search an online crystallographic database",
                 self._download_structure,
                 group=self._GROUP_LOAD,
-                category='load',
+                category="load",
                 icon=QStyle.StandardPixmap.SP_ArrowDown,
             )
-            self._add_action("Create a 2D Surface", "Build a surface with vacuum on one side", self._create_surface)
-            self._add_action("Create a 2D Structure", "Build an interface or transitional layer", self._create_transition)
+            self._add_action(
+                "Create a 2D Surface",
+                "Build a surface with vacuum on one side",
+                self._create_surface,
+            )
+            self._add_action(
+                "Create a 2D Structure",
+                "Build an interface or transitional layer",
+                self._create_transition,
+            )
             self._add_action(
                 "Load a Structure",
                 "Open a supported atomic structure file",
                 self._load_structure,
                 group=self._GROUP_LOAD,
-                category='load',
+                category="load",
                 icon=QStyle.StandardPixmap.SP_DialogOpenButton,
             )
             self._add_action(
@@ -444,7 +455,7 @@ class WorkflowWindow(QMainWindow):
                 "Add a completed calculation to the result history",
                 self._load_output,
                 group=self._GROUP_LOAD,
-                category='load',
+                category="load",
                 icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
             )
             self._add_recent_load_action()
@@ -468,7 +479,9 @@ class WorkflowWindow(QMainWindow):
                 status, status if status is not None else "not converged"
             )
         )
-        self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
+        self._subtitle.setText(
+            f"Current structure: {formula}  •  SCF status: {status_text}"
+        )
 
         self._add_action(
             "Visualize Structure",
@@ -495,13 +508,15 @@ class WorkflowWindow(QMainWindow):
                     "Find empty spheres explicitly before the SCF calculation",
                     self._update_empty_spheres,
                     group=self._GROUP_CALCULATE,
-                    category='structure',
-                    icon='run-build-clean.svg',
+                    category="structure",
+                    icon="run-build-clean.svg",
                 )
 
             if status in stage_names:
                 scf_label = "Continue SCF"
-                scf_description = f"Resume from {stage_names[status]} using the current potential"
+                scf_description = (
+                    f"Resume from {stage_names[status]} using the current potential"
+                )
             else:
                 scf_label = "Converge SCF"
                 scf_description = (
@@ -509,33 +524,25 @@ class WorkflowWindow(QMainWindow):
                     if structure_kind == "2d"
                     else "Prepare and run a self-consistent calculation"
                 )
-            if self.controller.can_run_task("scf"):
-                self._add_action(
-                    scf_label,
-                    scf_description,
-                    lambda: self._prepare_task("scf"),
-                    group=self._GROUP_CALCULATE,
-                    category='calculation',
-                    icon='system-run.svg',
-                )
-
-        for task, label, description in (
-            ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
-            ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
-            ("dos", "Calculate DOS", "Electronic density of states"),
-            ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
-            ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
-        ):
-            if not self.controller.can_run_task(task):
-                continue
             self._add_action(
-                label,
-                description,
-                lambda _checked=False, name=task: self._prepare_task(name),
+                scf_label,
+                scf_description,
+                lambda: self._prepare_task("scf"),
                 group=self._GROUP_CALCULATE,
-                category='calculation',
-                icon='system-run.svg',
+                category="calculation",
+                icon="system-run.svg",
             )
+
+        if converged:
+            for definition in workflow_task_definitions(WorkflowStage.POST_SCF):
+                self._add_action(
+                    definition.workflow_label,
+                    definition.workflow_description,
+                    lambda _checked=False, name=definition.task: self._prepare_task(name),
+                    group=self._GROUP_CALCULATE,
+                    category="calculation",
+                    icon="system-run.svg",
+                )
 
         if converged or (status is not None and status != "START"):
             self._add_action(
@@ -543,8 +550,8 @@ class WorkflowWindow(QMainWindow):
                 "Keep the current potential as starting density for a new SCF sequence",
                 self._use_for_new_calculation,
                 group=self._GROUP_DIFFERENT,
-                category='destructive',
-                icon='run-build-clean.svg',
+                category="destructive",
+                icon="run-build-clean.svg",
             )
 
         if self.controller.can_build_2d():
@@ -564,7 +571,7 @@ class WorkflowWindow(QMainWindow):
             "Choose or load a different structure",
             self._start_over,
             group=self._GROUP_DIFFERENT,
-            category='destructive',
+            category="destructive",
             icon=QStyle.StandardPixmap.SP_BrowserReload,
         )
 
