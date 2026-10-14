@@ -23,7 +23,11 @@ def _loaded_scf(path, *, atoms=None) -> LoadedResult:
         ),
         output_path=path,
         potential_path=None,
-        atoms=atoms if atoms is not None else Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+        atoms=(
+            atoms
+            if atoms is not None
+            else Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+        ),
         potential_error=None,
         directory=str(path.parent),
         input_parameters=None,
@@ -61,7 +65,7 @@ def test_continue_output_activates_state_and_reuses_same_result(tmp_path, monkey
     assert controller.generation == generation
 
 
-def test_restart_after_continue_keeps_scf_action_available(tmp_path, monkeypatch):
+def test_restart_after_continue_resets_effective_scf_status(tmp_path, monkeypatch):
     output = tmp_path / "SCF.out"
     output.write_text("calculation", encoding="utf-8")
     loaded = _loaded_scf(output)
