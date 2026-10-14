@@ -29,6 +29,12 @@ alternate APIs.
   Specs describe layout and presentation only; selection of a layout for a
   backend task belongs to `input_parameters.tasks`, together with task identity
   and workflow policy.
+- `workflow`: Qt-independent Guided workflow planning. It consumes application
+  read contracts and the canonical Guided task registry, and produces an ordered
+  typed presentation plan. It owns Guided recommendation/grouping policy but no
+  Qt rendering or execution permission.
+- `presentation.py`: the small Qt-independent semantic vocabulary shared by
+  planners and renderers, such as action categories and recent-launch values.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
   next calculation; `ResultStore` owns calculation history independently of
@@ -228,7 +234,11 @@ an explicit stored value.
 
 - `guy4ase.main.GuiApplication` is the composition root for shared application
   state and top-level windows.
-- `application` does not import dialogs, widgets, controllers, or flows.
+- `application` does not import dialogs, widgets, controllers, flows, or
+  `workflow`; application state must not depend on Guided presentation policy.
+- `workflow` is Qt-independent and may consume application read contracts,
+  `input_parameters.tasks`, pure presentation values, and physics helpers, but
+  does not import dialogs, widgets, controllers, or flows.
 - `controllers` coordinate reusable Qt workflows and may depend on application
   services, reusable widgets, and leaf dialogs, but reusable widgets do not
   depend back on controllers.
@@ -271,5 +281,7 @@ from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.presentation import ActionCategory, RecentLaunch
+from guy4ase.gui.workflow.planner import WorkflowPlanner
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```
