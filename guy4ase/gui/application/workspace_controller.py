@@ -18,10 +18,7 @@ from guy4ase.gui.application.historical_state import (
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_artifacts import find_existing_external_result
-from guy4ase.gui.application.result_capture import (
-    capture_result,
-    capture_structure,
-)
+from guy4ase.gui.application.result_capture import capture_result, capture_structure
 from guy4ase.gui.application.result_history import ResultHistory, ResultRecord
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
@@ -50,13 +47,32 @@ class DocumentChange(Enum):
     STALE = auto()
 
 
+class EmptySpheresAction(Enum):
+    """Recommended empty-sphere action for the current workspace draft."""
+
+    ADD = auto()
+    RECALCULATE = auto()
+
+
 class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
 
 
 @dataclass(frozen=True)
 class CalculationRequest:
-    """Immutable provenance captured when a calculation is launched."""
+    """Immutable provenance captured when a calculation is launched.
+
+    ``generation`` protects preparation against delayed draft callbacks.
+    Completed calculations are always recorded against ``structure_id`` and
+    ``state_id``. An SCF output may advance the workspace only while that exact
+    input state is still active.
+
+    ``atoms`` identifies the authoritative launch input and is the sole physical
+    authority for its potential; potential paths are provenance/artifact metadata
+    only. The execution service copies it before ASE2SPRKKR sees it.
+
+    ``restart_scf`` snapshots the pending workspace execution intent.
+    """
 
     atoms: Atoms
     input_parameters: Any
@@ -123,6 +139,7 @@ class WorkspaceController(QObject):
 
     @property
     def potential_path(self) -> str | None:
+        """Return potential provenance/artifact path, never calculation input."""
         return self._workspace.potential_path
 
     @property
@@ -135,6 +152,7 @@ class WorkspaceController(QObject):
 
     @property
     def result(self) -> Any | None:
+        """Return the latest result attached to the active workspace state."""
         record = self._history.latest_result_for_state(self.state_id)
         return record.result if record is not None else None
 
@@ -162,6 +180,7 @@ class WorkspaceController(QObject):
         return self._workspace.structure_kind()
 
     def current_task(self) -> str | None:
+        """Return the normalized task of the active input parameters, if known."""
         parameters = self.input_parameters
         try:
             task = str(parameters.task_name).strip().lower()
@@ -170,12 +189,13 @@ class WorkspaceController(QObject):
         return task or None
 
     def can_calculate(self) -> bool:
-        if not self._workspace.can_calculate():
+        if not self._workspace.is_calculation_input_complete():
             return False
         task = self.current_task()
         return task is None or self.can_run_task(task)
 
     def can_run_task(self, task: str) -> bool:
+        """Return whether the active workspace satisfies ``task`` prerequisites."""
         if self.atoms is None:
             return False
         task = str(task).strip().lower()
@@ -197,8 +217,15 @@ class WorkspaceController(QObject):
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()
 
-    def empty_spheres_action(self) -> str | None:
-        return self._workspace.empty_spheres_action()
+    def empty_spheres_action(self) -> EmptySpheresAction | None:
+        """Return the empty-sphere workflow action recommended for the draft."""
+        if self.atoms is None:
+            return None
+        if self.empty_spheres is not None:
+            return EmptySpheresAction.RECALCULATE
+        if self.has_vacuum_sites():
+            return None
+        return EmptySpheresAction.ADD
 
     def structure_change_requires_scf_restart(self) -> bool:
         if self.atoms is None or self.restarted:
@@ -372,9 +399,7 @@ class WorkspaceController(QObject):
                 captured,
                 structure=structure,
                 directory=loaded.directory,
-                produces_state=(
-                    loaded.atoms is not None and _result_is_scf(loaded.result)
-                ),
+                produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
                 persistent_ref=loaded.persistent_ref,
             )
 
@@ -405,10 +430,7 @@ class WorkspaceController(QObject):
                 if loaded.potential_path is not None
                 else None
             )
-            captured_output = capture_structure(
-                output_atoms,
-                potential_path=output_path,
-            )
+            captured_output = capture_structure(output_atoms, potential_path=output_path)
             result_kwargs.update(
                 output_structure_snapshot=captured_output.structure_snapshot,
                 output_potential_path=captured_output.potential_path,
@@ -455,6 +477,7 @@ class WorkspaceController(QObject):
         result_id: int,
         expected_potential: PotentialFileVersion | None = None,
     ) -> None:
+        """Activate a reconstructable historical state or approved current POTFIL."""
         resolution = resolve_historical_state(
             self._history,
             result_id,
@@ -488,6 +511,7 @@ class WorkspaceController(QObject):
         self.structureChanged.emit(atoms)
 
     def reset(self) -> None:
+        """Clear the draft while deliberately preserving calculation history."""
         self._workspace.atoms = None
         self._workspace.potential_path = None
         self._workspace.input_parameters = None
