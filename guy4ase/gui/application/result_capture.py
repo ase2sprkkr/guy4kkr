@@ -1,4 +1,4 @@
-"""Capture mutable/backend result state into provenance values."""
+"""Capture mutable/backend result state into immutable provenance values."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -12,9 +12,8 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.application.file_version import FileVersion
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_history import CapturedResult, CapturedStructure
-from guy4ase.gui.application.structure_snapshot import StructureSnapshot
-from guy4ase.physics.composition import structure_formula
+from guy4ase.gui.application.result_history import CapturedResult
+from guy4ase.gui.application.structure_provenance import StructureProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -60,32 +59,16 @@ def capture_result_files(result: Any) -> Mapping[str, FileVersion]:
 
     result_files: dict[str, FileVersion] = {}
     for key, value in items:
-        path_getter = getattr(value, "path", None)
-        if not callable(path_getter):
-            continue
         try:
+            path_getter = getattr(value, "path", None)
+            if not callable(path_getter):
+                continue
             path = path_getter()
-        except Exception:  # noqa: BLE001 - backend presentation metadata boundary
-            logger.exception("Failed to resolve path for output value %r", key)
-            continue
-        if path:
-            result_files[str(key)] = FileVersion.capture(path)
+            if path:
+                result_files[str(key)] = FileVersion.capture(path)
+        except Exception:  # noqa: BLE001 - one optional backend value is a boundary
+            logger.exception("Failed to capture output value %r", key)
     return MappingProxyType(result_files)
-
-
-def resolve_potential_version(
-    path: str | Path | None,
-    version: PotentialFileVersion | None = None,
-) -> PotentialFileVersion | None:
-    """Capture or validate the exact POTFIL version represented by ``path``."""
-    if version is None:
-        return PotentialFileVersion.capture(path) if path is not None else None
-    if path is None:
-        raise AssertionError("A captured potential version requires its potential path.")
-    resolved_path = Path(path).expanduser().resolve()
-    if version.path != resolved_path:
-        raise AssertionError("Captured potential version does not match potential path.")
-    return version
 
 
 def capture_structure(
@@ -93,24 +76,12 @@ def capture_structure(
     *,
     potential_path: str | Path | None,
     potential_version: PotentialFileVersion | None = None,
-) -> CapturedStructure:
-    """Capture all external structure state required by the provenance graph."""
-    path = (
-        Path(potential_path).expanduser().resolve()
-        if potential_path is not None
-        else None
-    )
-    version = resolve_potential_version(path, potential_version)
-    snapshot = (
-        StructureSnapshot.capture(atoms)
-        if version is None or not version.available
-        else None
-    )
-    return CapturedStructure(
-        formula=structure_formula(atoms) or type(atoms).__name__,
-        potential_path=path,
-        potential_version=version,
-        structure_snapshot=snapshot,
+) -> StructureProvenance:
+    """Capture one physical structure state as immutable provenance."""
+    return StructureProvenance.capture(
+        atoms,
+        potential_path=potential_path,
+        potential_version=potential_version,
     )
 
 
