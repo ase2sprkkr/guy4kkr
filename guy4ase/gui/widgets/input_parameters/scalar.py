@@ -17,6 +17,7 @@ from ase2sprkkr.common.grammar_types import (
     String,
     Table,
 )
+from ase2sprkkr.common.warnings import DataValidityError
 from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QWidget
 
@@ -117,8 +118,15 @@ class _ScalarValueEditor(ParameterValueEditor):
     def _draft(self) -> Any:
         raise NotImplementedError
 
+    def _apply_user_value(self, value: Any) -> None:
+        """Translate only expected backend data validation into editor feedback."""
+        try:
+            self._apply_value(value)
+        except DataValidityError as error:
+            raise EditorValidationError(str(error)) from error
+
     def _apply_draft(self, value: Any) -> None:
-        self._apply_value(value)
+        self._apply_user_value(value)
         self._sync_display()
 
     def _sync_display(self) -> None:
@@ -344,7 +352,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
             if self._allow_empty:
                 return
             if self._nullable:
-                self._apply_value(None)
+                self._apply_user_value(None)
                 self._sync_display()
                 return
             raise EditorValidationError(f"{self._value_name} must have a value")
@@ -362,7 +370,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
         except (SyntaxError, TypeError, ValueError) as error:
             raise EditorValidationError(str(error)) from error
 
-        self._apply_value(value)
+        self._apply_user_value(value)
         self._sync_display()
 
     def _show_state(self, state: FieldValue) -> None:
