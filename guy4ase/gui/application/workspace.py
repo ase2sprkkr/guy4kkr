@@ -61,8 +61,8 @@ class WorkspaceState:
     merely a mutable runtime realization which may be discarded and reconstructed.
     Potential path/version therefore never live as independent workspace state.
 
-    ``atoms`` and ``potential_path`` are compatibility read views only. New code
-    should reason about ``structure`` / ``structure_provenance``.
+    Passing raw ``atoms`` creates snapshot-backed provenance. POTFIL-backed
+    structures must enter as an already materialized value from the stable loader.
     """
 
     def __init__(
@@ -72,21 +72,16 @@ class WorkspaceState:
         atoms: Any | None = None,
         input_parameters: Any | None = None,
         directory: str | None = None,
-        potential_path: str | None = None,
         structure_id: int | None = None,
         state_id: int | None = None,
         empty_spheres: EmptySpheresState | None = None,
         restarted: bool = False,
         generation: Generation = Generation(),
     ) -> None:
-        if structure is not None and (atoms is not None or potential_path is not None):
-            raise ValueError(
-                "Pass either a materialized structure or legacy atoms/potential_path, not both."
-            )
+        if structure is not None and atoms is not None:
+            raise ValueError("Pass either a materialized structure or raw atoms, not both.")
         if structure is None and atoms is not None:
-            structure = materialize_structure(atoms, potential_path=potential_path)
-        elif atoms is None and potential_path is not None:
-            raise ValueError("A potential path without a structure is invalid.")
+            structure = materialize_structure(atoms)
 
         self.structure = structure
         self.input_parameters = input_parameters
