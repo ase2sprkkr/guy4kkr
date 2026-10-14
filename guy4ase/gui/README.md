@@ -14,19 +14,29 @@ alternate APIs.
   concrete value editors shared by guided and expert parameter editing;
   structure-specific controls live in `widgets.structures`.
 - `input_parameters`: parameter-editing state and Qt-independent model helpers.
-  It contains the editing session, field bindings, task semantics, validation,
-  DATASET naming, tooltips, and declarative task specifications. It does not own
-  finished application windows.
-- `input_parameters.specs`: declarative guided-layout definitions. `schema`
-  defines fields/groups/pages, individual task modules build their layouts, and
-  `registry.task_dialog_spec` selects a task specification.
-- `application`: application/document state, calculation execution, and
-  provenance. `WorkspaceState` represents the mutable draft prepared for the
-  next calculation; `ResultStore` owns calculation history independently of
-  that draft; `WorkspaceController` is the mutation/signalling boundary between
-  them and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
-  immutable calculation request. Persistent application state such as recent
-  files and settings also lives here.
+  It contains the editing session, field bindings, validation, DATASET naming,
+  tooltips, task-specific editing semantics, and Guided-task declarations. It
+  does not own finished application windows.
+- `input_parameters.tasks`: the single Guy4ASE registry of tasks for which a
+  Guided experience exists. A `GuidedTaskDefinition` maps the Guided task to
+  its ASE2SPRKKR backend task and owns its workflow presentation metadata and
+  declarative layout builder. It is not the registry of all SPR-KKR tasks;
+  backend task existence and execution semantics are owned by ASE2SPRKKR.
+- `input_parameters.specs`: presentation-only declarative Guided layouts.
+  `schema` defines fields/groups/pages and individual task modules build their
+  layouts. `TaskDialogSpec` does not own task identity or backend-task mapping;
+  `registry.task_dialog_spec` is only a compatibility-free lookup facade over
+  `input_parameters.tasks`.
+- `application`: application/document state, calculation execution, provenance,
+  and policy over application state. `WorkspaceState` represents the mutable
+  draft prepared for the next calculation; `ResultStore` owns calculation
+  history independently of that draft; `WorkspaceController` is the
+  mutation/signalling boundary between them and the GUI. `calculation_policy`
+  interprets Guided workflow stages as recommendations; those recommendations
+  are deliberately not Expert/backend launch restrictions. `SprkkrExecution`
+  owns the non-Qt execution contract for one immutable calculation request.
+  Persistent application state such as recent files and settings also lives
+  here.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. They may show modal UI and call public controller transitions,
   but they do not own application state or top-level windows.
@@ -51,6 +61,13 @@ runner creation/submission/cancellation/result loading, and `RunMonitorWindow`
 is only the generic Qt monitor. Persistent execution identity and collision
 policy belong to ASE2SPRKKR's runner/persistence layer.
 
+SPR-KKR task identity and backend execution semantics likewise belong to
+ASE2SPRKKR's `InputParametersDefinition` registry. Guy4ASE may provide a
+smaller Guided registry, but Expert execution must not reject a valid backend
+task merely because Guy4ASE has no Guided dialog for it. Backend facts such as
+whether a task produces a new potential are read from ASE2SPRKKR task-definition
+metadata rather than inferred from task-name strings in the GUI.
+
 Package `__init__.py` files should stay lightweight and should not become
 alternate import APIs for dialog/widget internals. Canonical imports use the
 concrete modules documented by the current package layout. Internal
@@ -70,11 +87,11 @@ artifact/provenance metadata only; calculation launch must not silently use it
 as a second physical source of truth.
 
 `ResultStore` owns result history and calculation-state provenance independently
-of the mutable workspace. A result may refer to an input state and, for tasks
-such as SCF, to an output state. Historical states retain enough provenance to
-reconstruct a reusable calculation input from the recorded POTFIL version or a
-structure snapshot when necessary. Activating historical state is always an
-explicit transition.
+of the mutable workspace. A result may refer to an input state and, for a
+backend-declared potential-producing task, to an output state. Historical states
+retain enough provenance to reconstruct a reusable calculation input from the
+recorded POTFIL version or a structure snapshot when necessary. Activating
+historical state is always an explicit transition.
 
 Windows and flows mutate the draft through named `WorkspaceController`
 operations rather than assigning workspace facets independently. The important
@@ -87,10 +104,11 @@ result-adoption semantics are:
   only explicit presentation intent to select that result in the UI.
 - `adopt_calculation_result()` records a result produced from its mandatory
   captured `CalculationRequest`. It never reconstructs launch provenance from
-  whatever happens to be active when the result finishes. Only an SCF result
-  finishing from the exact currently active input state may fast-forward the
-  workspace to its produced state. A result from an older branch is recorded in
-  that branch and cannot silently overwrite a newer user choice.
+  whatever happens to be active when the result finishes. Only a
+  backend-declared potential-producing result finishing from the exact currently
+  active input state may fast-forward the workspace to its produced state. A
+  result from an older branch is recorded in that branch and cannot silently
+  overwrite a newer user choice.
 - `use_result_state()` is the explicit operation for activating a reusable
   historical state (or an explicitly approved current version of its POTFIL).
 - `use_for_new_calculation()` creates a new calculation branch from the active
@@ -147,13 +165,19 @@ atomic BSF mode/path changes live in `input_parameters.bsf`, and the
 single-site-contour transaction behavior lives in its dedicated plugin.
 Generic renderers and scalar controls must not duplicate those rules.
 
-### Guided specifications and presentation rules
+### Guided tasks, specifications, and presentation rules
 
-Guided layouts are declarative. A `FieldPlacement` identifies the parameter
-path, editor, related paths, and presentation metadata. Conditional behavior is
-expressed by named rules in the task specification and receives a
-Qt-independent presentation context. Rules may inspect parameter state but must
-not mutate `InputParameters` or invoke Qt actions.
+A `GuidedTaskDefinition` owns Guy4ASE's Guided identity, the backend-task mapping,
+workflow label/description/stage, and the builder for its dialog layout. The
+workflow stage is interpreted by `application.calculation_policy`; neither the
+registry nor `WorkflowWindow` turns it into a backend-validity rule.
+
+Guided layouts themselves are declarative and presentation-only. A
+`FieldPlacement` identifies the parameter path, editor, related paths, and
+presentation metadata. Conditional behavior is expressed by named rules in the
+task specification and receives a Qt-independent presentation context. Rules
+may inspect parameter state but must not mutate `InputParameters` or invoke Qt
+actions.
 
 Fields may define dynamic visibility/enabling/labels/help and required state;
 groups may define dynamic visibility, titles, notes, and layout. Programmatic
@@ -195,8 +219,10 @@ an explicit stored value.
   concrete application dialogs. Use signals/callbacks for actions owned by a
   higher layer.
 - `input_parameters` must not depend on concrete dialogs or widgets.
-- `input_parameters.specs` must remain independent of Qt session/widget
-  implementations.
+- `input_parameters.tasks` owns Guided registration only; it must not become a
+  second ASE2SPRKKR backend-task registry.
+- `input_parameters.specs` must remain independent of task identity, Qt
+  session/widget implementations, and workflow policy.
 - `misc` and `plots` must not become dependencies on top-level dialogs or
   parameter editors.
 - Domain logic that can be expressed without Qt belongs outside the GUI package
@@ -221,6 +247,7 @@ from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```
