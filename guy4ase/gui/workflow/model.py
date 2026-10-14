@@ -52,10 +52,6 @@ class ActionIcon(Enum):
 class RunTask:
     task: GuidedTaskDefinition
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.task, GuidedTaskDefinition):
-            raise TypeError("RunTask requires a GuidedTaskDefinition.")
-
 
 @dataclass(frozen=True)
 class UpdateEmptySpheres:
