@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
@@ -29,8 +30,13 @@ def choose_working_directory(
     *,
     title: str = "Select Calculation Directory",
 ) -> bool:
+    """Choose and publish the workspace calculation directory."""
     start_directory = controller.directory or str(Path.home())
-    directory = QFileDialog.getExistingDirectory(parent, title, start_directory)
+    directory = QFileDialog.getExistingDirectory(
+        parent,
+        title,
+        start_directory,
+    )
     if not directory:
         return False
     controller.change_directory(str(directory))
@@ -38,6 +44,7 @@ def choose_working_directory(
 
 
 def _position_like_window(window: QWidget, window_id: str | None) -> None:
+    """Reuse another managed window's top-left corner, not its size."""
     if window_id is None:
         return
     placement = window_placement(
@@ -53,6 +60,7 @@ def _select_profile(
     *,
     position_like_window: str | None = None,
 ) -> tuple[bool, str | None]:
+    """Run the post-parameter execution step and preserve automatic profiles."""
     dialog = ProfileSelectionDialog(parent)
     _position_like_window(dialog, position_like_window)
     if dialog.exec() != dialog.DialogCode.Accepted:
@@ -68,7 +76,15 @@ def run_calculation(
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
+    """Choose execution, run a task and record its immutable provenance.
+
+    ``position_like_window`` optionally reuses another managed window's
+    top-left corner for the profile picker and the run window. Their own sizes
+    stay independent. ``persistent_job_changed`` is an application observer of
+    stable persistent run ids; it never receives a parallel lifecycle snapshot.
+    """
     task = controller.current_task()
     if task is not None and not controller.can_run_task(task):
         QMessageBox.information(
@@ -103,7 +119,10 @@ def run_calculation(
             )
 
     def finished(loaded) -> None:
-        adoption = controller.adopt_calculation_result(loaded, request=request)
+        adoption = controller.adopt_calculation_result(
+            loaded,
+            request=request,
+        )
         adoption_completed(adoption)
 
     try:
@@ -117,6 +136,7 @@ def run_calculation(
         profile_description=description,
         parent=parent,
         on_finished=finished,
+        on_persistent_job_changed=persistent_job_changed,
     )
     _position_like_window(window, position_like_window)
     window.show()
@@ -130,7 +150,9 @@ def configure_and_run_task(
     task: str,
     *,
     dataset_default_mode: str,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
+    """Configure one Guided task, commit it, choose execution, and run it."""
     try:
         if not controller.can_run_task(task):
             QMessageBox.information(
@@ -153,7 +175,11 @@ def configure_and_run_task(
         generation = controller.generation
         atoms = controller.atoms
         if atoms is None:
-            QMessageBox.information(parent, "No Structure", "Load or create a structure first.")
+            QMessageBox.information(
+                parent,
+                "No Structure",
+                "Load or create a structure first.",
+            )
             return None
 
         parameters = select_guided_input_parameters(
@@ -177,6 +203,7 @@ def configure_and_run_task(
             recent_files,
             parent,
             position_like_window="guided-input",
+            persistent_job_changed=persistent_job_changed,
         )
     except (ImportError, ModuleNotFoundError) as exc:
         QMessageBox.critical(
@@ -192,8 +219,15 @@ def recompute_result(
     recent_files: RecentFiles,
     parent: QWidget,
     result_id: int,
+    *,
+    persistent_job_changed: Callable[[str], None] | None = None,
 ) -> SprkkrRunWindow | None:
-    """Re-run historical settings on the state active in the workspace."""
+    """Re-run historical settings on the state active in the workspace.
+
+    Historical input parameters are only an editable starting point. Structure
+    and potential always come from the current workspace, so selecting an old
+    result never silently switches calculation lineage.
+    """
     record = controller.result_history.result(result_id)
     task = record.task_name
     if not task or record.input_parameters is None:
@@ -248,4 +282,5 @@ def recompute_result(
         recent_files,
         parent,
         position_like_window="guided-input",
+        persistent_job_changed=persistent_job_changed,
     )
