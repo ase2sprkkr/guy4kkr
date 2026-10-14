@@ -37,18 +37,18 @@ class _RunWindow:
         self.shown = True
 
 
-def test_workspace_can_calculate_requires_all_inputs():
+def test_workspace_calculation_input_completeness_requires_all_inputs():
     workspace = WorkspaceState()
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.atoms = Atoms("Fe")
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.input_parameters = _Parameters("scf")
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.directory = "calculation"
-    assert workspace.can_calculate()
+    assert workspace.is_calculation_input_complete()
 
 
 def test_create_calculation_request_reports_missing_preconditions():
@@ -81,7 +81,9 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         )
 
 
-def test_run_calculation_does_not_hide_result_adoption_errors(tmp_path, monkeypatch):
+def test_run_calculation_does_not_hide_result_adoption_errors(
+    tmp_path, monkeypatch
+):
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
@@ -96,7 +98,11 @@ def test_run_calculation_does_not_hide_result_adoption_errors(tmp_path, monkeypa
         assert request.state_id == controller.state_id
         raise RuntimeError("broken adoption invariant")
 
-    monkeypatch.setattr(controller, "adopt_calculation_result", broken_adoption)
+    monkeypatch.setattr(
+        controller,
+        "adopt_calculation_result",
+        broken_adoption,
+    )
 
     window = calculation_flow.run_calculation(
         controller,
@@ -192,9 +198,16 @@ def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
         assert atoms is original_atoms
         return edited_parameters
 
-    monkeypatch.setattr(input_editing_flow, "edit_input_parameters", edit)
+    monkeypatch.setattr(
+        input_editing_flow,
+        "edit_input_parameters",
+        edit,
+    )
 
-    assert input_editing_flow.edit_current_input_parameters(controller, None)
+    assert input_editing_flow.edit_current_input_parameters(
+        controller,
+        None,
+    )
     assert controller.input_parameters is edited_parameters
 
 
@@ -207,7 +220,10 @@ def test_choose_working_directory_is_shared_flow(monkeypatch, tmp_path):
         lambda *_args, **_kwargs: str(chosen),
     )
 
-    assert calculation_flow.choose_working_directory(controller, None)
+    assert calculation_flow.choose_working_directory(
+        controller,
+        None,
+    )
     assert controller.directory == str(chosen)
 
 
@@ -226,4 +242,6 @@ def test_edit_site_elements_rejects_missing_structure_before_draft(monkeypatch):
     )
 
     assert not structure_flows.edit_site_elements(controller, None)
-    assert messages == [("No Structure", "Load or create a structure first.")]
+    assert messages == [
+        ("No Structure", "Load or create a structure first."),
+    ]
