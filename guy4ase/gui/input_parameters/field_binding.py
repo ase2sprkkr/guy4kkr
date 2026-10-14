@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from ase2sprkkr.common.grammar_types import Array, SetOf
 
 from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
 
@@ -324,7 +325,7 @@ def array_item_binding(
 ) -> ProjectedFieldBinding:
     """Project one structural Array/SetOf item using its grammar conversion."""
     parent_type = parent.value_type
-    if not getattr(parent_type, "array_access", False):
+    if not isinstance(parent_type, (Array, SetOf)):
         raise TypeError(f"{parent_type} does not support structural item access")
 
     def project(value: Any) -> Any:
