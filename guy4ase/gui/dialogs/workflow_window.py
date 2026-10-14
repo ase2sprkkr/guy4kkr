@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.calculation_policy import guided_task_is_recommended
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
@@ -31,6 +32,11 @@ from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
+from guy4ase.gui.input_parameters.tasks import (
+    WorkflowStage,
+    guided_task_definition,
+    guided_task_definitions,
+)
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.gui.style import (
@@ -483,7 +489,12 @@ class WorkflowWindow(QMainWindow):
             icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
         )
 
-        if not converged:
+        scf_definition = guided_task_definition("scf")
+        if not converged and guided_task_is_recommended(
+            scf_definition,
+            has_structure=True,
+            scf_converged=converged,
+        ):
             empty_spheres_action = (
                 None
                 if self.controller.structure_change_requires_scf_restart()
@@ -507,35 +518,34 @@ class WorkflowWindow(QMainWindow):
                 scf_label = "Continue SCF"
                 scf_description = f"Resume from {stage_names[status]} using the current potential"
             else:
-                scf_label = "Converge SCF"
+                scf_label = scf_definition.workflow.label
                 scf_description = (
                     "Converge bulk region(s), then the interaction zone"
                     if structure_kind == "2d"
-                    else "Prepare and run a self-consistent calculation"
+                    else scf_definition.workflow.description
                 )
-            if self.controller.can_run_task("scf"):
-                self._add_action(
-                    scf_label,
-                    scf_description,
-                    lambda: self._prepare_task("scf"),
-                    group=self._GROUP_CALCULATE,
-                    category='calculation',
-                    icon='system-run.svg',
-                )
+            self._add_action(
+                scf_label,
+                scf_description,
+                lambda: self._prepare_task(scf_definition.task),
+                group=self._GROUP_CALCULATE,
+                category='calculation',
+                icon='system-run.svg',
+            )
 
-        for task, label, description in (
-            ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
-            ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
-            ("dos", "Calculate DOS", "Electronic density of states"),
-            ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
-            ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
-        ):
-            if not self.controller.can_run_task(task):
+        for definition in guided_task_definitions():
+            if definition.workflow.stage is WorkflowStage.SCF:
+                continue
+            if not guided_task_is_recommended(
+                definition,
+                has_structure=True,
+                scf_converged=converged,
+            ):
                 continue
             self._add_action(
-                label,
-                description,
-                lambda _checked=False, name=task: self._prepare_task(name),
+                definition.workflow.label,
+                definition.workflow.description,
+                lambda _checked=False, name=definition.task: self._prepare_task(name),
                 group=self._GROUP_CALCULATE,
                 category='calculation',
                 icon='system-run.svg',
