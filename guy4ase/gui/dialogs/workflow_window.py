@@ -82,6 +82,7 @@ class WorkflowWindow(QMainWindow):
         *,
         open_expert: Callable[[], None],
         settings: ApplicationSettings,
+        persistent_job_changed: Callable[[str], None],
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
@@ -92,6 +93,7 @@ class WorkflowWindow(QMainWindow):
         self.recent_history = recent_files
         self.settings = settings
         self._open_expert = open_expert
+        self._persistent_job_changed = persistent_job_changed
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.directoryChanged.connect(
             lambda _directory: self._refresh_working_directory()
@@ -351,14 +353,6 @@ class WorkflowWindow(QMainWindow):
                 f"Could not open the working directory in the system file manager:\n{path}",
             )
 
-    def _refresh_result_actions(self) -> None:
-        store = self.controller.result_store
-        self._result_actions_widget.set_workspace_state(
-            self.controller.structure_id,
-            self.controller.state_id,
-        )
-        self._result_actions_widget.set_results(store)
-
     def _add_action(
         self,
         title: str,
@@ -421,7 +415,6 @@ class WorkflowWindow(QMainWindow):
 
     def _refresh(self) -> None:
         self._clear_actions()
-        self._refresh_result_actions()
         atoms = self.controller.atoms
         if atoms is None:
             self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
@@ -490,7 +483,7 @@ class WorkflowWindow(QMainWindow):
         )
 
         scf_definition = guided_task_definition("scf")
-        if not converged and guided_task_is_recommended(
+        if guided_task_is_recommended(
             scf_definition,
             has_structure=True,
             scf_converged=converged,
@@ -640,6 +633,7 @@ class WorkflowWindow(QMainWindow):
             self,
             task,
             dataset_default_mode=self.settings.dataset_default_mode,
+            persistent_job_changed=self._persistent_job_changed,
         )
 
     def _update_empty_spheres(self) -> None:
