@@ -224,7 +224,7 @@ def continue_output(
     if record is None:
         return False
 
-    state = controller.result_store.state_for_result(record)
+    state = controller.result_history.state_for_result(record)
     if state is None:
         QMessageBox.warning(
             parent,
