@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt6.QtCore import QSize, Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QFrame,
@@ -21,28 +21,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import (
-    EmptySpheresAction,
-    WorkspaceController,
-)
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
-from guy4ase.gui.input_parameters.tasks import (
-    WorkflowStage,
-    guided_task_definition,
-    workflow_tasks,
-)
-from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.misc.structure_wait import document_change_applied
+from guy4ase.gui.presentation import RecentLaunchKind, recent_launch
 from guy4ase.gui.style import (
-    SPACE_LG,
     SPACE_SM,
     SPACE_XL,
     SPACE_XS,
@@ -52,30 +43,29 @@ from guy4ase.gui.style import (
     heading_font,
     secondary_text_stylesheet,
 )
-from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
 from guy4ase.gui.widgets.browser_panel import BrowserPanel
-from guy4ase.gui.widgets.recent_launcher import (
-    build_recent_launch_menu,
-    recent_launch,
-)
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.gui.widgets.workflow_actions import WorkflowActionsWidget
+from guy4ase.gui.workflow.model import (
+    Build2D,
+    Build2DKind,
+    ContinueRecent,
+    CreateStructure,
+    CreateStructureKind,
+    Load,
+    LoadKind,
+    RunTask,
+    StartOver,
+    UpdateEmptySpheres,
+    UseForNewCalculation,
+    VisualizeStructure,
+    WorkflowCommand,
+)
+from guy4ase.gui.workflow.planner import WorkflowPlanner
 
 
 class WorkflowWindow(QMainWindow):
     """Task-oriented entry point that keeps the full UI available as expert mode."""
-
-    _GROUP_CALCULATE = "Calculate"
-    _GROUP_VIEW = "View"
-    _GROUP_CREATE = "Create structure"
-    _GROUP_LOAD = "Load structure"
-    _GROUP_DIFFERENT = "And now something completely different..."
-    _ACTION_GROUPS = (
-        _GROUP_CALCULATE,
-        _GROUP_VIEW,
-        _GROUP_CREATE,
-        _GROUP_LOAD,
-        _GROUP_DIFFERENT,
-    )
 
     def __init__(
         self,
@@ -88,14 +78,13 @@ class WorkflowWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
-        manage_window_geometry(
-            self, "workflow", default_size=(1120, 700)
-        )
+        manage_window_geometry(self, "workflow", default_size=(1120, 700))
         self.controller = controller
         self.recent_history = recent_files
         self.settings = settings
         self._open_expert = open_expert
         self._track_launch_monitor = track_launch_monitor
+        self._workflow_planner = WorkflowPlanner()
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.directoryChanged.connect(
             lambda _directory: self._refresh_working_directory()
@@ -142,11 +131,8 @@ class WorkflowWindow(QMainWindow):
         content_layout.addWidget(self._subtitle)
         content_layout.addSpacing(SPACE_XL)
 
-        self._actions = QWidget(content)
-        self._actions_layout = QVBoxLayout(self._actions)
-        self._actions_layout.setContentsMargins(0, 0, 0, 0)
-        self._actions_layout.setSpacing(SPACE_LG)
-        self._action_group_layouts: dict[str, QVBoxLayout] = {}
+        self._actions = WorkflowActionsWidget(self.recent_history, content)
+        self._actions.commandRequested.connect(self._dispatch_workflow_command)
         content_layout.addWidget(self._actions)
 
         content_layout.addStretch(1)
@@ -288,54 +274,11 @@ class WorkflowWindow(QMainWindow):
                 self.palette(), self.palette().color(QPalette.ColorRole.Highlight)
             )
         )
-        side_layout.addWidget(
-            expert_box, alignment=Qt.AlignmentFlag.AlignBottom
-        )
+        side_layout.addWidget(expert_box, alignment=Qt.AlignmentFlag.AlignBottom)
         splitter.addWidget(side)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([560, 360])
-
-    def _clear_actions(self) -> None:
-        while self._actions_layout.count():
-            item = self._actions_layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().hide()
-                item.widget().deleteLater()
-        self._action_group_layouts.clear()
-
-    def _action_group(self, title: str) -> QVBoxLayout:
-        layout = self._action_group_layouts.get(title)
-        if layout is not None:
-            return layout
-        if title not in self._ACTION_GROUPS:
-            raise ValueError(f"Unknown workflow action group {title!r}.")
-
-        group = QWidget(self._actions)
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(SPACE_SM)
-        display_title = (
-            "Create derived structure"
-            if title == self._GROUP_CREATE
-            and self.controller.atoms is not None
-            else title
-        )
-        label = QLabel(display_title, group)
-        label.setObjectName("workflowActionGroupLabel")
-        label.setForegroundRole(QPalette.ColorRole.WindowText)
-        label.setFont(heading_font(label.font(), "section"))
-        layout.addWidget(label)
-
-        position = sum(
-            group_title in self._action_group_layouts
-            for group_title in self._ACTION_GROUPS[
-                :self._ACTION_GROUPS.index(title)
-            ]
-        )
-        self._actions_layout.insertWidget(position, group)
-        self._action_group_layouts[title] = layout
-        return layout
 
     def _refresh_working_directory(self) -> None:
         directory = self.controller.directory
@@ -355,218 +298,53 @@ class WorkflowWindow(QMainWindow):
                 f"Could not open the working directory in the system file manager:\n{path}",
             )
 
-    def _add_action(
-        self,
-        title: str,
-        description: str,
-        callback: Callable[[], None],
-        *,
-        group: str = "Create structure",
-        category: ActionCategory = "structure",
-        icon: QStyle.StandardPixmap | QIcon | str = QStyle.StandardPixmap.SP_FileIcon,
-    ) -> None:
-        button = QPushButton(self._actions)
-        if isinstance(icon, QIcon):
-            action_icon = icon
-        elif isinstance(icon, str):
-            action_icon = QIcon(str(icon_path(icon)))
-        else:
-            action_icon = self.style().standardIcon(icon)
-        configure_action_card(
-            button,
-            title,
-            description,
-            action_icon,
-            category=category,
-            subtle=category == "neutral",
-        )
-        button.clicked.connect(callback)
-        self._action_group(group).addWidget(button)
-
-    def _add_recent_load_action(self) -> None:
-        launch = recent_launch(self.recent_history)
-        if launch is None:
-            return
-
-        button = QToolButton(self._actions)
-        button.setToolTip(launch.path)
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        configure_action_card(
-            button,
-            launch.title,
-            "",
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
-            category="load",
-            icon_size=QSize(24, 24),
-            minimum_height=52,
-            menu_button=True,
-        )
-        button.clicked.connect(
-            lambda _checked=False, item=launch: self._continue_recent(
-                item.kind, item.path
-            )
-        )
-        button.setMenu(
-            build_recent_launch_menu(
-                button,
-                self.recent_history,
-                self._continue_recent,
-            )
-        )
-        self._action_group(self._GROUP_LOAD).addWidget(button)
-
     def _refresh(self) -> None:
-        self._clear_actions()
-        atoms = self.controller.atoms
-        if atoms is None:
-            self._subtitle.setText("Start by creating a new atomic structure or loading an existing one.")
-            self._add_action("Create a 3D Structure", "Build a periodic bulk crystal", self._create_3d)
-            self._add_action(
-                "Create Structure from Prototype Database",
-                "Start from a crystallographic structure prototype",
-                self._create_from_database,
-            )
-            self._add_action(
-                "Download Structure from Online Database",
-                "Search an online crystallographic database",
-                self._download_structure,
-                group=self._GROUP_LOAD,
-                category='load',
-                icon=QStyle.StandardPixmap.SP_ArrowDown,
-            )
-            self._add_action("Create a 2D Surface", "Build a surface with vacuum on one side", self._create_surface)
-            self._add_action("Create a 2D Structure", "Build an interface or transitional layer", self._create_transition)
-            self._add_action(
-                "Load a Structure",
-                "Open a supported atomic structure file",
-                self._load_structure,
-                group=self._GROUP_LOAD,
-                category='load',
-                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-            )
-            self._add_action(
-                "Load SPR-KKR Output",
-                "Add a completed calculation to the result history",
-                self._load_output,
-                group=self._GROUP_LOAD,
-                category='load',
-                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-            )
-            self._add_recent_load_action()
+        plan = self._workflow_planner.for_workspace(
+            self.controller,
+            recent=recent_launch(self.recent_history),
+        )
+        self._subtitle.setText(plan.subtitle)
+        self._actions.set_plan(plan)
+
+    def _dispatch_workflow_command(self, command: WorkflowCommand) -> None:
+        """Mechanically route one already-approved workflow command."""
+        if isinstance(command, RunTask):
+            self._prepare_task(command.task.backend_task)
             return
-
-        formula = atoms.get_chemical_formula()
-        structure_kind = self.controller.structure_kind()
-        status = self.controller.scf_status()
-        converged = self.controller.is_scf_converged()
-        stage_names = {
-            "ITR": "iterating SCF",
-            "ITR-BULK": "converging bulk",
-            "ITR-L-BULK": "converging left bulk",
-            "ITR-R-BULK": "converging right bulk",
-            "ITR-I-ZONE": "converging interaction zone",
-        }
-        status_text = (
-            "CONVERGED"
-            if converged
-            else stage_names.get(
-                status, status if status is not None else "not converged"
-            )
-        )
-        self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
-
-        self._add_action(
-            "Visualize Structure",
-            "Open the current structure in the configured ASE viewer",
-            self._visualize_structure,
-            group=self._GROUP_VIEW,
-            category="neutral",
-            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-        )
-
-        stage = WorkflowStage.POST_SCF if converged else WorkflowStage.SCF
-        if not converged:
-            empty_spheres_action = (
-                None
-                if self.controller.structure_change_requires_scf_restart()
-                else self.controller.empty_spheres_action()
-            )
-            if empty_spheres_action is not None:
-                self._add_action(
-                    (
-                        "Recalculate Empty Spheres"
-                        if empty_spheres_action is EmptySpheresAction.RECALCULATE
-                        else "Add Empty Spheres"
-                    ),
-                    "Find empty spheres explicitly before the SCF calculation",
-                    self._update_empty_spheres,
-                    group=self._GROUP_CALCULATE,
-                    category='structure',
-                    icon='run-build-clean.svg',
-                )
-
-            scf = guided_task_definition("scf")
-            if status in stage_names:
-                scf_label = "Continue SCF"
-                scf_description = f"Resume from {stage_names[status]} using the current potential"
-            else:
-                scf_label = scf.workflow.label
-                scf_description = (
-                    "Converge bulk region(s), then the interaction zone"
-                    if structure_kind == "2d"
-                    else scf.workflow.description
-                )
-            self._add_action(
-                scf_label,
-                scf_description,
-                lambda: self._prepare_task(scf.backend_task),
-                group=self._GROUP_CALCULATE,
-                category='calculation',
-                icon='system-run.svg',
-            )
-
-        for definition in workflow_tasks(stage):
-            if definition.backend_task == "scf":
-                continue
-            self._add_action(
-                definition.workflow.label,
-                definition.workflow.description,
-                lambda _checked=False, name=definition.backend_task: self._prepare_task(name),
-                group=self._GROUP_CALCULATE,
-                category='calculation',
-                icon='system-run.svg',
-            )
-
-        if converged or (status is not None and status != "START"):
-            self._add_action(
-                "Use for New Calculation",
-                "Keep the current potential as starting density for a new SCF sequence",
-                self._use_for_new_calculation,
-                group=self._GROUP_DIFFERENT,
-                category='destructive',
-                icon='run-build-clean.svg',
-            )
-
-        if self.controller.can_build_2d():
-            self._add_action(
-                "Create a 2D Surface",
-                "Derive a surface from the current 3D structure",
-                lambda: self._build_2d(surface_mode=True),
-            )
-            self._add_action(
-                "Create a 2D Structure",
-                "Derive an interface or transitional layer",
-                lambda: self._build_2d(surface_mode=False),
-            )
-
-        self._add_action(
-            "Start Over",
-            "Choose or load a different structure",
-            self._start_over,
-            group=self._GROUP_DIFFERENT,
-            category='destructive',
-            icon=QStyle.StandardPixmap.SP_BrowserReload,
-        )
+        if isinstance(command, UpdateEmptySpheres):
+            self._update_empty_spheres()
+            return
+        if isinstance(command, CreateStructure):
+            {
+                CreateStructureKind.THREE_D: self._create_3d,
+                CreateStructureKind.PROTOTYPE: self._create_from_database,
+                CreateStructureKind.SURFACE: self._create_surface,
+                CreateStructureKind.TWO_D: self._create_transition,
+            }[command.kind]()
+            return
+        if isinstance(command, Build2D):
+            self._build_2d(surface_mode=command.kind is Build2DKind.SURFACE)
+            return
+        if isinstance(command, Load):
+            {
+                LoadKind.ONLINE_STRUCTURE: self._download_structure,
+                LoadKind.STRUCTURE: self._load_structure,
+                LoadKind.OUTPUT: self._load_output,
+            }[command.kind]()
+            return
+        if isinstance(command, ContinueRecent):
+            self._continue_recent(command.launch.kind, command.launch.path)
+            return
+        if isinstance(command, VisualizeStructure):
+            self._visualize_structure()
+            return
+        if isinstance(command, UseForNewCalculation):
+            self._use_for_new_calculation()
+            return
+        if isinstance(command, StartOver):
+            self._start_over()
+            return
+        raise TypeError(f"Unsupported workflow command {type(command).__name__}.")
 
     def _on_structure_changed(self, _atoms: Any) -> None:
         self._refresh()
@@ -600,7 +378,7 @@ class WorkflowWindow(QMainWindow):
             self.controller, self.recent_history, self
         )
 
-    def _continue_recent(self, kind: RecentKind, file_path: str) -> None:
+    def _continue_recent(self, kind: RecentLaunchKind, file_path: str) -> None:
         file_flows.continue_recent(
             self.controller,
             self.recent_history,
