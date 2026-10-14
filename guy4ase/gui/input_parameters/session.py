@@ -69,7 +69,10 @@ def _option_values_equal(value_type: Any, left: Any, right: Any) -> bool:
             _option_values_equal(value_type, left[key], right[key])
             for key in left
         )
-    return bool(value_type.is_the_same_value(left, right))
+    result = value_type.is_the_same_value(left, right)
+    if isinstance(result, np.ndarray):
+        return bool(np.all(result))
+    return bool(result)
 
 
 def _changed_values(before: InputParameters, after: InputParameters) -> dict:
