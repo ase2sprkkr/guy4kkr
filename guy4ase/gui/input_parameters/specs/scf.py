@@ -60,7 +60,7 @@ def build_spec(is_2d: bool) -> TaskDialogSpec:
               enabled_when=points_integration_enabled),
     )
     ne = main_energy_mesh_field("NE", "Energy-mesh points:", "integer", minimum=1, maximum=100000)
-    return TaskDialogSpec("scf", "scf", "SCF Calculation Setup", (
+    return TaskDialogSpec("SCF Calculation Setup", (
         PageSpec("quick", "Quick setup", (
             GroupSpec("Common SCF settings", (
                 mirror(VXC), mirror(NITER), mirror(TOL), mirror(ne), mirror(kpoints[0]), mirror(USEVMATT),
