@@ -35,7 +35,7 @@ def test_unknown_structure_type_is_presented_without_source_placeholder():
     dialog.close()
 
 
-def test_every_database_prototype_can_preload_the_shared_editor():
+def test_every_database_prototype_can_preload_the_shared_editor(_qt_application):
     dialog = SpaceGroupSelectorDialog()
 
     for prototype in load_structure_database():
@@ -46,10 +46,14 @@ def test_every_database_prototype_can_preload_the_shared_editor():
         assert selected_space_group == prototype.space_group
         assert sum(map(len, dialog._selected_sites.values())) == len(prototype.sites)
 
+    # load_prototype() queues zero-delay preview redraws.  Drain those callbacks
+    # while the dialog and its canvas still exist, rather than leaving them for
+    # a later test after deterministic Qt teardown has deleted the widgets.
+    _qt_application.processEvents()
     dialog.close()
 
 
-def test_shared_editor_creates_representative_database_structures():
+def test_shared_editor_creates_representative_database_structures(_qt_application):
     dialog = SpaceGroupSelectorDialog()
     expected_atom_counts = {
         "B2    cP2   CsCl": 2,
@@ -79,11 +83,11 @@ def test_shared_editor_creates_representative_database_structures():
             prototypes[name].sites
         )
 
+    _qt_application.processEvents()
     dialog.close()
 
 
-def test_database_editor_focuses_first_editable_lattice_parameter():
-    application = QApplication.instance() or QApplication([])
+def test_database_editor_focuses_first_editable_lattice_parameter(_qt_application):
     dialog = SpaceGroupSelectorDialog()
     prototype = next(
         item for item in load_structure_database() if item.name.startswith("C4 ")
@@ -92,7 +96,7 @@ def test_database_editor_focuses_first_editable_lattice_parameter():
     dialog.show()
 
     dialog.focus_lattice_parameters()
-    application.processEvents()
+    _qt_application.processEvents()
 
-    assert application.focusWidget() is dialog._lat_vars["a"]
+    assert _qt_application.focusWidget() is dialog._lat_vars["a"]
     dialog.close()
