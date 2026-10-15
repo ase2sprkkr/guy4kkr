@@ -6,6 +6,8 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ase import Atoms
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from guy4ase.gui.application.result_action_policy import NewCalculationSource
@@ -65,17 +67,34 @@ def _result_widget(controller: WorkspaceController):
 
 
 def test_user_double_clicking_structure_emits_structure_intent_only():
-    _application = _app()
+    application = _app()
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
     _record_current_result(controller)
     widget, _presenter = _result_widget(controller)
     captured = []
     widget.newCalculationRequested.connect(captured.append)
 
+    widget.resize(800, 600)
+    widget.show()
+    application.processEvents()
     structure = widget._selector.topLevelItem(0)
     result = structure.child(0)
-    widget._selector.itemDoubleClicked.emit(structure, 0)
-    widget._selector.itemDoubleClicked.emit(result, 0)
+    structure_rect = widget._selector.visualItemRect(structure)
+    result_rect = widget._selector.visualItemRect(result)
+    assert structure_rect.isValid()
+    assert result_rect.isValid()
+
+    QTest.mouseDClick(
+        widget._selector.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=structure_rect.center(),
+    )
+    QTest.mouseDClick(
+        widget._selector.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=result_rect.center(),
+    )
+    application.processEvents()
 
     assert captured == [controller.structure_id]
     widget.close()
@@ -89,7 +108,7 @@ def test_presenter_uses_active_state_for_current_structure():
 
     captured: list[NewCalculationSource] = []
     presenter.newCalculationRequested.connect(captured.append)
-    widget._selector.itemDoubleClicked.emit(widget._selector.topLevelItem(0), 0)
+    widget.newCalculationRequested.emit(controller.structure_id)
 
     assert captured == [NewCalculationSource()]
     widget.close()
@@ -98,6 +117,7 @@ def test_presenter_uses_active_state_for_current_structure():
 def test_historical_source_uses_lineage_depth_not_result_completion_order():
     _application = _app()
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    historical_structure_id = controller.structure_id
     root_state = controller.state_id
     deeper_state = controller.result_store.new_child_state(root_state)
     deeper = _record_result_for_state(controller, deeper_state)
@@ -109,7 +129,7 @@ def test_historical_source_uses_lineage_depth_not_result_completion_order():
 
     captured: list[NewCalculationSource] = []
     presenter.newCalculationRequested.connect(captured.append)
-    widget._selector.itemDoubleClicked.emit(widget._selector.topLevelItem(0), 0)
+    widget.newCalculationRequested.emit(historical_structure_id)
 
     assert captured == [NewCalculationSource(result_id=deeper.id)]
     widget.close()
@@ -118,6 +138,7 @@ def test_historical_source_uses_lineage_depth_not_result_completion_order():
 def test_historical_structure_with_multiple_branches_requests_explicit_state():
     _application = _app()
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    historical_structure_id = controller.structure_id
     root_state = controller.state_id
     alternative_state = controller.result_store.new_child_state(
         root_state,
@@ -132,7 +153,7 @@ def test_historical_structure_with_multiple_branches_requests_explicit_state():
     unavailable = []
     presenter.newCalculationRequested.connect(requested.append)
     presenter.newCalculationUnavailable.connect(lambda: unavailable.append(True))
-    widget._selector.itemDoubleClicked.emit(widget._selector.topLevelItem(0), 0)
+    widget.newCalculationRequested.emit(historical_structure_id)
 
     assert requested == []
     assert unavailable == [True]
