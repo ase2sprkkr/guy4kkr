@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -14,7 +15,10 @@ from ase2sprkkr.execution import (
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.result_loading import PotentialVersionChanged
+from guy4ase.gui.application.result_loading import (
+    PotentialVersionChanged,
+    load_result as interpret_result,
+)
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
@@ -64,6 +68,7 @@ class GuiApplication(QObject):
         )
         self.persistent_jobs_controller = PersistentJobsController(
             self.persistent_jobs,
+            result_adopter=self._adopt_persistent_result,
             parent=self,
         )
         self._active_project_id: str | None = None
@@ -145,6 +150,24 @@ class GuiApplication(QObject):
             lambda target=window: calculation_flow.show_new_calculation_source_required(
                 target
             )
+        )
+
+    def _adopt_persistent_result(
+        self,
+        job_id: str,
+        result: Any,
+        select_result: bool,
+    ) -> None:
+        """Bridge persistent execution results into normal workspace history."""
+        job = self.persistent_jobs.job(job_id)
+        loaded = interpret_result(
+            result,
+            fallback_directory=None if job is None else job.directory,
+            persistent_ref=job_id,
+        )
+        self.controller.adopt_external_result(
+            loaded,
+            select_result=select_result,
         )
 
     def _use_result_state(

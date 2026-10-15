@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from weakref import ReferenceType, ref
 
@@ -17,6 +18,7 @@ from guy4ase.gui.widgets.persistent_jobs import PersistentJobsWidget
 
 
 logger = logging.getLogger(__name__)
+PersistentResultAdopter = Callable[[str, Any, bool], None]
 
 
 class _SourceSignals(QObject):
@@ -51,10 +53,12 @@ class PersistentJobsController(QObject):
         self,
         source: PersistentJobSource,
         *,
+        result_adopter: PersistentResultAdopter | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._source = source
+        self._result_adopter = result_adopter
         self._views: set[ReferenceType[PersistentJobsWidget]] = set()
         self._launch_monitor_windows: set[SprkkrRunWindow] = set()
         self._pending_monitor_windows: set[SprkkrRunWindow] = set()
@@ -109,6 +113,13 @@ class PersistentJobsController(QObject):
         for view in self._live_views():
             self.refresh_view(view)
 
+    def load_result(self, job_id: str, *, select_result: bool = True) -> Any:
+        """Load a persisted result and publish it through the application bridge."""
+        job_id = str(job_id)
+        result = self._source.load_result(job_id)
+        self._publish_result(job_id, result, select_result=select_result)
+        return result
+
     @pyqtSlot(str)
     def _source_changed(self, job_id: str) -> None:
         """Project one authoritative source change without rebuilding unrelated state."""
@@ -134,7 +145,6 @@ class PersistentJobsController(QObject):
                 window_ref,
             )
         )
-        # Commit controller ownership only after all required Qt wiring exists.
         self._launch_monitor_windows.add(monitor_window)
         self._pending_monitor_windows.add(monitor_window)
 
@@ -263,7 +273,7 @@ class PersistentJobsController(QObject):
 
         def finished(result: Any) -> None:
             self._reload_job(job_id)
-            self._set_result_in_views(job_id, result)
+            self._publish_result(job_id, result, select_result=False)
 
         monitor_window = create_attached_run_monitor_window(
             job,
@@ -282,6 +292,17 @@ class PersistentJobsController(QObject):
                 self._monitor_windows.pop(job_id, None)
             monitor_window.close()
             raise
+
+    def _publish_result(
+        self,
+        job_id: str,
+        result: Any,
+        *,
+        select_result: bool,
+    ) -> None:
+        if self._result_adopter is not None:
+            self._result_adopter(job_id, result, select_result)
+        self._set_result_in_views(job_id, result)
 
     def _set_result_in_views(self, job_id: str, result: Any) -> None:
         for view in self._live_views():
@@ -306,4 +327,4 @@ class PersistentJobsController(QObject):
             QMessageBox.warning(view, "Result Load Failed", str(exc))
             return
 
-        self._set_result_in_views(job_id, result)
+        self._publish_result(job_id, result, select_result=True)
