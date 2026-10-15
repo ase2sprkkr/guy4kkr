@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ase import Atoms
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
+from ase2sprkkr import SPRKKRAtoms
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.workspace import WorkspaceState
