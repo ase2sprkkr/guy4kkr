@@ -5,8 +5,8 @@ import logging
 import warnings
 from typing import Any, Callable
 
+from ase2sprkkr import SPRKKR
 from ase2sprkkr.execution import MpiNotFoundWarning
-from ase2sprkkr.sprkkr.calculator import SPRKKR
 
 from guy4ase.gui.application.execution_cancellation import (
     Cancellation,
