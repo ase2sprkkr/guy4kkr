@@ -4,13 +4,11 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.widgets.structures.structure_pane import StructurePane
 
 
 def test_structure_pane_tracks_presence_and_emits_actions():
-    application = QApplication.instance() or QApplication([])
     pane = StructurePane(empty_text="Vacuum")
     scale_requests = []
     pane.scaleRequested.connect(lambda: scale_requests.append(True))
@@ -23,7 +21,6 @@ def test_structure_pane_tracks_presence_and_emits_actions():
     pane.set_atoms(atoms)
     pane.set_match_enabled(True)
     pane.scale_button.click()
-    application.processEvents()
 
     assert pane.atoms is atoms
     assert pane.scale_button.isEnabled()
