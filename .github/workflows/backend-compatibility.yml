@@ -80,4 +80,5 @@ jobs:
           python -m pip install -e ./guy4ase pytest
 
       - name: Run Guy4ASE against selected backend
-        run: python -m pytest -q guy4ase/tests
+        working-directory: guy4ase
+        run: python -m pytest -q
