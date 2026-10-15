@@ -60,7 +60,7 @@ def test_workspace_restart_is_recorded_from_result_provenance(tmp_path):
     assert controller.restarted
 
 
-def test_execution_forwards_restart_scf_and_detaches_inputs(monkeypatch, tmp_path):
+def test_execution_forwards_restart_scf_and_launch_inputs(monkeypatch, tmp_path):
     atoms = Atoms("Fe")
     parameters = _Parameters()
     provenance = RunProvenance(1, 1, restart_scf=True)
@@ -104,8 +104,6 @@ def test_execution_forwards_restart_scf_and_detaches_inputs(monkeypatch, tmp_pat
 
     assert seen["restart_scf"] is True
     assert seen["provenance"] is provenance
-    assert seen["atoms"] is execution.atoms
-    assert seen["atoms"] is not atoms
-    assert seen["input_parameters"] is execution.input_parameters
-    assert seen["input_parameters"] is not parameters
+    assert seen["atoms"] is atoms
+    assert seen["input_parameters"] is parameters
     assert submitted == [True]
