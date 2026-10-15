@@ -14,7 +14,7 @@ from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 @dataclass(frozen=True)
 class Generation:
-    """Monotonic revision used to reject stale calculation-draft edits."""
+    """Monotonic revision used to reject stale workspace transactions."""
 
     value: int = 0
 
@@ -22,7 +22,7 @@ class Generation:
         return Generation(self.value + 1)
 
     def next_major(self) -> Generation:
-        """Advance the draft revision after a semantic workspace change."""
+        """Advance the workspace revision after a semantic state change."""
         return self.next()
 
 
@@ -113,8 +113,9 @@ class WorkspaceContext:
     """Non-physical context in which the prepared calculation will be launched.
 
     ``directory`` controls execution/output placement. ``active_project_id`` is
-    launch attribution only: changing it must not invalidate an in-progress
-    structure or input-parameter edit.
+    launch attribution only. Project selection does not invalidate calculation
+    edits; directory changes still advance the aggregate generation because file
+    load transactions may atomically replace both calculation data and directory.
     """
 
     directory: str | None = None
@@ -126,13 +127,15 @@ class WorkspaceState:
 
     ``calculation`` answers *what would be calculated*. ``context`` answers
     *where/how the next launch belongs*. Results deliberately do not live here.
-    ``generation`` protects revision-sensitive calculation-edit workflows; a
-    project-selection-only change does not advance it.
+    ``generation`` protects revision-sensitive aggregate workspace transactions.
 
-    The component keyword arguments remain a compact construction API for tests
-    and composition roots. Runtime code should mutate the nested state only
-    through ``WorkspaceController``.
+    Component keyword arguments are construction convenience only. Once created,
+    the aggregate intentionally exposes no flat ``atoms``/``directory`` aliases:
+    callers must use ``calculation`` or ``context`` explicitly, normally through
+    ``WorkspaceController``.
     """
+
+    __slots__ = ("calculation", "context", "generation")
 
     def __init__(
         self,
@@ -188,79 +191,6 @@ class WorkspaceState:
         )
         self.generation = generation
 
-    # Explicit aggregate conveniences keep callers concise without obscuring
-    # ownership in the stored data model.
-    @property
-    def atoms(self) -> Any | None:
-        return self.calculation.atoms
-
-    @atoms.setter
-    def atoms(self, value: Any | None) -> None:
-        self.calculation.atoms = value
-
-    @property
-    def input_parameters(self) -> Any | None:
-        return self.calculation.input_parameters
-
-    @input_parameters.setter
-    def input_parameters(self, value: Any | None) -> None:
-        self.calculation.input_parameters = value
-
-    @property
-    def directory(self) -> str | None:
-        return self.context.directory
-
-    @directory.setter
-    def directory(self, value: str | None) -> None:
-        self.context.directory = value
-
-    @property
-    def potential_path(self) -> str | None:
-        return self.calculation.potential_path
-
-    @potential_path.setter
-    def potential_path(self, value: str | None) -> None:
-        self.calculation.potential_path = value
-
-    @property
-    def structure_id(self) -> int | None:
-        return self.calculation.structure_id
-
-    @structure_id.setter
-    def structure_id(self, value: int | None) -> None:
-        self.calculation.structure_id = value
-
-    @property
-    def state_id(self) -> int | None:
-        return self.calculation.state_id
-
-    @state_id.setter
-    def state_id(self, value: int | None) -> None:
-        self.calculation.state_id = value
-
-    @property
-    def empty_spheres(self) -> EmptySpheresState | None:
-        return self.calculation.empty_spheres
-
-    @empty_spheres.setter
-    def empty_spheres(self, value: EmptySpheresState | None) -> None:
-        self.calculation.empty_spheres = value
-
-    @property
-    def restarted(self) -> bool:
-        return self.calculation.restarted
-
-    @restarted.setter
-    def restarted(self, value: bool) -> None:
-        self.calculation.restarted = bool(value)
-
-    @property
-    def empty_spheres_added(self) -> int | None:
-        return self.calculation.empty_spheres_added
-
-    def structure_kind(self) -> StructureKind | None:
-        return self.calculation.structure_kind()
-
     def is_calculation_input_complete(self) -> bool:
         """Return whether all generic inputs required to launch a task exist."""
         return (
@@ -268,12 +198,3 @@ class WorkspaceState:
             and self.calculation.input_parameters is not None
             and bool(self.context.directory)
         )
-
-    def scf_status(self) -> str | None:
-        return self.calculation.scf_status()
-
-    def is_scf_converged(self) -> bool:
-        return self.calculation.is_scf_converged()
-
-    def has_vacuum_sites(self) -> bool:
-        return self.calculation.has_vacuum_sites()
