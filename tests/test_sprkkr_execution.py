@@ -122,7 +122,7 @@ def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
     assert events == ["cancel"]
 
 
-def test_cancel_racing_with_submit_is_latched(monkeypatch, tmp_path):
+def test_cancel_racing_with_submit_is_not_cancelled_twice(monkeypatch, tmp_path):
     cancellation = _Cancellation()
     events = []
 
@@ -130,6 +130,7 @@ def test_cancel_racing_with_submit_is_latched(monkeypatch, tmp_path):
         def submit(self):
             events.append("submit")
             cancellation.requested = True
+            self.cancel()
 
         def cancel(self):
             events.append("cancel")

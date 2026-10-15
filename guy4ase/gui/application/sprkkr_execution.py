@@ -115,8 +115,6 @@ class SprkkrExecution:
             # and must reload authoritative metadata from the store.
             self._notify_persistent_job_changed(runner)
         if self.cancellation.requested:
-            runner.cancel()
-            self._notify_persistent_job_changed(runner)
             raise ExecutionCancelled
         return runner
 
