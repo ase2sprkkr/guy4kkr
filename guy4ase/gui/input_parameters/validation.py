@@ -31,7 +31,7 @@ def validate_setup(parameters):
         error = energy_reference_error(parameters.ENERGY)
         if error:
             errors.append((error, ('ENERGY', 'EMIN')))
-    if parameters.task_name.lower() == 'arpes':
+    if parameters.task_definition.name.lower() == 'arpes':
         errors.extend(
             (error, ('SPEC_EL', 'THETA'))
             for error in angular_scan_errors(parameters)

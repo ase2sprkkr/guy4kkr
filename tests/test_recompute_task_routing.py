@@ -69,3 +69,83 @@ def test_non_guided_result_recompute_uses_expert_editor(monkeypatch):
         parent,
         {"position_like_window": "expert-input", "track_launch_monitor": None},
     )]
+
+
+def test_recompute_routes_editor_by_requested_input_task(monkeypatch):
+    historical = InputParameters.create("ARPES")
+    edited = historical.copy(copy_values=True)
+    record = SimpleNamespace(
+        task_name="spleed",
+        input_parameters=historical,
+    )
+    replacements = []
+    controller = SimpleNamespace(
+        result_store=SimpleNamespace(result=lambda result_id: record),
+        directory="calculation",
+        generation=object(),
+        atoms=Atoms("Fe"),
+        replace_input_parameters=lambda parameters, *, expected_generation: (
+            replacements.append((parameters, expected_generation)) or object()
+        ),
+    )
+    dialog_calls = []
+
+    class GuidedDialog:
+        class DialogCode:
+            Accepted = object()
+
+        def __init__(self, task, parameters, *, parent, atoms):
+            dialog_calls.append((task, parameters, parent, atoms))
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def parameters(self):
+            return edited
+
+    monkeypatch.setattr(calculation_flow, "GuidedInputParametersDialog", GuidedDialog)
+    monkeypatch.setattr(
+        calculation_flow,
+        "edit_input_parameters",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("requested ARPES must use the Guided editor")
+        ),
+    )
+    monkeypatch.setattr(
+        calculation_flow,
+        "document_change_applied",
+        lambda parent, change: True,
+    )
+    launched = object()
+    launch_calls = []
+
+    def run(controller_arg, recent_files, parent, **kwargs):
+        launch_calls.append((controller_arg, recent_files, parent, kwargs))
+        return launched
+
+    monkeypatch.setattr(calculation_flow, "run_calculation", run)
+    parent = object()
+    recent_files = object()
+
+    result = calculation_flow.recompute_result(
+        controller,
+        recent_files,
+        parent,
+        18,
+    )
+
+    assert result is launched
+    assert len(dialog_calls) == 1
+    task, dialog_parameters, dialog_parent, dialog_atoms = dialog_calls[0]
+    assert task.lower() == "arpes"
+    assert dialog_parameters is not historical
+    assert dialog_parameters.task_name.lower() == "arpes"
+    assert dialog_parent is parent
+    assert dialog_atoms is controller.atoms
+    assert replacements == [(edited, controller.generation)]
+    assert launch_calls == [(
+        controller,
+        recent_files,
+        parent,
+        {"position_like_window": "guided-input", "track_launch_monitor": None},
+    )]

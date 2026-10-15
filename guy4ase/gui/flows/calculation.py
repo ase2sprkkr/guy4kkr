@@ -275,8 +275,7 @@ def recompute_result(
     result never silently switches calculation lineage.
     """
     record = controller.result_store.result(result_id)
-    task = record.task_name
-    if not task or record.input_parameters is None:
+    if record.input_parameters is None:
         return None
 
     if not controller.directory and not choose_working_directory(
@@ -293,13 +292,14 @@ def recompute_result(
 
     try:
         parameters = record.input_parameters.copy(copy_values=True)
+        requested_task = parameters.task_name
     except AttributeError:
         return None
 
     position_like_window: str
-    if is_guided_task(task):
+    if is_guided_task(requested_task):
         dialog = GuidedInputParametersDialog(
-            task,
+            requested_task,
             parameters,
             parent=parent,
             atoms=atoms,
