@@ -28,18 +28,27 @@ def _atoms_with_potential(marker: str, *, x: float = 0.0):
     return atoms
 
 
-def _loaded_scf(atoms, potential_path: str | Path | None = None):
+def _loaded_scf(
+    atoms,
+    *,
+    provenance,
+    potential_path: str | Path | None = None,
+    directory=None,
+):
+    result = SimpleNamespace(
+        task_name="scf",
+        produces_potential=True,
+        output_values={},
+        provenance=provenance,
+    )
     return LoadedResult(
-        result=SimpleNamespace(
-            task_name="scf",
-            produces_potential=True,
-            output_values={},
-        ),
+        result=result,
         output_path=None,
         potential_path=(Path(potential_path) if potential_path is not None else None),
         atoms=atoms,
         potential_error=None,
-        directory=None,
+        directory=directory,
+        input_parameters=_Parameters(),
     )
 
 
@@ -51,20 +60,26 @@ def test_use_result_state_never_substitutes_current_atoms_for_historical_state(t
             directory=str(tmp_path),
         )
     )
-    current_request = controller.create_calculation_request()
-    historical_request = controller.create_calculation_request()
+    current_provenance = controller.create_run_provenance()
+    historical_provenance = controller.create_run_provenance()
 
     current_atoms = _atoms_with_potential("current", x=0.1)
     current = controller.adopt_calculation_result(
-        _loaded_scf(current_atoms),
-        request=current_request,
+        _loaded_scf(
+            current_atoms,
+            provenance=current_provenance,
+            directory=str(tmp_path),
+        )
     )
     assert current.workspace_updated
 
     historical_atoms = _atoms_with_potential("historical", x=0.2)
     historical = controller.adopt_calculation_result(
-        _loaded_scf(historical_atoms),
-        request=historical_request,
+        _loaded_scf(
+            historical_atoms,
+            provenance=historical_provenance,
+            directory=str(tmp_path),
+        )
     )
     assert not historical.workspace_updated
     assert current.record.structure_id == historical.record.structure_id
@@ -92,17 +107,25 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
             directory=str(tmp_path),
         )
     )
-    historical_request = controller.create_calculation_request()
+    historical_provenance = controller.create_run_provenance()
     historical = controller.adopt_calculation_result(
-        _loaded_scf(_atoms_with_potential("historical"), historical_path),
-        request=historical_request,
+        _loaded_scf(
+            _atoms_with_potential("historical"),
+            provenance=historical_provenance,
+            potential_path=historical_path,
+            directory=str(tmp_path),
+        )
     )
     assert historical.workspace_updated
 
-    current_request = controller.create_calculation_request()
+    current_provenance = controller.create_run_provenance()
     current = controller.adopt_calculation_result(
-        _loaded_scf(_atoms_with_potential("current"), current_path),
-        request=current_request,
+        _loaded_scf(
+            _atoms_with_potential("current"),
+            provenance=current_provenance,
+            potential_path=current_path,
+            directory=str(tmp_path),
+        )
     )
     assert current.workspace_updated
 
