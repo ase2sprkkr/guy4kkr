@@ -8,8 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
+from ase2sprkkr.execution import ProjectRepository
 
-from guy4ase.gui.application.projects import ProjectRepository
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.main import GuiApplication

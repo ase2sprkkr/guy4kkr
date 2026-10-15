@@ -6,9 +6,9 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
+from ase2sprkkr.execution import ProjectRepository
 
 import guy4ase.main as main_module
-from guy4ase.gui.application.projects import ProjectRepository
 from guy4ase.main import GuiApplication
 
 

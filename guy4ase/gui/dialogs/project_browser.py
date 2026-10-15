@@ -19,13 +19,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from guy4ase.gui.application.projects import (
+from ase2sprkkr.execution import (
     Project,
     ProjectConflictError,
     ProjectRepository,
     ProjectRepositoryError,
 )
+
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.object_view import execute_value_action

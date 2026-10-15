@@ -7,14 +7,14 @@ from weakref import WeakKeyDictionary
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
-
-from guy4ase.gui.application.persistent_jobs import PersistentJobSource
-from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.projects import (
+from ase2sprkkr.execution import (
     ProjectConflictError,
     ProjectRepository,
     ProjectRepositoryError,
 )
+
+from guy4ase.gui.application.persistent_jobs import PersistentJobSource
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.settings import ApplicationSettings
