@@ -159,11 +159,7 @@ class GuiApplication(QObject):
 
     def set_active_project(self, project_id: str | None) -> None:
         """Select the project captured by subsequently created launch requests."""
-        if project_id is not None:
-            project_id = self.projects.project(str(project_id)).id
         self.controller.set_active_project(project_id)
-        if self._project_browser is not None:
-            self._project_browser.set_active_project(project_id)
 
     def _track_launch_monitor(self, monitor_window: SprkkrRunWindow) -> None:
         """Transfer application ownership before the launch worker starts."""
@@ -179,24 +175,18 @@ class GuiApplication(QObject):
         if project_id is None:
             return
 
-        job = self.persistent_jobs.job(job_id)
-        if job is None:
-            return
-
         try:
-            self.projects.add_run(project_id, job.id)
+            self.projects.add_run(project_id, job_id)
         except KeyError:
             # A project may legitimately be deleted after this run was launched.
             # Only clear the current selection if it still points at that project.
             if self.controller.active_project_id == project_id:
                 self.controller.set_active_project(None)
-                if self._project_browser is not None:
-                    self._project_browser.set_active_project(None)
         except ProjectRepositoryError:
             # Later lifecycle updates retry this idempotent operation naturally.
             logger.exception(
                 "Cannot assign persistent run %s to launch project %s",
-                job.id,
+                job_id,
                 project_id,
             )
 
@@ -217,6 +207,7 @@ class GuiApplication(QObject):
                 active_project_id=self.controller.active_project_id,
             )
             dialog.activeProjectRequested.connect(self.set_active_project)
+            self.controller.activeProjectChanged.connect(dialog.set_active_project)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(self._project_browser_closed)
             self._project_browser = dialog
