@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -370,12 +371,11 @@ class ProjectBrowserDialog(QDialog):
         )
         if not accepted:
             return
-        try:
-            edited = project.rename(name)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Rename Project Failed", str(exc))
-            return
-        self._save_project(project, edited, "Rename Project")
+        self._save_project_change(
+            project,
+            lambda current: current.rename(name),
+            "Rename Project",
+        )
 
     def _move_project(self) -> None:
         project = self._selected_project()
@@ -397,12 +397,11 @@ class ProjectBrowserDialog(QDialog):
         parent_id = None
         if label != "(root)":
             parent_id = candidates[labels.index(label) - 1].id
-        try:
-            edited = project.move_to(parent_id)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Move Project Failed", str(exc))
-            return
-        self._save_project(project, edited, "Move Project")
+        self._save_project_change(
+            project,
+            lambda current: current.move_to(parent_id),
+            "Move Project",
+        )
 
     def _delete_project(self) -> None:
         project = self._selected_project()
@@ -446,9 +445,9 @@ class ProjectBrowserDialog(QDialog):
         if not accepted:
             return
         project = candidates[labels.index(label)]
-        self._save_project(
+        self._save_project_change(
             project,
-            project.add_run(persistent_ref),
+            lambda current: current.add_run(persistent_ref),
             "Add Run to Project",
         )
 
@@ -457,31 +456,37 @@ class ProjectBrowserDialog(QDialog):
         persistent_ref = self.jobs.selected_persistent_ref
         if project is None or persistent_ref is None:
             return
-        self._save_project(
+        self._save_project_change(
             project,
-            project.remove_run(persistent_ref),
+            lambda current: current.remove_run(persistent_ref),
             "Remove Run from Project",
         )
 
-    def _save_project(
+    def _save_project_change(
         self,
         original: Project,
-        edited: Project,
+        change: Callable[[Project], Project],
         title: str,
     ) -> Project | None:
+        try:
+            edited = change(original)
+        except ValueError as exc:
+            QMessageBox.warning(self, f"{title} Failed", str(exc))
+            return None
         if edited == original:
             return original
+
         try:
             saved = self._repository.save(
                 edited,
                 expected_generation=original.generation,
             )
-        except ProjectConflictError as conflict:
+        except ProjectConflictError:
             answer = QMessageBox.question(
                 self,
                 "Project Changed",
                 "This project was modified by another Guy4ASE instance. "
-                "Overwrite the newer version with your edited snapshot?",
+                "Apply your change to the newer version instead?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
@@ -489,11 +494,23 @@ class ProjectBrowserDialog(QDialog):
                 self.reload_projects()
                 return None
             try:
-                saved = self._repository.save(
-                    edited,
-                    expected_generation=conflict.current.generation,
-                    overwrite=True,
+                current = self._repository.project(original.id)
+                edited = change(current)
+                if edited == current:
+                    saved = current
+                else:
+                    saved = self._repository.save(
+                        edited,
+                        expected_generation=current.generation,
+                    )
+            except ProjectConflictError:
+                QMessageBox.warning(
+                    self,
+                    f"{title} Failed",
+                    "The project changed again while applying your edit. Please retry.",
                 )
+                self.reload_projects()
+                return None
             except (ProjectRepositoryError, KeyError, ValueError) as exc:
                 QMessageBox.warning(self, f"{title} Failed", str(exc))
                 return None
