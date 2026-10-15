@@ -9,7 +9,11 @@ from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_presentation import present_result_record
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -52,14 +56,18 @@ def _loaded_scf(
     )
 
 
-def test_use_result_state_never_substitutes_current_atoms_for_historical_state(tmp_path):
-    controller = WorkspaceController(
-        WorkspaceState(
+def _workspace(tmp_path):
+    return WorkspaceState(
+        calculation=CalculationState(
             atoms=_atoms_with_potential("root"),
             input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
+        ),
+        context=WorkspaceContext(directory=str(tmp_path)),
     )
+
+
+def test_use_result_state_never_substitutes_current_atoms_for_historical_state(tmp_path):
+    controller = WorkspaceController(_workspace(tmp_path))
     current_provenance = controller.create_run_provenance()
     historical_provenance = controller.create_run_provenance()
 
@@ -100,13 +108,7 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
     historical_path.write_text("historical file", encoding="utf-8")
     current_path.write_text("current file", encoding="utf-8")
 
-    controller = WorkspaceController(
-        WorkspaceState(
-            atoms=_atoms_with_potential("root"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
-    )
+    controller = WorkspaceController(_workspace(tmp_path))
     historical_provenance = controller.create_run_provenance()
     historical = controller.adopt_calculation_result(
         _loaded_scf(

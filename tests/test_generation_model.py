@@ -3,7 +3,12 @@ from types import SimpleNamespace
 from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import Generation, WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    Generation,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     WorkspaceController,
@@ -23,9 +28,11 @@ def _result(task_name):
 def _controller(tmp_path):
     return WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=_Parameters(),
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

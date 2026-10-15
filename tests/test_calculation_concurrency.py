@@ -14,7 +14,11 @@ from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import load_result, load_result_file
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     WorkspaceController,
@@ -40,10 +44,21 @@ class _Cancellation:
         return True
 
 
+def _workspace(*, atoms=None, input_parameters=None, directory=None, potential_path=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            input_parameters=input_parameters,
+            potential_path=potential_path,
+        ),
+        context=WorkspaceContext(directory=directory),
+    )
+
+
 def test_confirmed_structure_edit_is_copy_on_write():
     atoms = Atoms("Fe")
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
+        _workspace(atoms=atoms, potential_path="Fe.pot")
     )
     structures = []
     results = []
@@ -71,7 +86,7 @@ def test_confirmed_structure_edit_is_copy_on_write():
 
 def test_failed_structure_edit_leaves_published_atoms_untouched():
     atoms = Atoms("Fe")
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(_workspace(atoms=atoms))
     generation = controller.generation
 
     def fail(candidate):
@@ -91,7 +106,7 @@ def test_run_window_snapshots_atoms_and_parameter_values(tmp_path):
     atoms = Atoms("Fe")
     parameters = _Parameters(7)
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=atoms,
             input_parameters=parameters,
             directory=str(tmp_path),
@@ -127,7 +142,7 @@ def test_backend_preparation_does_not_block_new_workspace_version(
     atoms = Atoms("Fe")
     parameters = _Parameters(1)
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=atoms,
             input_parameters=parameters,
             directory=str(tmp_path),
@@ -187,7 +202,7 @@ def test_backend_preparation_does_not_block_new_workspace_version(
 
 def test_backend_preparation_error_propagates(monkeypatch, tmp_path):
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters(1),
             directory=str(tmp_path),
@@ -214,7 +229,7 @@ def test_backend_preparation_error_propagates(monkeypatch, tmp_path):
 def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     original = Atoms("Fe", cell=(1, 1, 1), pbc=True)
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=original,
             input_parameters=_Parameters(1),
             directory=str(tmp_path),
@@ -249,7 +264,7 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
 
 
 def test_reset_advances_instead_of_resetting_generation():
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("Fe")))
     controller.replace_structure(controller.atoms)
     before_reset = controller.generation
 
@@ -260,7 +275,7 @@ def test_reset_advances_instead_of_resetting_generation():
 
 def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_path):
     loaded_atoms = Atoms("Fe")
-    structure_controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
+    structure_controller = WorkspaceController(_workspace(atoms=Atoms("Cu")))
     original_structure = structure_controller.atoms
     structure_history = RecentFiles(tmp_path / "structure-recent.json")
 
@@ -298,7 +313,7 @@ def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp
         "from_file",
         staticmethod(lambda _path: result),
     )
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("Cu")))
     original_structure = controller.atoms
     loaded_result = load_result_file(tmp_path / "Fe.out")
 
@@ -314,7 +329,7 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
     original_directory = tmp_path / "first"
     next_directory = tmp_path / "next"
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters(1),
             directory=str(original_directory),
@@ -343,7 +358,7 @@ def test_structure_file_is_parsed_before_revision_checked(monkeypatch, tmp_path)
     parent = QWidget()
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     reads = []
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("Cu")))
     history = RecentFiles(tmp_path / "recent.json")
 
     def read(path):

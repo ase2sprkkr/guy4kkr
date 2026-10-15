@@ -7,10 +7,16 @@ from ase import Atoms
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.main import GuiApplication
+
+
+def _workspace(*, atoms=None, restarted=False):
+    return WorkspaceState(
+        calculation=CalculationState(atoms=atoms, restarted=restarted)
+    )
 
 
 def test_controller_exposes_structure_operation_capabilities(monkeypatch):
@@ -46,7 +52,7 @@ def test_controller_exposes_structure_operation_capabilities(monkeypatch):
 
 def test_restarted_workspace_does_not_require_another_scf_reset(monkeypatch):
     controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe"), restarted=True)
+        _workspace(atoms=Atoms("Fe"), restarted=True)
     )
     monkeypatch.setattr(controller, "is_scf_converged", lambda: True)
     monkeypatch.setattr(controller, "scf_status", lambda: "ITR")
@@ -57,7 +63,7 @@ def test_restarted_workspace_does_not_require_another_scf_reset(monkeypatch):
 def test_build2d_flow_rejects_non_3d_structure(tmp_path, monkeypatch):
     _application = QApplication.instance() or QApplication([])
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms(
                 "Fe",
                 cell=(2.8, 2.8, 2.8),
@@ -141,7 +147,7 @@ def test_expert_build2d_action_uses_shared_capability(tmp_path):
 
 def test_empty_sphere_warning_does_not_preemptively_reset_scf(monkeypatch):
     _application = QApplication.instance() or QApplication([])
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("Fe")))
     monkeypatch.setattr(
         controller, "structure_change_requires_scf_restart", lambda: True
     )
@@ -175,7 +181,7 @@ def test_empty_sphere_warning_does_not_preemptively_reset_scf(monkeypatch):
 
 def test_empty_sphere_warning_can_cancel_before_search(monkeypatch):
     _application = QApplication.instance() or QApplication([])
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("Fe")))
     monkeypatch.setattr(
         controller, "structure_change_requires_scf_restart", lambda: True
     )

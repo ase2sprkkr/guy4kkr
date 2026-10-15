@@ -14,7 +14,7 @@ from guy4ase.gui.application.result_presentation import (
     present_result_record,
     present_result_tree,
 )
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -28,6 +28,10 @@ class _Value:
 
     def actions(self):
         return ()
+
+
+def _workspace(atoms):
+    return WorkspaceState(calculation=CalculationState(atoms=atoms))
 
 
 def _result(task: str, *, produces_potential: bool | None = None):
@@ -77,7 +81,7 @@ def _make_two_scf_versions(controller, potential, tmp_path):
 def test_potential_source_uses_result_capability_not_task_name(tmp_path):
     potential = tmp_path / "semantic.pot"
     potential.write_text("potential", encoding="utf-8")
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     store = controller.result_store
 
     record = store.add_result(
@@ -96,7 +100,7 @@ def test_potential_source_uses_result_capability_not_task_name(tmp_path):
 
 def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
     potential = tmp_path / "Fe.pot"
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     scf1, scf2 = _make_two_scf_versions(controller, potential, tmp_path)
     store = controller.result_store
 
@@ -144,7 +148,7 @@ def test_continue_current_version_reuses_scf2_state(tmp_path, monkeypatch):
 def test_current_version_action_hides_when_scf2_state_is_active(tmp_path):
     _application = QApplication.instance() or QApplication([])
     potential = tmp_path / "Fe.pot"
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     scf1, scf2 = _make_two_scf_versions(controller, potential, tmp_path)
     store = controller.result_store
     scf2_state = store.state(scf2.output_state_id)
@@ -170,7 +174,7 @@ def test_current_version_action_hides_when_scf2_state_is_active(tmp_path):
 def test_current_version_policy_approves_version_and_widget_emits_only_intent(tmp_path):
     _application = QApplication.instance() or QApplication([])
     potential = tmp_path / "Fe.pot"
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     scf1, _scf2 = _make_two_scf_versions(controller, potential, tmp_path)
     store = controller.result_store
 

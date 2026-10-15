@@ -1,4 +1,4 @@
-"""Mutable workspace draft owned by ``WorkspaceController``."""
+"""Mutable workspace state owned by ``WorkspaceController``."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -42,8 +42,8 @@ class EmptySpheresState:
 
 
 @dataclass
-class WorkspaceState:
-    """Application draft from which the next calculation will be launched.
+class CalculationState:
+    """Physical/input state from which the next calculation will be launched.
 
     ``atoms`` is the sole physical authority, including an attached SPR-KKR
     potential when present. ``potential_path`` is provenance/artifact metadata
@@ -53,11 +53,9 @@ class WorkspaceState:
 
     atoms: Any | None = None
     input_parameters: Any | None = None
-    directory: str | None = None
     potential_path: str | None = None
     empty_spheres: EmptySpheresState | None = None
     restarted: bool = False
-    active_project_id: str | None = None
 
     @property
     def empty_spheres_added(self) -> int | None:
@@ -68,16 +66,8 @@ class WorkspaceState:
     def structure_kind(self) -> StructureKind | None:
         return detect_structure_kind(self.atoms)
 
-    def is_calculation_input_complete(self) -> bool:
-        """Return whether all generic inputs required to launch a task exist."""
-        return (
-            self.atoms is not None
-            and self.input_parameters is not None
-            and bool(self.directory)
-        )
-
     def scf_status(self) -> str | None:
-        """Return the effective SCFSTATUS of the active workspace state."""
+        """Return the effective SCFSTATUS of the active calculation state."""
         atoms = self.atoms
         if atoms is None:
             return None
@@ -94,7 +84,7 @@ class WorkspaceState:
         return status or None
 
     def is_scf_converged(self) -> bool:
-        """Return convergence of the active workspace potential only."""
+        """Return convergence of the active calculation potential only."""
         if self.restarted:
             return False
         atoms = self.atoms
@@ -111,3 +101,19 @@ class WorkspaceState:
         return any(
             int(number) == 0 for number in getattr(self.atoms, "numbers", ())
         )
+
+
+@dataclass
+class WorkspaceContext:
+    """Non-physical context used when launching the next calculation."""
+
+    directory: str | None = None
+    active_project_id: str | None = None
+
+
+@dataclass
+class WorkspaceState:
+    """Workspace state split into calculation data and non-physical context."""
+
+    calculation: CalculationState = field(default_factory=CalculationState)
+    context: WorkspaceContext = field(default_factory=WorkspaceContext)

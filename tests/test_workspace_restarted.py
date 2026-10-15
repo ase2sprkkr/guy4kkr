@@ -5,7 +5,11 @@ from ase import Atoms
 from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     WorkspaceController,
@@ -51,30 +55,34 @@ def _loaded_result(task, atoms, *, provenance=None):
 def _controller(*, restarted=True):
     return WorkspaceController(
         WorkspaceState(
-            atoms=_scf_atoms(),
-            input_parameters=_Parameters(),
-            directory="calculation",
-            restarted=restarted,
+            calculation=CalculationState(
+                atoms=_scf_atoms(),
+                input_parameters=_Parameters(),
+                restarted=restarted,
+            ),
+            context=WorkspaceContext(directory="calculation"),
         )
     )
 
 
 def test_restarted_overrides_atoms_convergence_but_keeps_auto_detection_default():
     atoms = _scf_atoms()
-    workspace = WorkspaceState(atoms=atoms)
+    calculation = CalculationState(atoms=atoms)
 
-    assert workspace.scf_status() == "CONVERGED"
-    assert workspace.is_scf_converged()
+    assert calculation.scf_status() == "CONVERGED"
+    assert calculation.is_scf_converged()
 
-    workspace.restarted = True
+    calculation.restarted = True
 
-    assert workspace.scf_status() == "START"
-    assert not workspace.is_scf_converged()
+    assert calculation.scf_status() == "START"
+    assert not calculation.is_scf_converged()
 
 
 def test_confirmed_structure_edit_marks_workspace_restarted():
     atoms = _scf_atoms()
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(
+        WorkspaceState(calculation=CalculationState(atoms=atoms))
+    )
 
     change = controller.apply_structure_edit(
         lambda current: current,
@@ -88,7 +96,9 @@ def test_confirmed_structure_edit_marks_workspace_restarted():
 
 def test_use_for_new_calculation_marks_restart_without_touching_atoms():
     atoms = _scf_atoms()
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(
+        WorkspaceState(calculation=CalculationState(atoms=atoms))
+    )
     previous_state_id = controller.state_id
 
     change = controller.use_for_new_calculation(

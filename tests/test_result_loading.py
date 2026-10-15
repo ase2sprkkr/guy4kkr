@@ -7,8 +7,22 @@ from ase import Atoms
 
 from guy4ase.gui.application import result_loading as result_loading_module
 from guy4ase.gui.application.result_loading import load_result, load_result_file
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+
+
+def _workspace(*, atoms=None, directory=None, potential_path=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            potential_path=potential_path,
+        ),
+        context=WorkspaceContext(directory=directory),
+    )
 
 
 def test_result_loading_resolves_relative_artifacts_from_result_directory(
@@ -181,7 +195,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
     )
     original_atoms = Atoms("Cu")
     controller = WorkspaceController(
-        WorkspaceState(atoms=original_atoms, potential_path="Cu.pot")
+        _workspace(atoms=original_atoms, potential_path="Cu.pot")
     )
 
     adoption = controller.adopt_external_result(load_result_file(output))
@@ -195,7 +209,7 @@ def test_missing_referenced_potential_is_nonfatal_and_does_not_replace_workspace
 
 def test_result_parse_failure_has_no_workspace_side_effects(tmp_path, monkeypatch):
     atoms = Atoms("Cu")
-    workspace = WorkspaceState(
+    workspace = _workspace(
         atoms=atoms,
         directory="original",
         potential_path="Cu.pot",

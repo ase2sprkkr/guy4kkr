@@ -7,7 +7,7 @@ import numpy as np
 from ase import Atoms
 
 from guy4ase.gui.application.result_store import ResultStore
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -68,7 +68,9 @@ def test_result_store_api_has_no_ignored_atoms_arguments():
 
 def test_historical_snapshot_can_restore_structure_without_retaining_live_atoms():
     original = _atoms()
-    controller = WorkspaceController(WorkspaceState(atoms=original))
+    controller = WorkspaceController(
+        WorkspaceState(calculation=CalculationState(atoms=original))
+    )
     structure_id = controller.structure_id
     state_id = controller.state_id
     assert structure_id is not None

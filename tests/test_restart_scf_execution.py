@@ -5,7 +5,11 @@ from ase import Atoms
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     RunProvenance,
     WorkspaceController,
@@ -29,10 +33,12 @@ def test_workspace_restart_is_recorded_from_result_provenance(tmp_path):
     parameters = _Parameters()
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=parameters,
-            directory=str(tmp_path),
-            restarted=True,
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=parameters,
+                restarted=True,
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

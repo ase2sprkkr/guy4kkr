@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     RunProvenance,
     WorkspaceController,
@@ -15,7 +15,12 @@ from guy4ase.gui.application.workspace_controller import (
 
 def test_scf_does_not_fast_forward_across_use_for_new_calculation():
     controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe"), potential_path="P0.pot")
+        WorkspaceState(
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                potential_path="P0.pot",
+            )
+        )
     )
     provenance = RunProvenance(
         structure_id=controller.structure_id,

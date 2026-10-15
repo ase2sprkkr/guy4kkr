@@ -2,7 +2,7 @@ import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import calculation as calculation_flow
 
@@ -16,9 +16,11 @@ class _Parameters:
 def _controller(tmp_path):
     return WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=_Parameters(),
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

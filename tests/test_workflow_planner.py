@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pytest
 from ase import Atoms
 
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.input_parameters.tasks import (
     WorkflowStage,
@@ -314,8 +314,10 @@ def test_empty_sphere_recommendation_is_consumed_from_workspace_policy():
 def test_real_controller_pending_restart_maps_to_fresh_scf_plan():
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
-            restarted=True,
+            calculation=CalculationState(
+                atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+                restarted=True,
+            )
         )
     )
 
@@ -330,7 +332,11 @@ def test_real_controller_pending_restart_maps_to_fresh_scf_plan():
 
 def test_real_controller_build_2d_capability_drives_derived_structure_commands():
     controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True))
+        WorkspaceState(
+            calculation=CalculationState(
+                atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+            )
+        )
     )
 
     plan = WorkflowPlanner().for_workspace(controller)

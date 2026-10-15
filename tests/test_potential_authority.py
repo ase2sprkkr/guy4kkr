@@ -14,7 +14,11 @@ from guy4ase.gui.application.historical_state import (
 )
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import PotentialVersionChanged
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import files as file_flows
 
@@ -23,6 +27,17 @@ class _Parameters:
     def copy(self, *, copy_values: bool):
         assert copy_values
         return self
+
+
+def _workspace(*, atoms, input_parameters=None, directory=None, potential_path=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            input_parameters=input_parameters,
+            potential_path=potential_path,
+        ),
+        context=WorkspaceContext(directory=directory),
+    )
 
 
 def _result(task_name: str):
@@ -104,7 +119,7 @@ def test_run_provenance_does_not_duplicate_physical_inputs(tmp_path):
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=atoms,
             input_parameters=_Parameters(),
             directory=str(tmp_path),
@@ -127,7 +142,7 @@ def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_p
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=atoms,
             input_parameters=_Parameters(),
             directory=str(tmp_path),
@@ -168,7 +183,7 @@ def test_deleted_pot_backed_state_does_not_fall_back_to_retained_atoms(
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=atoms,
             input_parameters=_Parameters(),
             directory=str(tmp_path),
@@ -210,7 +225,7 @@ def test_historical_resolution_of_unknown_current_potfil_is_read_only(
     path = tmp_path / "Fe.pot"
     path.write_text("historical potential")
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters(),
             directory=str(tmp_path),
@@ -272,7 +287,7 @@ def test_unknown_current_potfil_version_stays_in_structure_lineage(
     path = tmp_path / "Fe.pot"
     path.write_text("historical potential")
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters(),
             directory=str(tmp_path),

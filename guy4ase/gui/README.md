@@ -51,11 +51,11 @@ alternate APIs.
   workflow policy, or user-facing presentation copy and imports no other
   `guy4ase.gui` module.
 - `application`: application/document state, calculation execution, and
-  provenance. `WorkspaceState` represents the mutable draft prepared for the
-  next calculation; `ResultStore` owns calculation history independently of
-  that draft; `WorkspaceController` is the mutation/signalling boundary between
-  them and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
-  immutable calculation request. Persistent application state such as recent
+  provenance. `WorkspaceState` groups mutable `CalculationState` and
+  `WorkspaceContext`; `ResultStore` owns calculation history independently of
+  both; `WorkspaceController` is the mutation/signalling boundary between them
+  and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
+  already detached launch snapshot. Persistent application state such as recent
   files and settings also lives here.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. They may show modal UI and call public controller transitions,
@@ -99,13 +99,13 @@ active or matching pending launch monitor exists. Attached monitors are likewise
 registered before their worker starts. Persistent job views never own backend
 recovery or monitor-window lifecycle.
 
-Calculation execution is deliberately not owned by a GUI run registry. A
-`CalculationRequest` captures exact launch provenance, `SprkkrExecution` owns
-runner creation/submission/cancellation/result loading, and `RunMonitorWindow`
-is only the generic Qt monitor. `PersistentJobsController` owns GUI window
-lifetime and identity, including pending launch windows, but not runner execution
-or persistent state. Persistent execution identity and collision policy remain
-in ASE2SPRKKR's runner/persistence layer.
+Calculation execution is deliberately not owned by a GUI run registry.
+`RunProvenance` carries only Guy4ASE lineage that ASE2SPRKKR does not own;
+`SprkkrExecution` owns runner creation/submission/cancellation/result loading,
+and `RunMonitorWindow` is only the generic Qt monitor. `PersistentJobsController`
+owns GUI window lifetime and identity, including pending launch windows, but not
+runner execution or persistent state. Persistent execution identity and
+collision policy remain in ASE2SPRKKR's runner/persistence layer.
 
 Package `__init__.py` files should stay lightweight and should not become
 alternate import APIs for dialog/widget internals. Canonical imports use the
@@ -115,15 +115,18 @@ added to accommodate tests or obsolete call shapes.
 
 ## Workspace, results, and provenance
 
-`WorkspaceState` is the draft for the **next** calculation. Results deliberately
-do not live in it. Its `structure_id` identifies the user-visible structure and
-`state_id` identifies the exact calculation state from which the next task will
-start.
+`WorkspaceState` is deliberately split by responsibility. `CalculationState`
+answers **what would be calculated**: atoms, input parameters, potential
+provenance, empty-sphere state, and pending SCF-restart intent.
+`WorkspaceContext` carries non-physical context for the next launch: the working
+directory and active project. Results deliberately do not live in either part.
 
-`WorkspaceState.atoms` is the sole physical authority for the active structure,
-including an attached SPR-KKR potential when one exists. `potential_path` is
-artifact/provenance metadata only; calculation launch must not silently use it
-as a second physical source of truth.
+`CalculationState.atoms` is the sole physical authority for the active
+structure, including an attached SPR-KKR potential when one exists.
+`potential_path` is artifact/provenance metadata only; calculation launch must
+not silently use it as a second physical source of truth. Result-tree
+`structure_id` and `state_id`, together with stale-callback generation, are
+bookkeeping owned by `WorkspaceController`, not fields of `WorkspaceState`.
 
 `ResultStore` owns result history and calculation-state provenance independently
 of the mutable workspace. A result may refer to an input state and, when the
@@ -138,22 +141,21 @@ definition. GUI-internal operation results implement the same small capability
 contract explicitly. `ResultStore` derives potential provenance from the result
 it records rather than accepting duplicate caller-supplied policy booleans.
 
-Windows and flows mutate the draft through named `WorkspaceController`
+Windows and flows mutate workspace state through named `WorkspaceController`
 operations rather than assigning workspace facets independently. The important
 result-adoption semantics are:
 
 - `adopt_external_result()` **records** an output imported by the user or another
-  external source. It does not implicitly replace the current workspace draft.
+  external source. It does not implicitly replace the current workspace state.
   The imported result's atoms, potential, and input parameters belong to that
-  result's provenance, not to the active draft. `select_result=True` expresses
-  only explicit presentation intent to select that result in the UI.
-- `adopt_calculation_result()` records a result produced from its mandatory
-  captured `CalculationRequest`. It never reconstructs launch provenance from
-  whatever happens to be active when the result finishes. Only a
-  potential-producing result finishing from the exact currently active input
-  state may fast-forward the workspace to its produced state. A result from an
-  older branch is recorded in that branch and cannot silently overwrite a newer
-  user choice.
+  result's provenance, not to the active calculation state. `select_result=True`
+  expresses only explicit presentation intent to select that result in the UI.
+- `adopt_calculation_result()` records a launched result against its mandatory
+  opaque `RunProvenance`. It never reconstructs launch lineage from whatever
+  happens to be active when the result finishes. Only a potential-producing
+  result finishing from the exact currently active input state may fast-forward
+  the workspace to its produced state. A result from an older branch is recorded
+  in that branch and cannot silently overwrite a newer user choice.
 - `use_result_state()` is the explicit operation for activating a reusable
   historical state (or an explicitly approved current version of its POTFIL).
 - `use_for_new_calculation()` creates a new calculation branch from the active
@@ -294,7 +296,7 @@ tests.
 ## Common canonical imports
 
 ```python
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
