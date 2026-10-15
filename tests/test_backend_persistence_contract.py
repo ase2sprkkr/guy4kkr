@@ -28,7 +28,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     input_path = tmp_path / "contract.inp"
     output_path = tmp_path / "contract.out"
     with input_path.open("w") as stream:
-        parameters.save_to_file(stream)
+        parameters.save_to_file(stream, validate=False)
     output_path.write_text("synthetic persistent output\n")
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
