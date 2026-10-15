@@ -11,11 +11,9 @@ from guy4ase.physics.structure_database import load_structure_database
 
 
 def test_filtered_selection_and_details_stay_synchronized():
-    application = QApplication.instance() or QApplication([])
     dialog = StructureDatabaseDialog()
 
     dialog.search_edit.setText("CsCl")
-    application.processEvents()
 
     assert dialog.selected_prototype is not None
     assert dialog.selected_prototype.name.startswith("B2")
@@ -27,11 +25,9 @@ def test_filtered_selection_and_details_stay_synchronized():
 
 
 def test_unknown_structure_type_is_presented_without_source_placeholder():
-    application = QApplication.instance() or QApplication([])
     dialog = StructureDatabaseDialog()
 
     dialog.search_edit.setText("ReSi2")
-    application.processEvents()
 
     assert dialog.table.item(0, 1).text() == "Unknown"
     assert "Unknown oI6 ReSi2" in dialog.details_label.text()
@@ -40,7 +36,6 @@ def test_unknown_structure_type_is_presented_without_source_placeholder():
 
 
 def test_every_database_prototype_can_preload_the_shared_editor():
-    application = QApplication.instance() or QApplication([])
     dialog = SpaceGroupSelectorDialog()
 
     for prototype in load_structure_database():
@@ -52,11 +47,9 @@ def test_every_database_prototype_can_preload_the_shared_editor():
         assert sum(map(len, dialog._selected_sites.values())) == len(prototype.sites)
 
     dialog.close()
-    application.processEvents()
 
 
 def test_shared_editor_creates_representative_database_structures():
-    application = QApplication.instance() or QApplication([])
     dialog = SpaceGroupSelectorDialog()
     expected_atom_counts = {
         "B2    cP2   CsCl": 2,
@@ -87,7 +80,6 @@ def test_shared_editor_creates_representative_database_structures():
         )
 
     dialog.close()
-    application.processEvents()
 
 
 def test_database_editor_focuses_first_editable_lattice_parameter():
