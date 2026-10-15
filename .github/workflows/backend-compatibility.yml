@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: workflow
+      guy4ase_ref:
+        description: Exact Guy4ASE ref to test
+        required: false
+        type: string
+        default: master
   workflow_dispatch:
     inputs:
       ase2sprkkr_ref:
@@ -15,6 +20,11 @@ on:
         required: false
         type: string
         default: workflow
+      guy4ase_ref:
+        description: Guy4ASE branch, tag, or commit to test
+        required: false
+        type: string
+        default: master
   schedule:
     - cron: '17 3 * * *'
 
@@ -28,11 +38,11 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       MPLBACKEND: Agg
     steps:
-      - name: Checkout Guy4ASE master
+      - name: Checkout Guy4ASE
         uses: actions/checkout@v7
         with:
           repository: ase2sprkkr/guy4kkr
-          ref: master
+          ref: ${{ inputs.guy4ase_ref || 'master' }}
           path: guy4ase
 
       - name: Checkout ASE2SPRKKR
