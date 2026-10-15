@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import guy4ase.gui.application.persistent_jobs as persistent_jobs_module
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
 
@@ -201,32 +202,37 @@ def test_source_refreshes_backend_then_reloads_metadata():
     assert changes == [record.id]
 
 
-def test_source_attach_forwards_output_listener_atomically():
+def test_source_attach_uses_persistent_boundary_atomically(monkeypatch):
     record = _record()
     store = _Store((record,))
     replay = []
     runner = object()
+    calls = []
 
     class Manager:
         def __init__(self):
             self.store = store
 
         @staticmethod
-        def attach(job_id, *, output_listener=None):
-            assert job_id == record.id
-            output_listener("already written\n", "out")
-            return runner
+        def attach(*_args, **_kwargs):
+            raise AssertionError("source must use the task-aware attach boundary")
 
-    source = PersistentJobSource(Manager())
+    def attach(manager, job_id, *, callback=None, output_listener=None):
+        calls.append((manager, job_id, callback, output_listener))
+        output_listener("already written\n", "out")
+        return runner
 
-    assert source.attach(
-        record.id,
-        output_listener=lambda text, kind: replay.append((text, kind)),
-    ) is runner
+    manager = Manager()
+    monkeypatch.setattr(persistent_jobs_module, "attach_persistent_run", attach)
+    source = PersistentJobSource(manager)
+    listener = lambda text, kind: replay.append((text, kind))
+
+    assert source.attach(record.id, output_listener=listener) is runner
     assert replay == [("already written\n", "out")]
+    assert calls == [(manager, record.id, None, listener)]
 
 
-def test_source_owns_finishing_recovery_until_completion():
+def test_source_owns_finishing_recovery_until_completion(monkeypatch):
     record = _finishing_record()
     store = _Store((record,))
     callbacks = {}
@@ -237,10 +243,14 @@ def test_source_owns_finishing_recovery_until_completion():
             self.store = store
 
         @staticmethod
-        def attach(job_id, *, callback=None, output_listener=None):
-            callbacks[job_id] = callback
-            return runner
+        def attach(*_args, **_kwargs):
+            raise AssertionError("source must use the task-aware attach boundary")
 
+    def attach(_manager, job_id, *, callback=None, output_listener=None):
+        callbacks[job_id] = callback
+        return runner
+
+    monkeypatch.setattr(persistent_jobs_module, "attach_persistent_run", attach)
     source = PersistentJobSource(Manager())
 
     assert source.active_recovery_ids == (record.id,)
@@ -257,7 +267,7 @@ def test_source_owns_finishing_recovery_until_completion():
     assert store.get_calls == [record.id]
 
 
-def test_source_recovery_handles_synchronous_completion_without_stale_runner():
+def test_source_recovery_handles_synchronous_completion_without_stale_runner(monkeypatch):
     record = _finishing_record()
     finished = _record(
         state=_State.FINISHED,
@@ -269,18 +279,23 @@ def test_source_recovery_handles_synchronous_completion_without_stale_runner():
         def __init__(self):
             self.store = store
 
-        def attach(self, job_id, *, callback=None, output_listener=None):
-            self.store.records[job_id] = finished
-            callback(object())
-            return object()
+        @staticmethod
+        def attach(*_args, **_kwargs):
+            raise AssertionError("source must use the task-aware attach boundary")
 
+    def attach(_manager, job_id, *, callback=None, output_listener=None):
+        store.records[job_id] = finished
+        callback(object())
+        return object()
+
+    monkeypatch.setattr(persistent_jobs_module, "attach_persistent_run", attach)
     source = PersistentJobSource(Manager())
 
     assert source.active_recovery_ids == ()
     assert source.job(record.id).state == "finished"
 
 
-def test_recovery_completion_does_not_propagate_metadata_refresh_failure():
+def test_recovery_completion_does_not_propagate_metadata_refresh_failure(monkeypatch):
     record = _finishing_record()
     callbacks = {}
 
@@ -295,10 +310,14 @@ def test_recovery_completion_does_not_propagate_metadata_refresh_failure():
             self.store = store
 
         @staticmethod
-        def attach(job_id, *, callback=None, output_listener=None):
-            callbacks[job_id] = callback
-            return object()
+        def attach(*_args, **_kwargs):
+            raise AssertionError("source must use the task-aware attach boundary")
 
+    def attach(_manager, job_id, *, callback=None, output_listener=None):
+        callbacks[job_id] = callback
+        return object()
+
+    monkeypatch.setattr(persistent_jobs_module, "attach_persistent_run", attach)
     source = PersistentJobSource(Manager())
 
     callbacks[record.id](object())
