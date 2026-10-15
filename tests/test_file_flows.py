@@ -4,10 +4,25 @@ import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import DocumentChange, WorkspaceController
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+
+
+def _workspace(*, atoms=None, input_parameters=None, directory=None, potential_path=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            input_parameters=input_parameters,
+            potential_path=potential_path,
+        ),
+        context=WorkspaceContext(directory=directory),
+    )
 
 
 @pytest.mark.parametrize("suffix", [".pot", ".pot_new"])
@@ -17,7 +32,7 @@ def test_structure_flow_loads_potential_and_document_metadata(tmp_path, monkeypa
     reads = []
     monkeypatch.setattr(file_flows, "ase_read", lambda value: reads.append(value) or atoms)
     parameters = object()
-    controller = WorkspaceController(WorkspaceState(input_parameters=parameters))
+    controller = WorkspaceController(_workspace(input_parameters=parameters))
     history = RecentFiles(tmp_path / "recent.json")
 
     assert file_flows.load_structure(controller, history, path, object())
@@ -34,7 +49,7 @@ def test_loading_nonpotential_structure_drops_old_potential_source(tmp_path, mon
     path = tmp_path / "Cu.xyz"
     monkeypatch.setattr(file_flows, "ase_read", lambda _path: atoms)
     controller = WorkspaceController(
-        WorkspaceState(atoms=Atoms("Fe"), potential_path="Fe.pot")
+        _workspace(atoms=Atoms("Fe"), potential_path="Fe.pot")
     )
 
     assert file_flows.load_structure(
@@ -53,7 +68,7 @@ def test_input_flow_rejects_parameters_parsed_for_a_stale_document(tmp_path, mon
     parsed_parameters = object()
     replacement_atoms = Atoms("Cu")
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=original_parameters,
             directory="original",
@@ -83,7 +98,7 @@ def test_structure_save_uses_published_atoms_and_updates_history(tmp_path, monke
     structure_path = tmp_path / "Fe.xyz"
     atoms = Atoms("Fe")
     writes = []
-    controller = WorkspaceController(WorkspaceState(atoms=atoms))
+    controller = WorkspaceController(_workspace(atoms=atoms))
     history = RecentFiles(tmp_path / "recent.json")
     monkeypatch.setattr(
         file_flows.QFileDialog,

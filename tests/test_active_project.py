@@ -7,11 +7,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
+from ase import Atoms
 from ase2sprkkr.execution import ProjectRepository
 
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.main import GuiApplication
+
+
+class _Parameters:
+    def copy(self, *, copy_values: bool):
+        assert copy_values
+        return _Parameters()
 
 
 class _JobSource:
@@ -51,10 +58,10 @@ class _LaunchWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.execution_context = None
+        self.execution_manager = None
 
-    def set_execution_context(self, manager, *, project_id=None):
-        self.execution_context = (manager, project_id)
+    def set_execution_context(self, manager):
+        self.execution_manager = manager
 
 
 def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
@@ -83,7 +90,7 @@ def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
     dialog.close()
 
 
-def test_launch_captures_active_project_before_later_selection_change(tmp_path):
+def test_launch_request_captures_active_project_before_later_selection_change(tmp_path):
     _application = QApplication.instance() or QApplication([])
     repository = ProjectRepository(tmp_path / "projects")
     launch_project = repository.create("Launch")
@@ -95,16 +102,19 @@ def test_launch_captures_active_project_before_later_selection_change(tmp_path):
         persistent_jobs=source,
         project_repository=repository,
     )
+    gui.controller.replace_structure(Atoms("Fe"))
+    gui.controller.replace_input_parameters(_Parameters())
+    gui.controller.change_directory(str(tmp_path))
     gui.set_active_project(launch_project.id)
-    monitor_window = _LaunchWindow()
 
-    gui._track_launch_monitor(monitor_window)
-    captured_manager, captured_project = monitor_window.execution_context
-
+    request = gui.controller.create_calculation_request()
     gui.set_active_project(later_project.id)
 
-    assert captured_manager is gui.execution_manager
-    assert captured_manager.projects is repository
-    assert captured_project == launch_project.id
+    assert request.project_id == launch_project.id
     assert gui.active_project_id == later_project.id
+
+    monitor_window = _LaunchWindow()
+    gui._track_launch_monitor(monitor_window)
+    assert monitor_window.execution_manager is gui.execution_manager
+    assert gui.execution_manager.projects is repository
     monitor_window.close()

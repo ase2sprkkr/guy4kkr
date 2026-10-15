@@ -5,7 +5,11 @@ from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    EmptySpheresState,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
@@ -14,8 +18,19 @@ from guy4ase.gui.application.workspace_controller import (
 from guy4ase.gui.workspace_semantics import EmptySpheresAction
 
 
+def _workspace(*, atoms=None, potential_path=None, empty_spheres=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            potential_path=potential_path,
+            empty_spheres=empty_spheres,
+        )
+    )
+
+
 def test_empty_sphere_search_state_allows_repeated_failed_search():
-    workspace = WorkspaceState(atoms=Atoms("Fe"))
+    workspace = _workspace(atoms=Atoms("Fe"))
+    calculation = workspace.calculation
     controller = WorkspaceController(workspace)
     assert controller.empty_spheres_action() is EmptySpheresAction.ADD
 
@@ -27,8 +42,8 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     )
 
     assert change is DocumentChange.APPLIED
-    assert workspace.empty_spheres == EmptySpheresState(count=0)
-    assert workspace.empty_spheres_added == 0
+    assert calculation.empty_spheres == EmptySpheresState(count=0)
+    assert calculation.empty_spheres_added == 0
     assert controller.empty_spheres_action() is EmptySpheresAction.RECALCULATE
     first_record = controller.result_store.results[0]
     assert first_record.result == EmptySpheresResult(found=0)
@@ -38,7 +53,7 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert first_output_state_id != input_state_id
     first_state = controller.result_store.state(first_output_state_id)
     assert first_state.parent_id == input_state_id
-    assert first_state.empty_spheres == workspace.empty_spheres
+    assert first_state.empty_spheres == calculation.empty_spheres
     assert controller.generation == generation.next()
 
     second_generation = controller.generation
@@ -61,13 +76,14 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert controller.state_id != first_output_state_id
     second_state = controller.result_store.state(controller.state_id)
     assert second_state.parent_id == first_output_state_id
-    assert second_state.empty_spheres == workspace.empty_spheres
+    assert second_state.empty_spheres == calculation.empty_spheres
     assert controller.generation == second_generation.next()
 
 
 def test_empty_sphere_update_publishes_found_count_and_new_state():
     original = Atoms("Fe")
-    workspace = WorkspaceState(atoms=original, potential_path="Fe.pot")
+    workspace = _workspace(atoms=original, potential_path="Fe.pot")
+    calculation = workspace.calculation
     controller = WorkspaceController(workspace)
     published = []
     controller.resultChanged.connect(published.append)
@@ -86,22 +102,23 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     )
 
     assert change is DocumentChange.APPLIED
-    assert workspace.atoms is not original
+    assert calculation.atoms is not original
     assert len(original) == 1
-    assert len(workspace.atoms) == 2
-    assert workspace.empty_spheres == EmptySpheresState(count=1)
+    assert len(calculation.atoms) == 2
+    assert calculation.empty_spheres == EmptySpheresState(count=1)
     record = controller.result_store.results[0]
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
     assert record.input_state_id == input_state_id
     assert record.output_state_id == controller.state_id
     assert published == [record.result]
-    assert workspace.potential_path is None
+    assert calculation.potential_path is None
     assert controller.generation == generation.next()
 
 
 def test_empty_sphere_state_keeps_search_parameters_across_later_results():
-    workspace = WorkspaceState(atoms=Atoms("Fe"))
+    workspace = _workspace(atoms=Atoms("Fe"))
+    calculation = workspace.calculation
     controller = WorkspaceController(workspace)
     search_parameters = {"min_radius": 0.7, "mesh": (20, 22, 24)}
 
@@ -111,7 +128,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
         parameters=search_parameters,
     )
 
-    state = workspace.empty_spheres
+    state = calculation.empty_spheres
     assert state is not None
     assert dict(state.parameters) == search_parameters
     assert controller.result_store.results[0].result == EmptySpheresResult(found=0)
@@ -119,7 +136,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     assert controller.structure_id is not None
     assert controller.state_id is not None
     request = CalculationRequest(
-        atoms=workspace.atoms,
+        atoms=calculation.atoms,
         input_parameters=object(),
         directory="",
         generation=controller.generation,
@@ -127,7 +144,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
         state_id=controller.state_id,
     )
     controller.replace_input_parameters(object())
-    assert workspace.empty_spheres is state
+    assert calculation.empty_spheres is state
 
     result = SimpleNamespace(task_name="dos", produces_potential=False)
     controller.adopt_calculation_result(
@@ -144,15 +161,15 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
 
     assert controller.result_store.results[0].result is result
     assert controller.result_store.results[1].result == EmptySpheresResult(found=0)
-    assert workspace.empty_spheres is state
-    assert dict(workspace.empty_spheres.parameters) == search_parameters
+    assert calculation.empty_spheres is state
+    assert dict(calculation.empty_spheres.parameters) == search_parameters
 
 
 def test_empty_sphere_flow_prefills_parameters_from_workspace_state(monkeypatch):
     from guy4ase.gui.flows import structures
 
     search_parameters = {"max_radius": 1.4, "mesh": (18, 20, 22)}
-    workspace = WorkspaceState(
+    workspace = _workspace(
         atoms=Atoms("Fe"),
         empty_spheres=EmptySpheresState(0, search_parameters),
     )
@@ -185,11 +202,12 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
     empty_spheres = EmptySpheresState(
         3, {"min_radius": 0.8, "mesh": (20, 20, 20)}
     )
-    workspace = WorkspaceState(
+    workspace = _workspace(
         atoms=atoms,
         potential_path="Fe.pot",
         empty_spheres=empty_spheres,
     )
+    calculation = workspace.calculation
     controller = WorkspaceController(workspace)
     generation = controller.generation
     previous_state_id = controller.state_id
@@ -199,24 +217,24 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
     )
 
     assert change is DocumentChange.APPLIED
-    assert workspace.atoms is atoms
+    assert calculation.atoms is atoms
     assert atoms.potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
-    assert workspace.restarted
-    assert not workspace.is_scf_converged()
-    assert workspace.empty_spheres is empty_spheres
-    assert workspace.empty_spheres_added == 3
-    assert workspace.potential_path == "Fe.pot"
+    assert calculation.restarted
+    assert not calculation.is_scf_converged()
+    assert calculation.empty_spheres is empty_spheres
+    assert calculation.empty_spheres_added == 3
+    assert calculation.potential_path == "Fe.pot"
     assert controller.state_id != previous_state_id
     assert controller.result_store.state(controller.state_id).parent_id == previous_state_id
     assert controller.generation == generation.next()
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("X")))
+    controller = WorkspaceController(_workspace(atoms=Atoms("X")))
     assert controller.empty_spheres_action() is None
 
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("X"),
             empty_spheres=EmptySpheresState(1),
         )

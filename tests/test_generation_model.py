@@ -3,7 +3,12 @@ from types import SimpleNamespace
 from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import Generation, WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    Generation,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     WorkspaceController,
@@ -23,9 +28,11 @@ def _result(task_name):
 def _controller(tmp_path):
     return WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=_Parameters(),
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 
@@ -59,6 +66,25 @@ def test_controller_restores_workspace_generation():
 
     assert controller.generation == generation
     assert workspace.generation == generation
+
+
+def test_directory_change_advances_calculation_generation(tmp_path):
+    controller = _controller(tmp_path)
+    generation = controller.generation
+
+    controller.change_directory(str(tmp_path / "other"))
+
+    assert controller.generation == generation.next()
+
+
+def test_project_selection_does_not_advance_calculation_generation(tmp_path):
+    controller = _controller(tmp_path)
+    generation = controller.generation
+
+    controller.set_active_project("project-17")
+
+    assert controller.active_project_id == "project-17"
+    assert controller.generation == generation
 
 
 def test_result_publication_does_not_advance_workspace_generation(tmp_path):

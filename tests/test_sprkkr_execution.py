@@ -20,7 +20,12 @@ class _Cancellation:
         return self._register and not self.requested
 
 
-def _request(tmp_path, *, restart_scf: bool = False) -> CalculationRequest:
+def _request(
+    tmp_path,
+    *,
+    restart_scf: bool = False,
+    project_id: str | None = None,
+) -> CalculationRequest:
     return CalculationRequest(
         atoms=Atoms("Fe"),
         input_parameters=object(),
@@ -29,6 +34,7 @@ def _request(tmp_path, *, restart_scf: bool = False) -> CalculationRequest:
         structure_id=1,
         state_id=1,
         restart_scf=restart_scf,
+        project_id=project_id,
     )
 
 
@@ -119,10 +125,9 @@ def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_p
             return Runner()
 
     execution = SprkkrExecution(
-        _request(tmp_path),
+        _request(tmp_path, project_id="project-17"),
         _Cancellation(),
         execution_manager=Manager(),
-        project_id="project-17",
     )
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())

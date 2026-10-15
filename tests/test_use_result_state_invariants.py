@@ -9,7 +9,7 @@ from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_presentation import present_result_record
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -28,6 +28,16 @@ def _atoms_with_potential(marker: str, *, x: float = 0.0):
     return atoms
 
 
+def _workspace(atoms, tmp_path):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            input_parameters=_Parameters(),
+        ),
+        context=WorkspaceContext(directory=str(tmp_path)),
+    )
+
+
 def _loaded_scf(atoms, potential_path: str | Path | None = None):
     return LoadedResult(
         result=SimpleNamespace(
@@ -44,13 +54,7 @@ def _loaded_scf(atoms, potential_path: str | Path | None = None):
 
 
 def test_use_result_state_never_substitutes_current_atoms_for_historical_state(tmp_path):
-    controller = WorkspaceController(
-        WorkspaceState(
-            atoms=_atoms_with_potential("root"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
-    )
+    controller = WorkspaceController(_workspace(_atoms_with_potential("root"), tmp_path))
     current_request = controller.create_calculation_request()
     historical_request = controller.create_calculation_request()
 
@@ -85,13 +89,7 @@ def test_restore_presentation_never_silently_treats_overwritten_potential_as_exa
     historical_path.write_text("historical file", encoding="utf-8")
     current_path.write_text("current file", encoding="utf-8")
 
-    controller = WorkspaceController(
-        WorkspaceState(
-            atoms=_atoms_with_potential("root"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
-    )
+    controller = WorkspaceController(_workspace(_atoms_with_potential("root"), tmp_path))
     historical_request = controller.create_calculation_request()
     historical = controller.adopt_calculation_result(
         _loaded_scf(_atoms_with_potential("historical"), historical_path),

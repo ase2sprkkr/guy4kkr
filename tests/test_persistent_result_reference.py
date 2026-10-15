@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from ase import Atoms
 
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -37,9 +37,11 @@ def _loaded(result, *, persistent_ref=None):
 def test_calculation_result_records_persistent_reference(tmp_path):
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=_Parameters(),
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
     request = controller.create_calculation_request()

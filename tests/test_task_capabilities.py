@@ -12,7 +12,7 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.input_parameters.bindings import resolve_option
@@ -34,6 +34,13 @@ def _scf_atoms(status="CONVERGED"):
         SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
     )
     return atoms
+
+
+def _workspace(atoms, parameters, directory):
+    return WorkspaceState(
+        calculation=CalculationState(atoms=atoms, input_parameters=parameters),
+        context=WorkspaceContext(directory=directory),
+    )
 
 
 def test_guided_registry_integrates_with_backend_definitions():
@@ -77,10 +84,10 @@ def test_guided_workflow_stages_are_presentation_metadata():
 
 def test_calculation_readiness_is_task_agnostic():
     controller = WorkspaceController(
-        WorkspaceState(
-            atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
-            input_parameters=InputParameters.create("TORQUE"),
-            directory="calculation",
+        _workspace(
+            Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+            InputParameters.create("TORQUE"),
+            "calculation",
         )
     )
 
@@ -89,10 +96,10 @@ def test_calculation_readiness_is_task_agnostic():
 
 def test_use_for_new_calculation_does_not_disable_expert_task():
     controller = WorkspaceController(
-        WorkspaceState(
-            atoms=_scf_atoms(),
-            input_parameters=InputParameters.create("TORQUE"),
-            directory="calculation",
+        _workspace(
+            _scf_atoms(),
+            InputParameters.create("TORQUE"),
+            "calculation",
         )
     )
 
@@ -106,10 +113,10 @@ def test_use_for_new_calculation_does_not_disable_expert_task():
 
 def test_run_calculation_does_not_apply_guided_stage_policy(monkeypatch, tmp_path):
     controller = WorkspaceController(
-        WorkspaceState(
-            atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
-            input_parameters=InputParameters.create("TORQUE"),
-            directory=str(tmp_path),
+        _workspace(
+            Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+            InputParameters.create("TORQUE"),
+            str(tmp_path),
         )
     )
 
