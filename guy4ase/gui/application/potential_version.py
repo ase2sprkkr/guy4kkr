@@ -1,6 +1,6 @@
-"""Potential-file provenance backed by the shared file-version model."""
-from guy4ase.gui.application.file_version import FileVersion
+"""Potential-file provenance backed by ASE2SPRKKR file identity."""
 
+from ase2sprkkr.common.file_versions import FileVersion
 
 PotentialFileVersion = FileVersion
 
