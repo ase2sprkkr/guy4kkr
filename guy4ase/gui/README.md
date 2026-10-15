@@ -20,15 +20,36 @@ alternate APIs.
   It contains the editing session, field bindings, task semantics, validation,
   DATASET naming, tooltips, and declarative task specifications. It does not own
   finished application windows.
-- `input_parameters.tasks`: Guy4ASE's closed set of backend tasks that have a
-  Guided editor, together with their workflow presentation metadata and the
-  layout builder they use. This registry controls Guided UX only; it is not a
-  whitelist of backend tasks that Expert mode may execute.
+- `input_parameters.tasks`: Guy4ASE's closed mapping from opaque task keys
+  accepted by the current ASE2SPRKKR input-parameter API to Guided editor/layout
+  and workflow presentation metadata. It controls Guided UX only; it is not a
+  backend task identity registry and is not a whitelist of tasks that Expert mode
+  may execute. Backend task existence and execution/result semantics remain owned
+  by ASE2SPRKKR. Guy4ASE must not anticipate the representation of a future
+  backend task-definition API.
 - `input_parameters.specs`: declarative guided-layout definitions. `schema`
   defines fields/groups/pages and individual task modules build their layouts.
   Specs describe layout and presentation only; selection of a layout for a
-  backend task belongs to `input_parameters.tasks`, together with task identity
-  and workflow policy.
+  backend task belongs to `input_parameters.tasks` as Guy4ASE presentation
+  policy, keyed by the opaque backend lookup value accepted today.
+- `workflow`: Qt-independent Guided workflow planning. It consumes application
+  read contracts and Guided task metadata and produces an ordered typed
+  presentation plan. Commands carry opaque backend task lookup keys rather than
+  owning Guy4ASE task-definition objects or asserting backend identity semantics.
+  The workflow layer owns Guided recommendation/grouping policy but no Qt
+  rendering or execution permission. Backend-specific SCF status strings are
+  translated at the workflow boundary before the planner consumes them.
+- `presentation.py`: the small Qt-independent action-presentation vocabulary
+  shared by planners and renderers, such as action categories and labels for
+  semantic workspace actions.
+- `recent_presentation.py`: Qt-independent presentation policy for recent files.
+  It consumes immutable read snapshots and owns recent-launch selection, menu
+  grouping, display labels, and empty-state copy; it never reads mutable
+  application state directly.
+- `workspace_semantics.py`: a Qt-free leaf module for immutable semantic value
+  types shared across otherwise independent GUI layers. It owns no state,
+  workflow policy, or user-facing presentation copy and imports no other
+  `guy4ase.gui` module.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
   next calculation; `ResultStore` owns calculation history independently of
@@ -228,7 +249,20 @@ an explicit stored value.
 
 - `guy4ase.main.GuiApplication` is the composition root for shared application
   state and top-level windows.
-- `application` does not import dialogs, widgets, controllers, or flows.
+- `application` does not import dialogs, widgets, controllers, flows, `workflow`,
+  `presentation.py`, or `recent_presentation.py`; application state must not
+  depend on Guided or recent-file presentation policy.
+- `workspace_semantics.py` is a leaf: it imports no other `guy4ase.gui` module
+  and contains no state ownership, workflow policy, or presentation text.
+- `presentation.py` and `recent_presentation.py` are Qt-independent and may
+  depend on leaf semantic values, but not on application state, input-parameter
+  implementation, workflow, dialogs, widgets, controllers, or flows.
+- `workflow` is Qt-independent and may consume application read contracts,
+  `input_parameters.tasks`, pure presentation values, and physics helpers, but
+  does not import dialogs, widgets, controllers, or flows. Its command model is
+  independent of `input_parameters.tasks`; task commands carry only an opaque
+  backend lookup key accepted by the current backend API. Planner code may
+  consult Guided task metadata to construct the presentation plan.
 - `controllers` coordinate reusable Qt workflows and may depend on application
   services, reusable widgets, and leaf dialogs, but reusable widgets do not
   depend back on controllers.
@@ -241,8 +275,8 @@ an explicit stored value.
   higher layer.
 - `input_parameters` must not depend on concrete dialogs or widgets.
 - `input_parameters.tasks` may depend on declarative specs but not on concrete
-  dialogs/widgets; workflow metadata here is presentation policy, not execution
-  permission.
+  dialogs/widgets; workflow metadata here is presentation policy, not backend
+  task identity or execution permission.
 - `input_parameters.specs` must remain independent of Qt session/widget
   implementations and of workflow/task identity policy.
 - `misc` and `plots` must not become dependencies on top-level dialogs or
@@ -251,10 +285,11 @@ an explicit stored value.
   where practical.
 
 The checks in `tests/test_gui_architecture.py` protect the broad layer
-directions, acyclic GUI imports, and lightweight import boundaries. Tests should
-protect invariants and public contracts, not freeze incidental implementation
-layout. Backend execution behavior is tested through `SprkkrExecution`; only Qt
-signal/thread adaptation belongs in worker-level tests.
+directions, acyclic GUI imports, lightweight import boundaries, and the leaf
+contracts above. Tests should protect invariants and public contracts, not freeze
+incidental implementation layout. Backend execution behavior is tested through
+`SprkkrExecution`; only Qt signal/thread adaptation belongs in worker-level
+tests.
 
 ## Common canonical imports
 
@@ -271,5 +306,9 @@ from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
 from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.presentation import ActionCategory
+from guy4ase.gui.recent_presentation import RecentLaunch
+from guy4ase.gui.workflow.planner import WorkflowPlanner
+from guy4ase.gui.workspace_semantics import EmptySpheresAction
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```

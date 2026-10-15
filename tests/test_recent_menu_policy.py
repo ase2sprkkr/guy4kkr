@@ -8,6 +8,7 @@ from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.dialogs.main_window import MainWindow
 from guy4ase.gui.dialogs.structures import source as source_module
 from guy4ase.gui.flows.structure_candidates import StructureCandidate
+from guy4ase.gui.recent_presentation import RecentLaunch
 from guy4ase.gui.widgets.recent_launcher import populate_recent_menu
 
 
@@ -32,7 +33,7 @@ def test_populate_recent_menu_uses_shared_path_labels_and_tooltips(tmp_path, mon
     opened = []
     menu = QMenu()
 
-    populate_recent_menu(menu, history, "structure", opened.append)
+    populate_recent_menu(menu, history.read_snapshot(), "structure", opened.append)
 
     actions = menu.actions()
     assert [action.text() for action in actions] == [
@@ -52,7 +53,7 @@ def test_populate_recent_menu_has_disabled_empty_action(tmp_path):
     history = RecentFiles(tmp_path / "recent.json")
     menu = QMenu()
 
-    populate_recent_menu(menu, history, "input", lambda _path: None)
+    populate_recent_menu(menu, history.read_snapshot(), "input", lambda _path: None)
 
     actions = menu.actions()
     assert len(actions) == 1
@@ -74,19 +75,33 @@ def test_expert_recent_menu_uses_shared_presentation(tmp_path, monkeypatch):
     opened = []
 
     class Window:
-        recent_history = history
         _recent_menus = {"structure": menu}
 
         def open_recent_file(self, kind, path):
             opened.append((kind, path))
 
-    MainWindow._refresh_recent_menu(Window(), "structure")
+    MainWindow._refresh_recent_menu(Window(), "structure", history.read_snapshot())
 
     action = menu.actions()[0]
     assert action.text() == str(Path("structures") / "Fe.cif")
     assert action.toolTip() == str(target.resolve())
     action.trigger()
     assert opened == [("structure", str(target.resolve()))]
+
+
+def test_expert_primary_recent_executes_the_rendered_launch():
+    rendered = RecentLaunch("structure", "/tmp/rendered.cif")
+    continued = []
+
+    class Window:
+        _recent_start_launch = rendered
+
+        def continue_recent_file(self, kind, path):
+            continued.append((kind, path))
+
+    MainWindow._continue_recent_start(Window())
+
+    assert continued == [("structure", "/tmp/rendered.cif")]
 
 
 def test_structure_source_recent_success_moves_path_to_front(tmp_path, monkeypatch):

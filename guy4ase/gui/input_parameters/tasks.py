@@ -16,6 +16,13 @@ class WorkflowStage(Enum):
     POST_SCF = "post_scf"
 
 
+class WorkflowTaskRole(Enum):
+    """Guy4ASE workflow semantics independent of a backend task key."""
+
+    GENERIC = "generic"
+    SCF = "scf"
+
+
 @dataclass(frozen=True)
 class WorkflowPresentation:
     """Workflow-only presentation metadata for a Guided task."""
@@ -23,11 +30,16 @@ class WorkflowPresentation:
     label: str
     description: str
     stage: WorkflowStage
+    role: WorkflowTaskRole = WorkflowTaskRole.GENERIC
 
 
 @dataclass(frozen=True)
 class GuidedTaskDefinition:
-    """Guy4ASE-owned metadata for one backend task with a Guided editor."""
+    """Guy4ASE-owned metadata for one backend task with a Guided editor.
+
+    ``backend_task`` is an opaque key accepted by the current ASE2SPRKKR input
+    parameter API. Guy4ASE does not assign backend identity semantics to it.
+    """
 
     backend_task: str
     spec_builder: Callable[[bool], TaskDialogSpec]
@@ -47,6 +59,7 @@ _TASKS = (
             "Converge SCF",
             "Prepare and run a self-consistent calculation",
             WorkflowStage.SCF,
+            WorkflowTaskRole.SCF,
         ),
     ),
     GuidedTaskDefinition(

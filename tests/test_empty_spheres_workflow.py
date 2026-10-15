@@ -9,9 +9,9 @@ from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
-    EmptySpheresAction,
     WorkspaceController,
 )
+from guy4ase.gui.workspace_semantics import EmptySpheresAction
 
 
 def test_empty_sphere_search_state_allows_repeated_failed_search():

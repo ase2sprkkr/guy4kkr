@@ -13,13 +13,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.recent_files import (
+    RecentFiles,
+    RecentFilesSnapshot,
+    RecentKind,
+)
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import (
-    EmptySpheresAction,
-    WorkspaceController,
-)
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.dialogs.structures.transforms import (
@@ -32,15 +33,20 @@ from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
+from guy4ase.gui.presentation import empty_spheres_action_title
+from guy4ase.gui.recent_presentation import (
+    RecentLaunch,
+    recent_launch_presentation,
+)
 from guy4ase.gui.widgets.browser_panel import BrowserPanel
 from guy4ase.gui.widgets.expert_side_panel import ExpertSidePanel
 from guy4ase.gui.widgets.recent_launcher import (
     build_recent_launch_menu,
     populate_recent_menu,
-    recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.gui.widgets.structure_overview import StructureOverviewWidget
+from guy4ase.gui.workspace_semantics import EmptySpheresAction
 
 
 class MainWindow(QMainWindow):
@@ -73,6 +79,7 @@ class MainWindow(QMainWindow):
             "output": None,
         }
         self._recent_start_menu: QMenu | None = None
+        self._recent_start_launch: RecentLaunch | None = None
 
         self._build_ui()
         self._connect_workspace()
@@ -146,27 +153,28 @@ class MainWindow(QMainWindow):
         empty_spheres = self.controller.empty_spheres_action()
         self.empty_spheres_action.setVisible(empty_spheres is not None)
         if empty_spheres is not None:
-            self.empty_spheres_action.setText(
-                "Recalculate Empty Spheres"
-                if empty_spheres is EmptySpheresAction.RECALCULATE
-                else "Add Empty Spheres"
-            )
+            self.empty_spheres_action.setText(empty_spheres_action_title(empty_spheres))
 
-    def _refresh_recent_menu(self, what: RecentKind) -> None:
+    def _refresh_recent_menu(
+        self,
+        what: RecentKind,
+        snapshot: RecentFilesSnapshot,
+    ) -> None:
         menu = self._recent_menus[what]
         if menu is None:
             return
         populate_recent_menu(
             menu,
-            self.recent_history,
+            snapshot,
             what,
             lambda path, item_kind=what: self.open_recent_file(item_kind, path),
         )
 
     def _refresh_recent_menus(self) -> None:
+        snapshot = self.recent_history.read_snapshot()
         for what in ("structure", "input", "output"):
-            self._refresh_recent_menu(what)
-        self._refresh_recent_start()
+            self._refresh_recent_menu(what, snapshot)
+        self._refresh_recent_start(snapshot)
 
     def open_recent_file(self, kind: RecentKind, file_path: str) -> None:
         file_flows.open_recent(
@@ -186,15 +194,17 @@ class MainWindow(QMainWindow):
             self,
         )
 
-    def _refresh_recent_start(self) -> None:
-        launch = recent_launch(self.recent_history)
+    def _refresh_recent_start(self, snapshot: RecentFilesSnapshot) -> None:
+        presentation = recent_launch_presentation(snapshot)
+        self._recent_start_launch = presentation.primary
+        launch = self._recent_start_launch
         if launch is None:
             self._structure_overview.set_recent_start(title=None)
             return
 
         self._recent_start_menu = build_recent_launch_menu(
             self._structure_overview,
-            self.recent_history,
+            presentation,
             self.continue_recent_file,
             menu=self._recent_start_menu,
         )
@@ -205,7 +215,7 @@ class MainWindow(QMainWindow):
         )
 
     def _continue_recent_start(self) -> None:
-        launch = recent_launch(self.recent_history)
+        launch = self._recent_start_launch
         if launch is not None:
             self.continue_recent_file(launch.kind, launch.path)
 
@@ -292,7 +302,9 @@ class MainWindow(QMainWindow):
         self._recent_menus["output"] = output_menu.addMenu("Open &Recent")
 
         run_menu = menubar.addMenu("&Run")
-        self.empty_spheres_action = QAction("Add Empty Spheres", self)
+        self.empty_spheres_action = QAction(
+            empty_spheres_action_title(EmptySpheresAction.ADD), self
+        )
         self.empty_spheres_action.triggered.connect(
             lambda: structure_flows.update_empty_spheres(self.controller, self)
         )

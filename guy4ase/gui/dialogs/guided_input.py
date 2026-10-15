@@ -67,6 +67,10 @@ class NavigationView:
     accent: QColor
 
 
+class GuidedTaskUnavailable(RuntimeError):
+    """The selected backend task could not be materialized for Guided editing."""
+
+
 class GuidedInputParametersDialog(QDialog):
     """A single guided dialog whose contents are supplied by a task spec."""
 
@@ -85,11 +89,17 @@ class GuidedInputParametersDialog(QDialog):
         self.spec: TaskDialogSpec = definition.build_spec(
             is_2d=detect_structure_kind(atoms) == "2d",
         )
-        expected_task = definition.backend_task
-        if parameters.task_name.lower() != expected_task:
+        expected_task = InputParameters.is_it_an_input_parameters_name(
+            definition.backend_task
+        )
+        actual_task = InputParameters.is_it_an_input_parameters_name(
+            parameters.task_name
+        )
+        if not expected_task or actual_task != expected_task:
             raise ValueError(
-                f"Expected {expected_task.upper()} input parameters, "
-                f"got {parameters.task_name.upper()}."
+                f"Expected {expected_task or str(definition.backend_task).upper()} "
+                f"input parameters, got "
+                f"{actual_task or str(parameters.task_name).upper()}."
             )
         self.session = create_input_parameters_session(parameters, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
@@ -397,7 +407,12 @@ def select_guided_input_parameters(
     dataset_default_mode: str,
 ) -> InputParameters | None:
     definition = guided_task_definition(task)
-    parameters = InputParameters.create(definition.backend_task)
+    try:
+        parameters = InputParameters.create(definition.backend_task)
+    except (ImportError, KeyError) as exc:
+        raise GuidedTaskUnavailable(
+            f"The {task.upper()} backend task could not be loaded: {exc}"
+        ) from exc
     apply_default_dataset(parameters, dataset_default_mode, atoms)
     dialog = GuidedInputParametersDialog(
         task,

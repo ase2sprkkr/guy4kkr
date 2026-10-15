@@ -18,6 +18,7 @@ from guy4ase.gui.application.workspace_controller import (
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters
 from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
+    GuidedTaskUnavailable,
     select_guided_input_parameters,
 )
 from guy4ase.gui.dialogs.profiles import ProfileSelectionDialog
@@ -84,8 +85,8 @@ def run_calculation(
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
-    ``position_like_window`` optionally reuses another managed window's
-    top-left corner for the profile picker and run window. ``track_launch_monitor``
+    ``position_like_window`` optionally reuses another managed window's top-left
+    corner for the profile picker and run window. ``track_launch_monitor``
     transfers ownership of an application-level top-level monitor before its
     worker starts; standalone callers that omit it retain ordinary parent
     ownership.
@@ -158,57 +159,58 @@ def configure_and_run_task(
     track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
+    if (
+        not controller.directory
+        and not choose_working_directory(
+            controller,
+            parent,
+            title="Choose the directory for this calculation",
+        )
+    ):
+        return None
+
+    generation = controller.generation
+    atoms = controller.atoms
+    if atoms is None:
+        QMessageBox.information(
+            parent,
+            "No Structure",
+            "Load or create a structure first.",
+        )
+        return None
+
     try:
-        if (
-            not controller.directory
-            and not choose_working_directory(
-                controller,
-                parent,
-                title="Choose the directory for this calculation",
-            )
-        ):
-            return None
-
-        generation = controller.generation
-        atoms = controller.atoms
-        if atoms is None:
-            QMessageBox.information(
-                parent,
-                "No Structure",
-                "Load or create a structure first.",
-            )
-            return None
-
         parameters = select_guided_input_parameters(
             task,
             parent=parent,
             atoms=atoms,
             dataset_default_mode=dataset_default_mode,
         )
-        if parameters is None:
-            return None
-        if not document_change_applied(
-            parent,
-            controller.replace_input_parameters(
-                parameters,
-                expected_generation=generation,
-            ),
-        ):
-            return None
-        return run_calculation(
-            controller,
-            recent_files,
-            parent,
-            position_like_window="guided-input",
-            track_launch_monitor=track_launch_monitor,
-        )
-    except (ImportError, ModuleNotFoundError) as exc:
+    except GuidedTaskUnavailable as exc:
         QMessageBox.critical(
             parent,
             "Task Unavailable",
-            f"The {task.upper()} task is not available:\n{exc}",
+            str(exc),
         )
         return None
+
+    if parameters is None:
+        return None
+    if not document_change_applied(
+        parent,
+        controller.replace_input_parameters(
+            parameters,
+            expected_generation=generation,
+        ),
+    ):
+        return None
+    return run_calculation(
+        controller,
+        recent_files,
+        parent,
+        position_like_window="guided-input",
+        track_launch_monitor=track_launch_monitor,
+    )
 
 
 def show_new_calculation_source_required(parent: QWidget) -> None:

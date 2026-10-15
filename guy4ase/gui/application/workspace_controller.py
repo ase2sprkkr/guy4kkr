@@ -20,6 +20,7 @@ from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
+from guy4ase.gui.workspace_semantics import EmptySpheresAction as _EmptySpheresAction
 
 _KEEP_DIRECTORY = object()
 
@@ -35,13 +36,6 @@ class DocumentChange(Enum):
 
     APPLIED = auto()
     STALE = auto()
-
-
-class EmptySpheresAction(Enum):
-    """Recommended empty-sphere action for the current workspace draft."""
-
-    ADD = auto()
-    RECALCULATE = auto()
 
 
 class CalculationNotReady(RuntimeError):
@@ -187,15 +181,15 @@ class WorkspaceController(QObject):
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()
 
-    def empty_spheres_action(self) -> EmptySpheresAction | None:
+    def empty_spheres_action(self) -> _EmptySpheresAction | None:
         """Return the empty-sphere workflow action recommended for the draft."""
         if self.atoms is None:
             return None
         if self.empty_spheres is not None:
-            return EmptySpheresAction.RECALCULATE
+            return _EmptySpheresAction.RECALCULATE
         if self.has_vacuum_sites():
             return None
-        return EmptySpheresAction.ADD
+        return _EmptySpheresAction.ADD
 
     def structure_change_requires_scf_restart(self) -> bool:
         if self.atoms is None or self.restarted:

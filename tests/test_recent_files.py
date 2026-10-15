@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.widgets.recent_launcher import recent_path_label
+from guy4ase.gui.recent_presentation import recent_path_label
 
 
 def test_recent_files_store_canonical_absolute_paths(tmp_path, monkeypatch):
@@ -25,6 +25,25 @@ def test_recent_files_store_canonical_absolute_paths(tmp_path, monkeypatch):
     assert history.paths("structure") == (str(target.resolve()),)
     data = json.loads(history.path.read_text(encoding="utf-8"))
     assert data["recent_files"]["structure"] == [str(target.resolve())]
+
+
+def test_recent_files_snapshot_captures_paths_and_last_kind_together(tmp_path):
+    structure = tmp_path / "Fe.cif"
+    output = tmp_path / "SCF.out"
+    structure.touch()
+    output.touch()
+    history = RecentFiles(tmp_path / "recent.json")
+    history.remember("structure", structure)
+
+    snapshot = history.read_snapshot()
+    history.remember("output", output)
+
+    assert snapshot.paths("structure") == (str(structure.resolve()),)
+    assert snapshot.paths("output") == ()
+    assert snapshot.last_kind == "structure"
+    current = history.read_snapshot()
+    assert current.paths("output") == (str(output.resolve()),)
+    assert current.last_kind == "output"
 
 
 def test_recent_files_load_canonicalizes_legacy_entries(tmp_path, monkeypatch):

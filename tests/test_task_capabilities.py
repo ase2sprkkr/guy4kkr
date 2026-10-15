@@ -36,20 +36,6 @@ def _scf_atoms(status="CONVERGED"):
     return atoms
 
 
-def _action_title(widget):
-    return str(widget.property("workflowActionTitle") or widget.text().splitlines()[0])
-
-
-def _calculate_actions(window):
-    layout = window._action_group_layouts.get(window._GROUP_CALCULATE)
-    if layout is None:
-        return []
-    return [
-        _action_title(layout.itemAt(index).widget())
-        for index in range(1, layout.count())
-    ]
-
-
 def test_guided_registry_integrates_with_backend_definitions():
     definitions = guided_task_definitions()
     assert definitions
@@ -159,33 +145,3 @@ def test_expert_run_action_uses_generic_calculation_readiness(tmp_path):
 
     assert expert.run_calculation_action.isEnabled()
     expert.close()
-
-
-def test_workflow_recommends_only_tasks_for_current_stage(tmp_path):
-    application = QApplication.instance() or QApplication([])
-    gui = GuiApplication(
-        workspace=WorkspaceState(),
-        recent_files_path=tmp_path / "recent.json",
-    )
-    window = gui.create_workflow_window()
-    window.controller.replace_structure(
-        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
-    )
-
-    window.controller.is_scf_converged = lambda: False
-    window._refresh()
-    application.processEvents()
-    assert _calculate_actions(window) == [
-        "Add Empty Spheres",
-        guided_task_definition("scf").workflow.label,
-    ]
-
-    window.controller.is_scf_converged = lambda: True
-    window._refresh()
-    application.processEvents()
-    expected = [
-        definition.workflow.label
-        for definition in workflow_tasks(WorkflowStage.POST_SCF)
-    ]
-    assert _calculate_actions(window) == expected
-    window.close()

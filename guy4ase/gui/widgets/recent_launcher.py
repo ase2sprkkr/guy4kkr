@@ -1,92 +1,63 @@
-"""Shared UI policy for launching recently used structures and outputs."""
+"""Qt rendering helpers for recently used structures and outputs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMenu, QToolButton, QWidget
 
-from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui import recent_presentation as _recent
 
 
-@dataclass(frozen=True)
-class RecentLaunch:
-    """The recent file selected for the primary Continue action."""
-
-    kind: RecentKind
-    path: str
-
-    @property
-    def title(self) -> str:
-        return f"Continue: {Path(self.path).name}"
-
-
-def recent_path_label(path: str | Path, base: str | Path | None = None) -> str:
-    """Prefer a short descendant path; never display ``..``-based relatives."""
-    absolute = Path(path).expanduser().resolve()
-    absolute_text = str(absolute)
-    base_path = Path.cwd() if base is None else Path(base).expanduser().resolve()
-    try:
-        relative = absolute.relative_to(base_path)
-    except ValueError:
-        return absolute_text
-    relative_text = str(relative)
-    return relative_text if len(relative_text) < len(absolute_text) else absolute_text
-
-
-def populate_recent_menu(
+def _populate_menu_items(
     menu: QMenu,
-    history: RecentFiles,
-    kind: RecentKind,
+    items: tuple[_recent.RecentMenuItem, ...],
     open_recent: Callable[[str], None],
     *,
-    base: str | Path | None = None,
+    empty_text: str = _recent.RECENT_MENU_EMPTY_TEXT,
 ) -> QMenu:
-    """Populate one recent-file menu using the shared presentation policy."""
     menu.clear()
-    paths = history.paths(kind)
-    if not paths:
-        action = QAction("(No recent files)", menu)
+    if not items:
+        action = QAction(empty_text, menu)
         action.setEnabled(False)
         menu.addAction(action)
         return menu
 
-    for path in paths:
-        action = QAction(recent_path_label(path, base), menu)
-        action.setToolTip(path)
+    for item in items:
+        action = QAction(item.label, menu)
+        action.setToolTip(item.tooltip)
         action.triggered.connect(
-            lambda _checked=False, item_path=path: open_recent(item_path)
+            lambda _checked=False, item_path=item.path: open_recent(item_path)
         )
         menu.addAction(action)
     return menu
 
 
-def recent_launch(history: RecentFiles) -> RecentLaunch | None:
-    """Return the preferred structure/output to continue with, if any."""
-    paths = {
-        "structure": history.paths("structure"),
-        "output": history.paths("output"),
-    }
-    if not paths["structure"] and not paths["output"]:
-        return None
-
-    kind = history.last_kind
-    if kind not in paths or not paths[kind]:
-        kind = "output" if paths["output"] else "structure"
-    return RecentLaunch(kind, paths[kind][0])
+def populate_recent_menu(
+    menu: QMenu,
+    snapshot: _recent.RecentHistorySnapshot,
+    kind: _recent.RecentFileKind,
+    open_recent: Callable[[str], None],
+    *,
+    base: str | Path | None = None,
+) -> QMenu:
+    """Populate one recent-file menu from one captured history snapshot."""
+    return _populate_menu_items(
+        menu,
+        _recent.recent_menu_items(snapshot.paths(kind), base=base),
+        open_recent,
+    )
 
 
 def build_recent_launch_menu(
     parent: QWidget,
-    history: RecentFiles,
-    open_recent: Callable[[RecentKind, str], None],
+    presentation: _recent.RecentLaunchPresentation,
+    open_recent: Callable[[_recent.RecentLaunchKind, str], None],
     *,
     menu: QMenu | None = None,
-    base: str | Path | None = None,
 ) -> QMenu:
-    """Build or refresh the shared Structures/Outputs Continue menu.
+    """Render an already-resolved shared Continue-recent presentation.
 
     Reuse existing submenus when refreshing. ``QMenu.clear()`` removes their
     actions but does not destroy child menu objects immediately, so recreating
@@ -105,19 +76,15 @@ def build_recent_launch_menu(
     }
     menu.clear()
 
-    for title, kind in (
-        ("Structures", "structure"),
-        ("Outputs", "output"),
-    ):
-        submenu = existing_submenus.pop(title, None)
+    for group in presentation.groups:
+        submenu = existing_submenus.pop(group.title, None)
         if submenu is None:
-            submenu = QMenu(title, menu)
-        populate_recent_menu(
+            submenu = QMenu(group.title, menu)
+        _populate_menu_items(
             submenu,
-            history,
-            kind,
-            lambda path, item_kind=kind: open_recent(item_kind, path),
-            base=base,
+            group.items,
+            lambda path, item_kind=group.kind: open_recent(item_kind, path),
+            empty_text=group.empty_text,
         )
         menu.addMenu(submenu)
 
