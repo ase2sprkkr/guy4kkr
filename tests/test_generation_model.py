@@ -58,14 +58,28 @@ def test_generation_is_a_regular_value_type_without_integer_compatibility():
     assert generation != (1,)
 
 
-def test_controller_restores_workspace_generation():
+def test_controller_restores_generation_without_sharing_mutable_state_container():
     generation = Generation(8)
-    workspace = WorkspaceState(generation=generation)
+    atoms = Atoms("Fe")
+    workspace = WorkspaceState(
+        calculation=CalculationState(atoms=atoms),
+        generation=generation,
+    )
 
     controller = WorkspaceController(workspace)
 
     assert controller.generation == generation
-    assert workspace.generation == generation
+    assert controller.atoms is atoms
+
+    workspace.generation = Generation(99)
+    workspace.calculation.atoms = Atoms("Cu")
+
+    assert controller.generation == generation
+    assert controller.atoms is atoms
+
+    controller.change_directory("other")
+    assert controller.generation == generation.next()
+    assert workspace.generation == Generation(99)
 
 
 def test_directory_change_advances_calculation_generation(tmp_path):

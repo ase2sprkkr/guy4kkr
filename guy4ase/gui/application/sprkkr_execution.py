@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from dataclasses import replace
 from typing import Any, Callable
 
 from ase2sprkkr import SPRKKR
@@ -37,7 +36,7 @@ class SprkkrExecution:
         warning: Callable[[str], None] | None = None,
         persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
-        self.request = replace(request, atoms=request.atoms.copy())
+        self.request = request
         self.cancellation = cancellation
         self.profile_name = profile_name
         self.execution_manager = execution_manager
@@ -80,9 +79,13 @@ class SprkkrExecution:
 
     def _persistent_context(self):
         manager = self.execution_manager
-        if manager is None:
-            return True
         project_id = self.request.project_id
+        if manager is None:
+            if project_id is not None:
+                raise RuntimeError(
+                    "Project-attributed calculation requires an execution manager."
+                )
+            return True
         if project_id is None:
             return manager
         return manager.for_project(project_id)
@@ -121,9 +124,6 @@ class SprkkrExecution:
         try:
             self._with_mpi_warnings(runner.submit)
         finally:
-            # Submission is the first point at which ASE2SPRKKR may have written
-            # the persistent RunRecord. The observer receives only its stable id
-            # and must reload authoritative metadata from the store.
             self._notify_persistent_job_changed(runner)
         if self.cancellation.requested:
             raise ExecutionCancelled
@@ -144,7 +144,6 @@ class SprkkrExecution:
         try:
             result = wait_for_runner(self.cancellation, runner)
         finally:
-            # PersistentRunner.wait() finalizes its RunRecord in a finally block.
             self._notify_persistent_job_changed(runner)
 
         self._status("Loading result…")

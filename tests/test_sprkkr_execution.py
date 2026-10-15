@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from ase import Atoms
 
 from guy4ase.gui.application import sprkkr_execution as execution_module
@@ -138,6 +139,16 @@ def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_p
     assert captured["persistent"] is bound_manager
 
 
+def test_project_attribution_requires_execution_manager(tmp_path):
+    execution = SprkkrExecution(
+        _request(tmp_path, project_id="project-17"),
+        _Cancellation(),
+    )
+
+    with pytest.raises(RuntimeError, match="requires an execution manager"):
+        execution._persistent_context()
+
+
 def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
     cancellation = _Cancellation(requested=True)
     events = []
@@ -146,7 +157,7 @@ def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
         def cancel(self):
             events.append("cancel")
 
-        def submit(self):  # pragma: no cover - contract forbids this
+        def submit(self):
             events.append("submit")
 
     class Calculator:
@@ -156,12 +167,8 @@ def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
     execution = SprkkrExecution(_request(tmp_path), cancellation)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
 
-    try:
+    with pytest.raises(ExecutionCancelled):
         execution.run()
-    except ExecutionCancelled:
-        pass
-    else:  # pragma: no cover - assertion helper
-        raise AssertionError("cancelled execution must not continue")
 
     assert events == ["cancel"]
 
@@ -179,7 +186,7 @@ def test_cancel_racing_with_submit_is_not_cancelled_twice(monkeypatch, tmp_path)
         def cancel(self):
             events.append("cancel")
 
-        def wait(self):  # pragma: no cover - cancellation stops before wait
+        def wait(self):
             events.append("wait")
 
     class Calculator:
@@ -189,12 +196,8 @@ def test_cancel_racing_with_submit_is_not_cancelled_twice(monkeypatch, tmp_path)
     execution = SprkkrExecution(_request(tmp_path), cancellation)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
 
-    try:
+    with pytest.raises(ExecutionCancelled):
         execution.run()
-    except ExecutionCancelled:
-        pass
-    else:  # pragma: no cover - assertion helper
-        raise AssertionError("cancelled execution must not continue")
 
     assert events == ["submit", "cancel"]
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -44,19 +44,17 @@ class CalculationNotReady(RuntimeError):
 
 @dataclass(frozen=True)
 class CalculationRequest:
-    """Immutable provenance captured when a calculation is launched.
+    """Detached launch snapshot captured from the mutable workspace.
 
     ``generation`` protects preparation against delayed state callbacks.
     Completed calculations are always recorded against ``structure_id`` and
     ``state_id``. A potential-producing output may advance the calculation state
     only while that exact input state is still active.
 
-    ``atoms`` identifies the authoritative launch input and is the sole physical
-    authority for its potential; potential paths are provenance/artifact metadata
-    only. The request may still reference the workspace object, but the execution
-    service copies it before ASE2SPRKKR sees it. Lazy promotion, site
-    initialization and backend bookkeeping therefore affect only the execution
-    copy. Structural edits remain controller transitions.
+    ``atoms`` is copied when the request is constructed, so lazy SPR-KKR
+    promotion, site initialization and backend bookkeeping cannot mutate the
+    controller-owned structure. ``input_parameters`` is supplied as a detached
+    value copy by ``WorkspaceController.create_calculation_request``.
 
     ``restart_scf`` snapshots the pending workspace execution intent. It asks
     ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
@@ -72,6 +70,9 @@ class CalculationRequest:
     state_id: int
     restart_scf: bool = False
     project_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "atoms", self.atoms.copy())
 
 
 @dataclass(frozen=True)
@@ -102,8 +103,16 @@ class WorkspaceController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._workspace = workspace or WorkspaceState()
-        self._generation = self._workspace.generation
+        source = workspace or WorkspaceState()
+        # The controller owns mutation. Detach the mutable state containers so an
+        # external holder of the seed snapshot cannot bypass generation checks or
+        # signals by assigning their fields directly. Physical/input objects are
+        # intentionally not copied here; transitions still preserve their identity.
+        self._workspace = WorkspaceState(
+            calculation=replace(source.calculation),
+            context=replace(source.context),
+            generation=source.generation,
+        )
         self._results = ResultStore()
         calculation = self._workspace.calculation
         if calculation.atoms is not None:
@@ -169,7 +178,7 @@ class WorkspaceController(QObject):
 
     @property
     def generation(self) -> Generation:
-        return self._generation
+        return self._workspace.generation
 
     def structure_kind(self):
         return self._workspace.calculation.structure_kind()
@@ -231,7 +240,7 @@ class WorkspaceController(QObject):
             atoms=atoms,
             input_parameters=parameters.copy(copy_values=True),
             directory=directory,
-            generation=self._generation,
+            generation=self.generation,
             structure_id=structure_id,
             state_id=state_id,
             restart_scf=self.restarted,
@@ -239,11 +248,10 @@ class WorkspaceController(QObject):
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
-        return expected is None or expected == self._generation
+        return expected is None or expected == self.generation
 
     def _changed(self) -> None:
-        self._generation = self._generation.next()
-        self._workspace.generation = self._generation
+        self._workspace.generation = self._workspace.generation.next()
 
     def _set_directory(self, directory: Any) -> bool:
         context = self._workspace.context

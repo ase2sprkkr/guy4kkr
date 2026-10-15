@@ -5,11 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
-from ase2sprkkr.execution import (
-    ExecutionManager,
-    ProjectRepository,
-    ProjectRepositoryError,
-)
+from ase2sprkkr.execution import ExecutionManager, ProjectRepository
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.potential_version import PotentialFileVersion
@@ -164,7 +160,7 @@ class GuiApplication(QObject):
         if project_id is not None:
             try:
                 project_id = self.projects.project(str(project_id)).id
-            except (KeyError, ProjectRepositoryError, ValueError):
+            except (KeyError, ValueError):
                 project_id = None
         self.controller.set_active_project(project_id)
 
