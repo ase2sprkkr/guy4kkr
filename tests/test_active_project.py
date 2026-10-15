@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -39,12 +38,8 @@ class _JobSource:
         return self._jobs.get(str(job_id))
 
     def job_changed(self, job_id):
-        job_id = str(job_id)
-        self.changed.append(job_id)
-        job = self._jobs.setdefault(job_id, SimpleNamespace(id=job_id))
-        for listener in tuple(self._listeners):
-            listener(job_id)
-        return job
+        self.changed.append(str(job_id))
+        return self._jobs.get(str(job_id))
 
     @staticmethod
     def refresh():
@@ -53,6 +48,13 @@ class _JobSource:
 
 class _LaunchWindow(QWidget):
     persistentJobChanged = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.execution_context = None
+
+    def set_execution_context(self, manager, *, project_id=None):
+        self.execution_context = (manager, project_id)
 
 
 def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
@@ -81,7 +83,7 @@ def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
     dialog.close()
 
 
-def test_launch_is_assigned_to_project_active_when_monitor_is_tracked(tmp_path):
+def test_launch_captures_active_project_before_later_selection_change(tmp_path):
     _application = QApplication.instance() or QApplication([])
     repository = ProjectRepository(tmp_path / "projects")
     launch_project = repository.create("Launch")
@@ -95,27 +97,14 @@ def test_launch_is_assigned_to_project_active_when_monitor_is_tracked(tmp_path):
     )
     gui.set_active_project(launch_project.id)
     monitor_window = _LaunchWindow()
+
     gui._track_launch_monitor(monitor_window)
+    captured_manager, captured_project = monitor_window.execution_context
 
-    # Persistent-id delivery can be delayed by the backend/store. A later user
-    # project selection must not rewrite the launch provenance of this run.
     gui.set_active_project(later_project.id)
-    monitor_window.persistentJobChanged.emit("run-17")
 
-    assigned = repository.project(launch_project.id)
-    later = repository.project(later_project.id)
-    assert source.changed == ["run-17"]
-    assert assigned.persistent_refs == ("run-17",)
-    assert later.persistent_refs == ()
-    assert assigned.generation == launch_project.generation + 1
-    assert gui.persistent_jobs_controller._monitor_windows == {
-        "run-17": monitor_window
-    }
-
-    # A later lifecycle report reloads metadata but does not assign again.
-    monitor_window.persistentJobChanged.emit("run-17")
-    unchanged = repository.project(launch_project.id)
-
-    assert source.changed == ["run-17", "run-17"]
-    assert unchanged == assigned
+    assert captured_manager is gui.execution_manager
+    assert captured_manager.projects is repository
+    assert captured_project == launch_project.id
+    assert gui.active_project_id == later_project.id
     monitor_window.close()

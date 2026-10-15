@@ -31,6 +31,8 @@ class SprkkrExecution:
         cancellation: Cancellation,
         *,
         profile_name: str | None = None,
+        execution_manager=None,
+        project_id: str | None = None,
         output: Callable[[str, str], None] | None = None,
         status: Callable[[str], None] | None = None,
         warning: Callable[[str], None] | None = None,
@@ -39,6 +41,8 @@ class SprkkrExecution:
         self.request = replace(request, atoms=request.atoms.copy())
         self.cancellation = cancellation
         self.profile_name = profile_name
+        self.execution_manager = execution_manager
+        self.project_id = project_id
         self._output = output or (lambda _text, _kind: None)
         self._status = status or (lambda _text: None)
         self._warning = warning or (lambda _text: None)
@@ -76,6 +80,14 @@ class SprkkrExecution:
     def _calculator(self) -> SPRKKR:
         return SPRKKR() if self.profile_name is None else SPRKKR(profile=self.profile_name)
 
+    def _persistent_context(self):
+        manager = self.execution_manager
+        if manager is None:
+            return True
+        if self.project_id is None:
+            return manager
+        return manager.for_project(self.project_id)
+
     def _create_runner(self, calculator: SPRKKR):
         input_file, potential_file, output_file = self.file_names()
         return self._with_mpi_warnings(
@@ -89,7 +101,7 @@ class SprkkrExecution:
                 empty_spheres=False,
                 read_callback=self._output,
                 print_output=False,
-                persistent=True,
+                persistent=self._persistent_context(),
                 restart_scf=self.request.restart_scf,
             )
         )
