@@ -64,7 +64,7 @@ class _SprkkrRunWorker(RunMonitorWorker):
 
 
 class SprkkrRunWindow(RunMonitorWindow):
-    """Create an SPR-KKR runner and display it in the generic run monitor."""
+    """Snapshot one launch and display it in the generic run monitor."""
 
     persistentJobChanged = pyqtSignal(str)
 
@@ -84,8 +84,11 @@ class SprkkrRunWindow(RunMonitorWindow):
         if profile_description:
             header = f"{header}\n{profile_description}"
 
-        self._atoms = atoms
-        self._input_parameters = input_parameters
+        # The window is the launch boundary. From here on the calculation owns
+        # detached mutable inputs even if the workspace changes before the
+        # worker actually runs.
+        self._atoms = atoms.copy()
+        self._input_parameters = input_parameters.copy(copy_values=True)
         self._directory = directory
         self._provenance = provenance
         self._execution_manager = None
