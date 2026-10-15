@@ -64,7 +64,7 @@ def test_load_input_parameters_accepts_parsed_compatible_task_family(tmp_path):
     plane.save_to_file(path)
 
     detected = InputParameters.from_file(path)
-    assert detected.task_name.lower() == "bsf"
+    assert detected.task_name is None
     assert detected.task_definition.name.lower() == "bsfkk"
 
     assert input_parameter_flows.load_input_parameters(

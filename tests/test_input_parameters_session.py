@@ -530,10 +530,7 @@ def test_forced_single_site_contour_stays_active_until_last_flag_is_off(task):
     application.processEvents()
 
 
-def test_compton_keeps_the_single_site_contour_without_a_switch(monkeypatch):
-    # ase2sprkkr does not yet ship a standalone COMPTON definition. Reuse an
-    # equivalent energy-bearing document and expose the task identity that the
-    # domain predicate is intentionally designed to support.
+def test_requested_task_provenance_does_not_force_single_site_contour(monkeypatch):
     parameters = InputParameters.create("scf")
     parameters.ENERGY.SPLITSS.set(True)
     parameters.ENERGY.GRID.set([5, 3])
@@ -550,9 +547,9 @@ def test_compton_keeps_the_single_site_contour_without_a_switch(monkeypatch):
 
     session.set_value(("ENERGY", "SPLITSS"), False)
 
-    assert session.working_parameters.uses_separate_single_site_contour()
-    assert list(session.value(("ENERGY", "GRID"))) == ["5", "3"]
-    assert list(session.value(("ENERGY", "NE"))) == [32, 87]
+    assert not session.working_parameters.uses_separate_single_site_contour()
+    assert list(session.value(("ENERGY", "GRID"))) == ["5"]
+    assert list(session.value(("ENERGY", "NE"))) == [32]
 
 
 def test_unrelated_edit_does_not_repair_incomplete_imported_split_contour():
