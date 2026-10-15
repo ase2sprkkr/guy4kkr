@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr import InputParameters
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.dialogs.input_file import InputFileEditor
