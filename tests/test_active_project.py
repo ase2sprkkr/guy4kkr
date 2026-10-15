@@ -51,10 +51,20 @@ class _LaunchWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.execution_context = None
+        self.execution_manager = None
 
-    def set_execution_context(self, manager, *, project_id=None):
-        self.execution_context = (manager, project_id)
+    def set_execution_manager(self, manager):
+        self.execution_manager = manager
+
+
+class _ExecutionManager:
+    def __init__(self):
+        self.bound = []
+
+    def for_project(self, project_id):
+        manager = object()
+        self.bound.append((project_id, manager))
+        return manager
 
 
 def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
@@ -83,7 +93,7 @@ def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
     dialog.close()
 
 
-def test_launch_captures_active_project_before_later_selection_change(tmp_path):
+def test_launch_binds_active_project_before_later_selection_change(tmp_path):
     _application = QApplication.instance() or QApplication([])
     repository = ProjectRepository(tmp_path / "projects")
     launch_project = repository.create("Launch")
@@ -95,16 +105,20 @@ def test_launch_captures_active_project_before_later_selection_change(tmp_path):
         persistent_jobs=source,
         project_repository=repository,
     )
+    manager = _ExecutionManager()
+    gui.execution_manager = manager
+    generation = gui.controller.generation
     gui.set_active_project(launch_project.id)
     monitor_window = _LaunchWindow()
 
     gui._track_launch_monitor(monitor_window)
-    captured_manager, captured_project = monitor_window.execution_context
+    bound_project, bound_manager = manager.bound[-1]
 
     gui.set_active_project(later_project.id)
 
-    assert captured_manager is gui.execution_manager
-    assert captured_manager.projects is repository
-    assert captured_project == launch_project.id
+    assert bound_project == launch_project.id
+    assert monitor_window.execution_manager is bound_manager
     assert gui.active_project_id == later_project.id
+    assert gui.controller.active_project_id == later_project.id
+    assert gui.controller.generation == generation
     monitor_window.close()
