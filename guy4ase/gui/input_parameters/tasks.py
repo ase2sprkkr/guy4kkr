@@ -35,15 +35,27 @@ class WorkflowPresentation:
 
 @dataclass(frozen=True)
 class GuidedTaskDefinition:
-    """Guy4ASE-owned metadata for one backend task with a Guided editor.
+    """Guy4ASE-owned metadata for one Guided task family.
 
-    ``backend_task`` is an opaque key accepted by the current ASE2SPRKKR input
-    parameter API. Guy4ASE does not assign backend identity semantics to it.
+    ``backend_task`` is the task used to create a fresh ASE2SPRKKR input model.
+    ``compatible_backend_tasks`` lists additional concrete backend tasks sharing
+    the same Guided editor. ``aliases`` are Guy4ASE presentation keys only and
+    must never be passed to ASE2SPRKKR as task identities.
     """
 
     backend_task: str
     spec_builder: Callable[[bool], TaskDialogSpec]
     workflow: WorkflowPresentation
+    compatible_backend_tasks: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def backend_tasks(self) -> tuple[str, ...]:
+        return (self.backend_task, *self.compatible_backend_tasks)
+
+    def accepts_backend_task(self, task: str) -> bool:
+        normalized = str(task).strip().lower()
+        return normalized in self.backend_tasks
 
     def build_spec(self, *, is_2d: bool = False) -> TaskDialogSpec:
         spec = self.spec_builder(is_2d)
@@ -90,13 +102,15 @@ _TASKS = (
         ),
     ),
     GuidedTaskDefinition(
-        "bsf",
+        "bsfek",
         bsf.build_spec,
         WorkflowPresentation(
             "Calculate BSF",
             "Bloch spectral function along an E–k path or on a k–k plane",
             WorkflowStage.POST_SCF,
         ),
+        compatible_backend_tasks=("bsfkk",),
+        aliases=("bsf",),
     ),
     GuidedTaskDefinition(
         "jxc",
@@ -108,8 +122,10 @@ _TASKS = (
         ),
     ),
 )
-_TASKS_BY_BACKEND_TASK = {
-    definition.backend_task: definition for definition in _TASKS
+_TASKS_BY_NAME = {
+    name: definition
+    for definition in _TASKS
+    for name in (*definition.backend_tasks, *definition.aliases)
 }
 
 
@@ -117,7 +133,7 @@ def guided_task_definition(task: str) -> GuidedTaskDefinition:
     """Return Guy4ASE metadata for a task supported by the Guided UI."""
     normalized = str(task).strip().lower()
     try:
-        return _TASKS_BY_BACKEND_TASK[normalized]
+        return _TASKS_BY_NAME[normalized]
     except KeyError as exc:
         raise ValueError(
             f"No guided setup is defined for task {str(task).upper()}."
@@ -131,7 +147,7 @@ def guided_task_definitions() -> tuple[GuidedTaskDefinition, ...]:
 
 def is_guided_task(task: str) -> bool:
     """Return whether Guy4ASE provides a Guided editor for ``task``."""
-    return str(task).strip().lower() in _TASKS_BY_BACKEND_TASK
+    return str(task).strip().lower() in _TASKS_BY_NAME
 
 
 def workflow_tasks(stage: WorkflowStage) -> tuple[GuidedTaskDefinition, ...]:

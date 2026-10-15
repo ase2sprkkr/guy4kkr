@@ -104,7 +104,7 @@ def test_expert_dialog_forks_supplied_session(application):
 
 
 def test_expert_bound_energy_compound_edit_commits_once_and_undoes_once(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfkk")
     parameters.ENERGY.EMIN.set(0.5)
     dialog = InputParametersDialog(parameters)
     editor = _expert_energy_editor(dialog)

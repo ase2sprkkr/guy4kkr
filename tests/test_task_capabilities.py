@@ -49,6 +49,22 @@ def test_guided_registry_integrates_with_backend_definitions():
                 resolve_option(parameters, path)
 
 
+def test_bsf_guided_family_uses_concrete_backend_tasks():
+    definition = guided_task_definition("bsf")
+
+    assert definition.backend_task == "bsfek"
+    assert definition.backend_tasks == ("bsfek", "bsfkk")
+    assert guided_task_definition("bsfek") is definition
+    assert guided_task_definition("bsfkk") is definition
+    assert definition.accepts_backend_task("BSFEK")
+    assert definition.accepts_backend_task("BSFKK")
+
+    for backend_task in definition.backend_tasks:
+        parameters = InputParameters.create(backend_task)
+        for path in definition.build_spec().all_paths():
+            resolve_option(parameters, path)
+
+
 def test_guided_workflow_stages_are_presentation_metadata():
     scf = guided_task_definition("SCF")
     assert scf.workflow.stage is WorkflowStage.SCF

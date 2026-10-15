@@ -17,7 +17,7 @@ def application():
 
 
 def kk_parameters():
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfkk")
     parameters.set({"ENERGY": {"NE": [1]}, "TASK": {
         "KA": [[0., 0., 0.]], "K1": [1., 0., 0.], "K2": [0., 1., 0.],
         "NK1": 45, "NK2": 55,
@@ -60,9 +60,7 @@ def test_bsf_rules_update_mirrors_labels_and_conditional_errors(application):
 
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 def test_shared_rules_reapply_without_mutating_or_adding_history(application, task):
-    parameters = InputParameters.create(task)
-    if task == "bsf":
-        parameters = kk_parameters()
+    parameters = kk_parameters() if task == "bsf" else InputParameters.create(task)
     dialog = GuidedInputParametersDialog(task, parameters)
     radius = dialog.editors_for(("TAU", "CLURAD"))[0]
     initial_count = dialog.session.undo_stack.count()

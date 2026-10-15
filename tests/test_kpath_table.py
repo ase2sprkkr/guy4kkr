@@ -18,7 +18,7 @@ def application():
 
 @pytest.fixture
 def dialog(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {
         "KA": [[-.4999999999999999, .5000000000000002, -2.33e-32], [0., 0., 0.]],
         "KE": [[0., 0., 0.], [1., 1., 1.]], "NK": 250}})

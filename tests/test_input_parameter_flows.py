@@ -44,6 +44,43 @@ def test_load_input_parameters_is_one_named_session_transaction(
     assert session.value(("SCF", "NITER")) == initial
 
 
+def test_load_input_parameters_accepts_parsed_compatible_task_family(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    session = create_input_parameters_session(InputParameters.create("bsfek"))
+    plane = InputParameters.create("bsfkk")
+    plane.CONTROL.POTFIL.set("Fe.pot")
+    plane.set({
+        "ENERGY": {"NE": [1]},
+        "TASK": {
+            "KA": [[0.0, 0.0, 0.0]],
+            "K1": [1.0, 0.0, 0.0],
+            "K2": [0.0, 1.0, 0.0],
+            "NK1": 45,
+            "NK2": 55,
+        },
+    })
+    path = tmp_path / "plane.inp"
+    plane.save_to_file(path)
+
+    detected = InputParameters.from_file(path)
+    assert detected.task_name.lower() == "bsf"
+    assert detected.task_definition.name.lower() == "bsfkk"
+
+    assert input_parameter_flows.load_input_parameters(
+        session,
+        path,
+        None,
+        compatible_tasks=("bsfek", "bsfkk"),
+    )
+    assert session.task_name.lower() == "bsfek"
+    assert session.working_parameters.task_definition.name.lower() == "bsfkk"
+
+    session.undo_stack.undo()
+    assert session.task_name.lower() == "bsfek"
+    assert session.working_parameters.task_definition.name.lower() == "bsfek"
+
+
 def test_text_editor_applies_through_the_same_session_flow(monkeypatch):
     application = QApplication.instance() or QApplication([])
     assert application is not None
