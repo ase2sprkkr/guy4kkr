@@ -40,10 +40,14 @@ def scaling(dialog, name='SOC'):
     return tree.itemWidget(item, 2), item
 
 
+def backend_task(task):
+    return 'bsfkk' if task == 'bsf' else task
+
+
 @pytest.mark.parametrize('task', ['scf', 'bsf'])
 @pytest.mark.parametrize('name', ['C', 'SOC'])
 def test_expert_scaling_uses_compact_inline_defaultdict_editor(application, task, name):
-    parameters = InputParameters.create(task)
+    parameters = InputParameters.create(backend_task(task))
     parameters.MODE[name].set({'def': .8, 2: .4})
     original = parameters.to_string(validate=False)
     dialog = InputParametersDialog(parameters)
@@ -452,7 +456,7 @@ def test_expert_defaultdict_renders_default_on_parent_and_overrides_as_children(
 
 
 def test_expert_numbered_vectors_render_one_complete_value_per_child(application):
-    source = InputParameters.create('bsf')
+    source = InputParameters.create('bsfek')
     source.set({
         'ENERGY': {'NE': [200]},
         'TASK': {

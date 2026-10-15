@@ -1,6 +1,7 @@
 """Shared file workflows for transactional input-parameter editors."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -15,6 +16,8 @@ _INPUT_FILE_FILTER = "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
 def choose_and_load_input_parameters(
     session: InputParametersSession,
     parent: QWidget | None,
+    *,
+    compatible_tasks: Iterable[str] = (),
 ) -> bool:
     """Choose an input file and install it as one session transaction."""
     file_path, _ = QFileDialog.getOpenFileName(
@@ -25,38 +28,58 @@ def choose_and_load_input_parameters(
     )
     return bool(
         file_path
-        and load_input_parameters(session, file_path, parent)
+        and load_input_parameters(
+            session,
+            file_path,
+            parent,
+            compatible_tasks=compatible_tasks,
+        )
     )
+
+
+def _load_error(parent: QWidget | None, exception: Exception | str) -> bool:
+    QMessageBox.critical(
+        parent,
+        "Load Error",
+        f"Failed to load input parameters:\n{exception}",
+    )
+    return False
 
 
 def load_input_parameters(
     session: InputParametersSession,
     file_path: str | Path,
     parent: QWidget | None,
+    *,
+    compatible_tasks: Iterable[str] = (),
 ) -> bool:
-    """Parse an input file and install it without leaking parser/UI policy."""
+    """Parse an input file and install it without leaking editor-family policy."""
     path = Path(file_path).resolve()
     try:
         parameters = InputParameters.from_file(path)
     except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
-        QMessageBox.critical(
-            parent,
-            "Load Error",
-            f"Failed to load input parameters:\n{exc}",
-        )
-        return False
+        return _load_error(parent, exc)
 
     expected_task = session.task_name.lower()
+    allowed = {expected_task, *(str(task).lower() for task in compatible_tasks)}
     actual_task = parameters.task_name.lower()
-    if actual_task != expected_task:
-        QMessageBox.critical(
+    if actual_task not in allowed:
+        expected = "/".join(sorted(task.upper() for task in allowed))
+        return _load_error(
             parent,
-            "Load Error",
-            "Failed to load input parameters:\n"
-            f"Expected {expected_task.upper()} input parameters, "
-            f"got {actual_task.upper()}.",
+            f"Expected {expected} input parameters, got {actual_task.upper()}.",
         )
-        return False
+
+    # A Guided family may expose multiple concrete backend tasks backed by one
+    # schema (currently BSFEK/BSFKK).  Keep the session's originally selected
+    # task view, exactly as an in-dialog mode switch does; ASE2SPRKKR derives the
+    # effective TaskDefinition from the loaded values.
+    if actual_task != expected_task:
+        try:
+            parameters = InputParameters.create(session.task_name)
+            parameters.read_from_file(path)
+        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
+            return _load_error(parent, exc)
 
     session.replace_parameters(
         parameters,

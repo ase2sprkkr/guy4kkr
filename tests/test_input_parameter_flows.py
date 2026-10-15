@@ -44,6 +44,48 @@ def test_load_input_parameters_is_one_named_session_transaction(
     assert session.value(("SCF", "NITER")) == initial
 
 
+def test_load_input_parameters_accepts_explicit_compatible_task_family(
+    monkeypatch, tmp_path
+):
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    session = create_input_parameters_session(InputParameters.create("bsfek"))
+    detected = InputParameters.create("bsfkk")
+    path = tmp_path / "plane.inp"
+    path.write_text("not parsed because the reader is stubbed")
+    monkeypatch.setattr(
+        input_parameter_flows.InputParameters,
+        "from_file",
+        lambda _path: detected,
+    )
+
+    def read_plane(parameters, _path):
+        parameters.ENERGY.NE.set([1])
+        parameters.TASK.K1.set([1.0, 0.0, 0.0])
+        parameters.TASK.K2.set([0.0, 1.0, 0.0])
+        parameters.TASK.NK1.set(45)
+        parameters.TASK.NK2.set(55)
+
+    monkeypatch.setattr(
+        input_parameter_flows.InputParameters,
+        "read_from_file",
+        read_plane,
+    )
+
+    assert input_parameter_flows.load_input_parameters(
+        session,
+        path,
+        None,
+        compatible_tasks=("bsfek", "bsfkk"),
+    )
+    assert session.task_name.lower() == "bsfek"
+    assert session.working_parameters.task_definition.name.lower() == "bsfkk"
+
+    session.undo_stack.undo()
+    assert session.task_name.lower() == "bsfek"
+    assert session.working_parameters.task_definition.name.lower() == "bsfek"
+
+
 def test_text_editor_applies_through_the_same_session_flow(monkeypatch):
     application = QApplication.instance() or QApplication([])
     assert application is not None
