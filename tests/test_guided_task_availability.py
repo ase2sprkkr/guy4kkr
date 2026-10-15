@@ -4,7 +4,7 @@ import pytest
 from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs import guided_input as guided_input_module
 from guy4ase.gui.dialogs.guided_input import GuidedTaskUnavailable
@@ -14,8 +14,10 @@ from guy4ase.gui.flows import calculation as calculation_flow
 def _controller(tmp_path) -> WorkspaceController:
     return WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
-            directory=str(tmp_path),
+            calculation=CalculationState(
+                atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

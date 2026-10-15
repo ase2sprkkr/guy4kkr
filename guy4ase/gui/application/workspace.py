@@ -1,4 +1,4 @@
-"""Mutable workspace draft owned by ``WorkspaceController``."""
+"""Mutable workspace state owned by ``WorkspaceController``."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -14,7 +14,7 @@ from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 @dataclass(frozen=True)
 class Generation:
-    """Monotonic revision of the mutable workspace draft."""
+    """Monotonic revision used to reject stale calculation-state edits."""
 
     value: int = 0
 
@@ -22,7 +22,7 @@ class Generation:
         return Generation(self.value + 1)
 
     def next_major(self) -> Generation:
-        """Advance the draft revision after a semantic workspace change."""
+        """Advance the revision after a semantic workspace change."""
         return self.next()
 
 
@@ -46,30 +46,21 @@ class EmptySpheresState:
 
 
 @dataclass
-class WorkspaceState:
-    """Inputs prepared for the next calculation and facts derived from them.
+class CalculationState:
+    """Calculation-specific data prepared for the next SPR-KKR task.
 
-    Results deliberately do not live here. ``structure_id`` identifies the
-    user-visible structure and ``state_id`` the exact structure/potential input
-    from which the next task will start. ``atoms`` is the sole physical
-    authority for that state, including an attached SPR-KKR potential when one
-    exists. ``potential_path`` is provenance metadata only and is never
-    consulted to construct a calculation input.
-
-    Derived queries describe what the current draft *is*. Workflow capabilities
-    and decisions about what the application may do with it belong to
-    ``WorkspaceController``.
+    ``atoms`` is the sole physical authority, including an attached SPR-KKR
+    potential when one exists. ``potential_path`` and the state identifiers are
+    provenance for that same physical state; they are not independent inputs.
     """
 
     atoms: Any | None = None
     input_parameters: Any | None = None
-    directory: str | None = None
     potential_path: str | None = None
     structure_id: int | None = None
     state_id: int | None = None
     empty_spheres: EmptySpheresState | None = None
     restarted: bool = False
-    generation: Generation = Generation()
 
     @property
     def empty_spheres_added(self) -> int | None:
@@ -80,16 +71,8 @@ class WorkspaceState:
     def structure_kind(self) -> StructureKind | None:
         return detect_structure_kind(self.atoms)
 
-    def is_calculation_input_complete(self) -> bool:
-        """Return whether all generic inputs required to launch a task exist."""
-        return (
-            self.atoms is not None
-            and self.input_parameters is not None
-            and bool(self.directory)
-        )
-
     def scf_status(self) -> str | None:
-        """Return the effective SCFSTATUS of the active workspace state."""
+        """Return the effective SCFSTATUS of the active calculation state."""
         atoms = self.atoms
         if atoms is None:
             return None
@@ -106,7 +89,7 @@ class WorkspaceState:
         return status or None
 
     def is_scf_converged(self) -> bool:
-        """Return convergence of the active workspace potential only."""
+        """Return convergence of the active calculation potential only."""
         if self.restarted:
             return False
         atoms = self.atoms
@@ -123,3 +106,32 @@ class WorkspaceState:
         return any(
             int(number) == 0 for number in getattr(self.atoms, "numbers", ())
         )
+
+
+@dataclass
+class WorkspaceContext:
+    """Non-physical context captured by the next calculation launch.
+
+    ``directory`` changes the concrete calculation request and therefore still
+    participates in workspace generation checks. ``active_project_id`` is only
+    launch attribution: selecting another project must not invalidate an
+    in-progress structure or input-parameter edit.
+    """
+
+    directory: str | None = None
+    active_project_id: str | None = None
+
+
+@dataclass
+class WorkspaceState:
+    """Complete mutable workspace snapshot split by semantic responsibility.
+
+    ``calculation`` answers what would be calculated. ``context`` carries the
+    non-physical context of the next launch. Results deliberately do not live
+    here. ``generation`` protects revision-sensitive edits; the controller
+    decides which transitions advance it.
+    """
+
+    calculation: CalculationState = field(default_factory=CalculationState)
+    context: WorkspaceContext = field(default_factory=WorkspaceContext)
+    generation: Generation = Generation()

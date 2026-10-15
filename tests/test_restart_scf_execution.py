@@ -5,7 +5,12 @@ from ase import Atoms
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import Generation, WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    Generation,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     WorkspaceController,
@@ -28,10 +33,12 @@ class _Cancellation:
 def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
     controller = WorkspaceController(
         WorkspaceState(
-            atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-            restarted=True,
+            calculation=CalculationState(
+                atoms=Atoms("Fe"),
+                input_parameters=_Parameters(),
+                restarted=True,
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

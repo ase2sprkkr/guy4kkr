@@ -11,7 +11,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from guy4ase.gui.application.result_action_policy import NewCalculationSource
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import DocumentChange, WorkspaceController
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.presenters.result_actions import ResultActionsPresenter
@@ -27,6 +27,10 @@ class _Value:
 
     def actions(self):
         return ()
+
+
+def _workspace(atoms):
+    return WorkspaceState(calculation=CalculationState(atoms=atoms))
 
 
 def _result(task: str = "dos"):
@@ -68,7 +72,7 @@ def _result_widget(controller: WorkspaceController):
 
 def test_user_double_clicking_structure_emits_structure_intent_only():
     application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     _record_current_result(controller)
     widget, _presenter = _result_widget(controller)
     captured = []
@@ -102,7 +106,7 @@ def test_user_double_clicking_structure_emits_structure_intent_only():
 
 def test_presenter_uses_active_state_for_current_structure():
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     _record_current_result(controller)
     widget, presenter = _result_widget(controller)
 
@@ -116,7 +120,7 @@ def test_presenter_uses_active_state_for_current_structure():
 
 def test_historical_source_uses_lineage_depth_not_result_completion_order():
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     historical_structure_id = controller.structure_id
     root_state = controller.state_id
     deeper_state = controller.result_store.new_child_state(root_state)
@@ -137,7 +141,7 @@ def test_historical_source_uses_lineage_depth_not_result_completion_order():
 
 def test_historical_structure_with_multiple_branches_requests_explicit_state():
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     historical_structure_id = controller.structure_id
     root_state = controller.state_id
     alternative_state = controller.result_store.new_child_state(
@@ -162,7 +166,7 @@ def test_historical_structure_with_multiple_branches_requests_explicit_state():
 
 def test_historical_continuation_is_one_observable_controller_transition():
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     historical_structure_id = controller.structure_id
     historical_state_id = controller.state_id
     record = _record_current_result(controller)
@@ -189,7 +193,7 @@ def test_historical_continuation_is_one_observable_controller_transition():
 
 def test_current_continuation_creates_one_new_branch_transition():
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     parent_state_id = controller.state_id
     parent_branch_id = controller.result_store.state(parent_state_id).branch_id
     generation = controller.generation
@@ -209,7 +213,7 @@ def test_current_continuation_creates_one_new_branch_transition():
 
 def test_confirmed_flow_uses_atomic_historical_transition(monkeypatch):
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     historical_state_id = controller.state_id
     record = _record_current_result(controller)
     controller.replace_structure(Atoms("Cu"))
@@ -236,7 +240,7 @@ def test_confirmed_flow_uses_atomic_historical_transition(monkeypatch):
 
 def test_cancelled_flow_keeps_workspace_unchanged(monkeypatch):
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     record = _record_current_result(controller)
     state_id = controller.state_id
     generation = controller.generation
@@ -258,7 +262,7 @@ def test_cancelled_flow_keeps_workspace_unchanged(monkeypatch):
 
 def test_flow_rejects_workspace_change_while_confirmation_is_open(monkeypatch):
     _application = _app()
-    controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
+    controller = WorkspaceController(_workspace(Atoms("Fe")))
     record = _record_current_result(controller)
 
     def answer(*_args, **_kwargs):

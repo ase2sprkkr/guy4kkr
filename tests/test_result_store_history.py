@@ -7,7 +7,7 @@ from ase import Atoms
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -48,10 +48,12 @@ def _loaded(
 def _controller(tmp_path, atoms=None, potential_path=None):
     return WorkspaceController(
         WorkspaceState(
-            atoms=atoms or Atoms("Fe"),
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-            potential_path=potential_path,
+            calculation=CalculationState(
+                atoms=atoms or Atoms("Fe"),
+                input_parameters=_Parameters(),
+                potential_path=potential_path,
+            ),
+            context=WorkspaceContext(directory=str(tmp_path)),
         )
     )
 

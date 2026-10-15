@@ -5,11 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
-from ase2sprkkr.execution import (
-    ExecutionManager,
-    ProjectRepository,
-    ProjectRepositoryError,
-)
+from ase2sprkkr.execution import ExecutionManager, ProjectRepository
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.potential_version import PotentialFileVersion
@@ -42,6 +38,7 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
+        self.controller.activeProjectChanged.connect(self._active_project_changed)
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,
@@ -66,14 +63,13 @@ class GuiApplication(QObject):
             self.persistent_jobs,
             parent=self,
         )
-        self._active_project_id: str | None = None
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
 
     @property
     def active_project_id(self) -> str | None:
-        return self._active_project_id
+        return self.controller.active_project_id
 
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
@@ -160,22 +156,21 @@ class GuiApplication(QObject):
             presenter.refresh()
 
     def set_active_project(self, project_id: str | None) -> None:
-        """Select the project that receives subsequently created persistent runs."""
+        """Select the project captured by subsequently created launch requests."""
         if project_id is not None:
             try:
                 project_id = self.projects.project(str(project_id)).id
-            except (KeyError, ProjectRepositoryError, ValueError):
+            except (KeyError, ValueError):
                 project_id = None
-        self._active_project_id = project_id
+        self.controller.set_active_project(project_id)
+
+    def _active_project_changed(self, project_id: str | None) -> None:
         if self._project_browser is not None:
             self._project_browser.set_active_project(project_id)
 
     def _track_launch_monitor(self, monitor_window: SprkkrRunWindow) -> None:
-        """Capture execution/project context before the monitor starts its worker."""
-        monitor_window.set_execution_context(
-            self.execution_manager,
-            project_id=self._active_project_id,
-        )
+        """Capture execution infrastructure before the monitor starts its worker."""
+        monitor_window.set_execution_context(self.execution_manager)
         self.persistent_jobs_controller.track_launch_window(monitor_window)
 
     def show_workflow_window(self) -> None:
@@ -192,7 +187,7 @@ class GuiApplication(QObject):
             dialog = ProjectBrowserDialog(
                 self.projects,
                 self.persistent_jobs_controller,
-                active_project_id=self._active_project_id,
+                active_project_id=self.controller.active_project_id,
             )
             dialog.activeProjectRequested.connect(self.set_active_project)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

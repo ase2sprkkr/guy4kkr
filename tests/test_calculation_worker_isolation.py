@@ -4,7 +4,7 @@ from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
@@ -21,15 +21,19 @@ class _Cancellation:
         return True
 
 
-def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
-    atoms = Atoms("Fe")
-    controller = WorkspaceController(
-        WorkspaceState(
+def _workspace(atoms, tmp_path):
+    return WorkspaceState(
+        calculation=CalculationState(
             atoms=atoms,
             input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
+        ),
+        context=WorkspaceContext(directory=str(tmp_path)),
     )
+
+
+def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
+    atoms = Atoms("Fe")
+    controller = WorkspaceController(_workspace(atoms, tmp_path))
     request = controller.create_calculation_request()
 
     execution = SprkkrExecution(request, _Cancellation())
@@ -51,13 +55,7 @@ def test_execution_copy_owns_independent_sprkkr_site_state(tmp_path):
     atoms.sites[1].site_type = atoms.sites[0].site_type
     original_site_type = atoms.sites[0].site_type
 
-    controller = WorkspaceController(
-        WorkspaceState(
-            atoms=atoms,
-            input_parameters=_Parameters(),
-            directory=str(tmp_path),
-        )
-    )
+    controller = WorkspaceController(_workspace(atoms, tmp_path))
     execution = SprkkrExecution(
         controller.create_calculation_request(),
         _Cancellation(),

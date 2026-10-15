@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from ase import Atoms
 import pytest
 
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.dialogs.structures import build_2d as build_2d_dialog
 from guy4ase.gui.flows import structure_candidates as candidate_flows
 from guy4ase.gui.flows.structure_candidates import StructureCandidate
@@ -16,8 +16,10 @@ def test_structure_candidate_load_has_no_workspace_side_effects(tmp_path):
     loaded = Atoms("Fe")
     workspace_atoms = Atoms("Cu")
     workspace = WorkspaceState(
-        atoms=workspace_atoms,
-        potential_path="Cu.pot",
+        calculation=CalculationState(
+            atoms=workspace_atoms,
+            potential_path="Cu.pot",
+        )
     )
 
     candidate = candidate_flows.load_structure_candidate(
@@ -27,8 +29,8 @@ def test_structure_candidate_load_has_no_workspace_side_effects(tmp_path):
     )
 
     assert candidate == StructureCandidate(loaded, path.resolve())
-    assert workspace.atoms is workspace_atoms
-    assert workspace.potential_path == "Cu.pot"
+    assert workspace.calculation.atoms is workspace_atoms
+    assert workspace.calculation.potential_path == "Cu.pot"
 
 
 def test_build_2d_replacement_uses_shared_structure_source(monkeypatch):

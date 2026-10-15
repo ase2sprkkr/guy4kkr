@@ -7,7 +7,11 @@ from ase import Atoms
 
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
@@ -43,18 +47,28 @@ class _RunWindow:
         self.started = True
 
 
+def _workspace(*, atoms=None, input_parameters=None, directory=None):
+    return WorkspaceState(
+        calculation=CalculationState(
+            atoms=atoms,
+            input_parameters=input_parameters,
+        ),
+        context=WorkspaceContext(directory=directory),
+    )
+
+
 def test_workspace_calculation_input_completeness_requires_all_inputs():
-    workspace = WorkspaceState()
-    assert not workspace.is_calculation_input_complete()
+    controller = WorkspaceController(WorkspaceState())
+    assert not controller.can_calculate()
 
-    workspace.atoms = Atoms("Fe")
-    assert not workspace.is_calculation_input_complete()
+    controller.replace_structure(Atoms("Fe"))
+    assert not controller.can_calculate()
 
-    workspace.input_parameters = _Parameters("scf")
-    assert not workspace.is_calculation_input_complete()
+    controller.replace_input_parameters(_Parameters("scf"))
+    assert not controller.can_calculate()
 
-    workspace.directory = "calculation"
-    assert workspace.is_calculation_input_complete()
+    controller.change_directory("calculation")
+    assert controller.can_calculate()
 
 
 def test_create_calculation_request_reports_missing_preconditions():
@@ -71,7 +85,7 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
             raise ValueError("broken parameter copy")
 
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=BrokenParameters(),
             directory=str(tmp_path),
@@ -91,7 +105,7 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     tmp_path, monkeypatch
 ):
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters("scf"),
             directory=str(tmp_path),
@@ -139,7 +153,7 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
         directory=str(tmp_path),
     )
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=Atoms("Fe"),
             input_parameters=_Parameters("scf"),
             directory=str(tmp_path),
@@ -169,7 +183,7 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
 
 def test_edit_current_structure_reads_published_structure_and_commits_replacement():
     original = Atoms("Fe")
-    controller = WorkspaceController(WorkspaceState(atoms=original))
+    controller = WorkspaceController(_workspace(atoms=original))
 
     def edit(atoms, *, parent):
         assert parent is None
@@ -196,7 +210,7 @@ def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
     original_parameters = _Parameters("original")
     edited_parameters = _Parameters("edited")
     controller = WorkspaceController(
-        WorkspaceState(
+        _workspace(
             atoms=original_atoms,
             input_parameters=original_parameters,
         )

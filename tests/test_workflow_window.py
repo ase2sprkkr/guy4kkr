@@ -6,7 +6,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.dialogs import workflow_window as workflow_module
 from guy4ase.gui.workflow.model import (
     Build2D,
@@ -57,8 +57,8 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     )
     application.processEvents()
 
-    assert workspace.atoms is not None
-    assert expert.controller.atoms is workspace.atoms
+    assert workspace.calculation.atoms is not None
+    assert expert.controller.atoms is workspace.calculation.atoms
     assert RunTask("scf") in _commands(window)
     expert.close()
     window.close()
@@ -169,7 +169,9 @@ def test_cancelled_surface_creation_does_not_reuse_previous_structure(
     tmp_path, monkeypatch
 ):
     workspace = WorkspaceState(
-        atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+        calculation=CalculationState(
+            atoms=Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
+        )
     )
     _gui, window = _workflow(tmp_path, workspace=workspace)
     builds = []
@@ -187,5 +189,5 @@ def test_cancelled_surface_creation_does_not_reuse_previous_structure(
     window._create_surface()
 
     assert builds == []
-    assert workspace.atoms is not None
+    assert workspace.calculation.atoms is not None
     window.close()

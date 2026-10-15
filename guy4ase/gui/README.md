@@ -51,12 +51,12 @@ alternate APIs.
   workflow policy, or user-facing presentation copy and imports no other
   `guy4ase.gui` module.
 - `application`: application/document state, calculation execution, and
-  provenance. `WorkspaceState` represents the mutable draft prepared for the
-  next calculation; `ResultStore` owns calculation history independently of
-  that draft; `WorkspaceController` is the mutation/signalling boundary between
-  them and the GUI. `SprkkrExecution` owns the non-Qt execution contract for one
-  immutable calculation request. Persistent application state such as recent
-  files and settings also lives here.
+  provenance. `WorkspaceState` groups the mutable calculation draft and launch
+  context prepared for the next calculation; `ResultStore` owns calculation
+  history independently of that draft; `WorkspaceController` is the
+  mutation/signalling boundary between them and the GUI. `SprkkrExecution` owns
+  the non-Qt execution contract for one immutable calculation request. Persistent
+  application state such as recent files and settings also lives here.
 - `flows`: stateless shared Qt workflows composed from application state and
   leaf dialogs. They may show modal UI and call public controller transitions,
   but they do not own application state or top-level windows.
@@ -100,12 +100,13 @@ registered before their worker starts. Persistent job views never own backend
 recovery or monitor-window lifecycle.
 
 Calculation execution is deliberately not owned by a GUI run registry. A
-`CalculationRequest` captures exact launch provenance, `SprkkrExecution` owns
-runner creation/submission/cancellation/result loading, and `RunMonitorWindow`
-is only the generic Qt monitor. `PersistentJobsController` owns GUI window
-lifetime and identity, including pending launch windows, but not runner execution
-or persistent state. Persistent execution identity and collision policy remain
-in ASE2SPRKKR's runner/persistence layer.
+`CalculationRequest` captures exact launch provenance, including the selected
+project, `SprkkrExecution` owns runner creation/submission/cancellation/result
+loading, and `RunMonitorWindow` is only the generic Qt monitor.
+`PersistentJobsController` owns GUI window lifetime and identity, including
+pending launch windows, but not runner execution or persistent state. Persistent
+execution identity and collision policy remain in ASE2SPRKKR's
+runner/persistence layer.
 
 Package `__init__.py` files should stay lightweight and should not become
 alternate import APIs for dialog/widget internals. Canonical imports use the
@@ -115,15 +116,27 @@ added to accommodate tests or obsolete call shapes.
 
 ## Workspace, results, and provenance
 
-`WorkspaceState` is the draft for the **next** calculation. Results deliberately
-do not live in it. Its `structure_id` identifies the user-visible structure and
-`state_id` identifies the exact calculation state from which the next task will
-start.
+`WorkspaceState` is deliberately split by responsibility. Its
+`CalculationState` answers **what would be calculated**: atoms, input parameters,
+potential provenance, structure/state identity, empty-sphere state, and pending
+SCF-restart intent. Its `WorkspaceContext` carries non-physical launch context:
+the working directory and active project. Results deliberately do not live in
+either part.
 
-`WorkspaceState.atoms` is the sole physical authority for the active structure,
-including an attached SPR-KKR potential when one exists. `potential_path` is
-artifact/provenance metadata only; calculation launch must not silently use it
-as a second physical source of truth.
+`CalculationState.atoms` is the sole physical authority for the active
+structure, including an attached SPR-KKR potential when one exists.
+`potential_path` is artifact/provenance metadata only; calculation launch must
+not silently use it as a second physical source of truth. `structure_id`
+identifies the user-visible structure and `state_id` identifies the exact
+calculation state from which the next task will start.
+
+The split is semantic rather than a blanket revision policy. A working-directory
+change changes the concrete next calculation request and therefore advances the
+workspace generation used to reject stale edits. Changing
+`WorkspaceContext.active_project_id` changes only launch attribution and must not
+invalidate an in-progress structure or input-parameter edit. Project selection
+is snapshotted into `CalculationRequest` when a launch is prepared, so changing
+the selected project later cannot move an already prepared run.
 
 `ResultStore` owns result history and calculation-state provenance independently
 of the mutable workspace. A result may refer to an input state and, when the
@@ -294,7 +307,7 @@ tests.
 ## Common canonical imports
 
 ```python
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution

@@ -1,14 +1,19 @@
 from ase import Atoms
 import pytest
 
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
 def test_failed_structure_edit_does_not_mutate_workspace():
     atoms = Atoms("Fe", cell=(1, 1, 1), pbc=True)
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
+        WorkspaceState(
+            calculation=CalculationState(
+                atoms=atoms,
+                potential_path="Fe.pot",
+            )
+        )
     )
     generation = controller.generation
     state_id = controller.state_id

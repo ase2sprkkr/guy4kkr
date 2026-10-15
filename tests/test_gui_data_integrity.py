@@ -17,7 +17,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog, QPlainTextEdit
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import CalculationState, WorkspaceContext, WorkspaceState
 from guy4ase.gui.dialogs import main_window
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
@@ -310,10 +310,12 @@ def test_corrupt_recent_history_is_ignored(tmp_path):
 
 def test_reset_workspace_clears_the_document_and_views(app, tmp_path):
     workspace = WorkspaceState(
-        atoms=Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True),
-        input_parameters=InputParameters.create('scf'),
-        directory='/tmp/calculation',
-        potential_path='/tmp/potential',
+        calculation=CalculationState(
+            atoms=Atoms('Fe', cell=(2.8, 2.8, 2.8), pbc=True),
+            input_parameters=InputParameters.create('scf'),
+            potential_path='/tmp/potential',
+        ),
+        context=WorkspaceContext(directory='/tmp/calculation'),
     )
     gui = GuiApplication(
         workspace=workspace,

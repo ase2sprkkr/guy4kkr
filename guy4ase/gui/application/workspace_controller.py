@@ -1,4 +1,4 @@
-"""Semantic transitions over the mutable calculation draft and result tree."""
+"""Semantic transitions over the mutable calculation state and result tree."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -32,7 +32,7 @@ def _atoms_has_potential(atoms: Any) -> bool:
 
 
 class DocumentChange(Enum):
-    """Semantic result of a revision-sensitive draft command."""
+    """Semantic result of a revision-sensitive calculation-state command."""
 
     APPLIED = auto()
     STALE = auto()
@@ -46,10 +46,10 @@ class CalculationNotReady(RuntimeError):
 class CalculationRequest:
     """Immutable provenance captured when a calculation is launched.
 
-    ``generation`` protects preparation against delayed draft callbacks.
+    ``generation`` protects preparation against delayed state callbacks.
     Completed calculations are always recorded against ``structure_id`` and
-    ``state_id``. A potential-producing output may advance the workspace only
-    while that exact input state is still active.
+    ``state_id``. A potential-producing output may advance the calculation state
+    only while that exact input state is still active.
 
     ``atoms`` identifies the authoritative launch input and is the sole physical
     authority for its potential; potential paths are provenance/artifact metadata
@@ -60,7 +60,8 @@ class CalculationRequest:
 
     ``restart_scf`` snapshots the pending workspace execution intent. It asks
     ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
-    authoritative workspace potential.
+    authoritative workspace potential. ``project_id`` snapshots launch
+    attribution so later project selection cannot move the run.
     """
 
     atoms: Atoms
@@ -70,6 +71,7 @@ class CalculationRequest:
     structure_id: int
     state_id: int
     restart_scf: bool = False
+    project_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,11 +87,12 @@ class ResultAdoption:
 
 
 class WorkspaceController(QObject):
-    """Own the next-calculation draft and an independent result tree."""
+    """Own calculation state, launch context, and an independent result tree."""
 
     structureChanged = pyqtSignal(object)
     inputParametersChanged = pyqtSignal(object)
     directoryChanged = pyqtSignal(object)
+    activeProjectChanged = pyqtSignal(object)
     resultChanged = pyqtSignal(object)
     resultSelectionRequested = pyqtSignal(int)
 
@@ -102,43 +105,48 @@ class WorkspaceController(QObject):
         self._workspace = workspace or WorkspaceState()
         self._generation = self._workspace.generation
         self._results = ResultStore()
-        if self._workspace.atoms is not None:
+        calculation = self._workspace.calculation
+        if calculation.atoms is not None:
             structure_id, state_id = self._results.new_structure_state(
-                self._workspace.atoms,
-                potential_path=self._workspace.potential_path,
-                empty_spheres=self._workspace.empty_spheres,
+                calculation.atoms,
+                potential_path=calculation.potential_path,
+                empty_spheres=calculation.empty_spheres,
             )
-            self._workspace.structure_id = structure_id
-            self._workspace.state_id = state_id
+            calculation.structure_id = structure_id
+            calculation.state_id = state_id
 
     @property
     def atoms(self) -> Any:
-        return self._workspace.atoms
+        return self._workspace.calculation.atoms
 
     @property
     def input_parameters(self) -> Any:
-        return self._workspace.input_parameters
+        return self._workspace.calculation.input_parameters
 
     @property
     def directory(self) -> str | None:
-        return self._workspace.directory
+        return self._workspace.context.directory
+
+    @property
+    def active_project_id(self) -> str | None:
+        return self._workspace.context.active_project_id
 
     @property
     def potential_path(self) -> str | None:
         """Return potential provenance/artifact path, never calculation input."""
-        return self._workspace.potential_path
+        return self._workspace.calculation.potential_path
 
     @property
     def structure_id(self) -> int | None:
-        return self._workspace.structure_id
+        return self._workspace.calculation.structure_id
 
     @property
     def state_id(self) -> int | None:
-        return self._workspace.state_id
+        return self._workspace.calculation.state_id
 
     @property
     def result(self) -> Any | None:
-        """Return the latest result attached to the active workspace state."""
+        """Return the latest result attached to the active calculation state."""
         record = self._results.latest_result_for_state(self.state_id)
         return record.result if record is not None else None
 
@@ -148,41 +156,46 @@ class WorkspaceController(QObject):
 
     @property
     def empty_spheres(self) -> EmptySpheresState | None:
-        return self._workspace.empty_spheres
+        return self._workspace.calculation.empty_spheres
 
     @property
     def empty_spheres_added(self) -> int | None:
-        return self._workspace.empty_spheres_added
+        state = self.empty_spheres
+        return None if state is None else state.count
 
     @property
     def restarted(self) -> bool:
-        return self._workspace.restarted
+        return self._workspace.calculation.restarted
 
     @property
     def generation(self) -> Generation:
         return self._generation
 
     def structure_kind(self):
-        return self._workspace.structure_kind()
+        return self._workspace.calculation.structure_kind()
 
     def can_calculate(self) -> bool:
         """Return generic launch readiness, independent of Guided workflow policy."""
-        return self._workspace.is_calculation_input_complete()
+        return (
+            self.atoms is not None
+            and self.input_parameters is not None
+            and bool(self.directory)
+        )
 
     def can_build_2d(self) -> bool:
         return self.structure_kind() == "3d"
 
     def scf_status(self) -> str | None:
-        return self._workspace.scf_status()
+        return self._workspace.calculation.scf_status()
 
     def is_scf_converged(self) -> bool:
-        return self._workspace.is_scf_converged()
+        return self._workspace.calculation.is_scf_converged()
 
     def has_vacuum_sites(self) -> bool:
-        return self._workspace.has_vacuum_sites()
+        return self._workspace.calculation.has_vacuum_sites()
 
     def empty_spheres_action(self) -> _EmptySpheresAction | None:
-        """Return the empty-sphere workflow action recommended for the draft."""
+        """Return the empty-sphere workflow action recommended for the state."""
         if self.atoms is None:
             return None
         if self.empty_spheres is not None:
@@ -201,9 +214,9 @@ class WorkspaceController(QObject):
     def create_calculation_request(self) -> CalculationRequest:
         atoms = self.atoms
         parameters = self.input_parameters
-        directory = self._workspace.directory
-        structure_id = self._workspace.structure_id
-        state_id = self._workspace.state_id
+        directory = self.directory
+        structure_id = self.structure_id
+        state_id = self.state_id
         if (
             atoms is None
             or parameters is None
@@ -222,6 +235,7 @@ class WorkspaceController(QObject):
             structure_id=structure_id,
             state_id=state_id,
             restart_scf=self.restarted,
+            project_id=self.active_project_id,
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
@@ -232,10 +246,20 @@ class WorkspaceController(QObject):
         self._workspace.generation = self._generation
 
     def _set_directory(self, directory: Any) -> bool:
-        if directory is _KEEP_DIRECTORY or directory == self._workspace.directory:
+        context = self._workspace.context
+        if directory is _KEEP_DIRECTORY or directory == context.directory:
             return False
-        self._workspace.directory = directory
+        context.directory = directory
         return True
+
+    def set_active_project(self, project_id: str | None) -> None:
+        """Set launch attribution without invalidating calculation-state edits."""
+        project_id = None if project_id is None else str(project_id)
+        context = self._workspace.context
+        if project_id == context.active_project_id:
+            return
+        context.active_project_id = project_id
+        self.activeProjectChanged.emit(project_id)
 
     def replace_structure(
         self,
@@ -256,12 +280,13 @@ class WorkspaceController(QObject):
                 potential_path=potential_path,
                 empty_spheres=None,
             )
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = potential_path
-        self._workspace.structure_id = structure_id
-        self._workspace.state_id = state_id
-        self._workspace.empty_spheres = None
-        self._workspace.restarted = restarted
+        calculation = self._workspace.calculation
+        calculation.atoms = atoms
+        calculation.potential_path = potential_path
+        calculation.structure_id = structure_id
+        calculation.state_id = state_id
+        calculation.empty_spheres = None
+        calculation.restarted = restarted
         directory_changed = self._set_directory(directory)
         self._changed()
         if directory_changed:
@@ -292,12 +317,13 @@ class WorkspaceController(QObject):
             potential_path=None,
             empty_spheres=None,
         )
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = None
-        self._workspace.structure_id = structure_id
-        self._workspace.state_id = state_id
-        self._workspace.empty_spheres = None
-        self._workspace.restarted = True
+        calculation = self._workspace.calculation
+        calculation.atoms = atoms
+        calculation.potential_path = None
+        calculation.structure_id = structure_id
+        calculation.state_id = state_id
+        calculation.empty_spheres = None
+        calculation.restarted = True
         self._changed()
         self.structureChanged.emit(atoms)
         return DocumentChange.APPLIED
@@ -312,7 +338,7 @@ class WorkspaceController(QObject):
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
         directory_changed = self._set_directory(directory)
-        self._workspace.input_parameters = parameters
+        self._workspace.calculation.input_parameters = parameters
         self._changed()
         if directory_changed:
             self.directoryChanged.emit(directory)
@@ -347,7 +373,7 @@ class WorkspaceController(QObject):
         *,
         select_result: bool = False,
     ) -> ResultAdoption:
-        """Record an imported result without implicitly replacing the draft.
+        """Record an imported result without implicitly replacing the state.
 
         ``select_result`` carries explicit presentation intent from a user-driven
         import. Background/programmatic imports leave the current result selection
@@ -405,19 +431,20 @@ class WorkspaceController(QObject):
         )
 
         workspace_updated = False
+        calculation = self._workspace.calculation
         if (
             produces_potential
             and output_atoms is not None
             and record.output_state_id is not None
-            and request.structure_id == self._workspace.structure_id
-            and request.state_id == self._workspace.state_id
+            and request.structure_id == calculation.structure_id
+            and request.state_id == calculation.state_id
         ):
             state = self._results.state(record.output_state_id)
-            self._workspace.atoms = output_atoms
-            self._workspace.potential_path = state.potential_path
-            self._workspace.empty_spheres = state.empty_spheres
-            self._workspace.state_id = state.id
-            self._workspace.restarted = False
+            calculation.atoms = output_atoms
+            calculation.potential_path = state.potential_path
+            calculation.empty_spheres = state.empty_spheres
+            calculation.state_id = state.id
+            calculation.restarted = False
             self._changed()
             workspace_updated = True
             self.structureChanged.emit(output_atoms)
@@ -456,26 +483,28 @@ class WorkspaceController(QObject):
         else:
             target_state = resolution.state
 
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = target_state.potential_path
-        self._workspace.structure_id = target_state.structure_id
-        self._workspace.state_id = target_state.id
-        self._workspace.empty_spheres = target_state.empty_spheres
-        self._workspace.restarted = (
+        calculation = self._workspace.calculation
+        calculation.atoms = atoms
+        calculation.potential_path = target_state.potential_path
+        calculation.structure_id = target_state.structure_id
+        calculation.state_id = target_state.id
+        calculation.empty_spheres = target_state.empty_spheres
+        calculation.restarted = (
             target_state.parent_id is not None and not _atoms_has_potential(atoms)
         )
         self._changed()
         self.structureChanged.emit(atoms)
 
     def reset(self) -> None:
-        """Clear the draft while deliberately preserving calculation history."""
-        self._workspace.atoms = None
-        self._workspace.potential_path = None
-        self._workspace.input_parameters = None
-        self._workspace.structure_id = None
-        self._workspace.state_id = None
-        self._workspace.empty_spheres = None
-        self._workspace.restarted = False
+        """Clear calculation state while preserving history and project selection."""
+        calculation = self._workspace.calculation
+        calculation.atoms = None
+        calculation.potential_path = None
+        calculation.input_parameters = None
+        calculation.structure_id = None
+        calculation.state_id = None
+        calculation.empty_spheres = None
+        calculation.restarted = False
         self._set_directory(None)
         self._changed()
         self.structureChanged.emit(None)
@@ -537,12 +566,13 @@ class WorkspaceController(QObject):
             **child_kwargs,
         )
         state = self._results.state(state_id)
-        self._workspace.atoms = atoms
-        self._workspace.potential_path = state.potential_path
-        self._workspace.structure_id = state.structure_id
-        self._workspace.state_id = state.id
-        self._workspace.empty_spheres = state.empty_spheres
-        self._workspace.restarted = True
+        calculation = self._workspace.calculation
+        calculation.atoms = atoms
+        calculation.potential_path = state.potential_path
+        calculation.structure_id = state.structure_id
+        calculation.state_id = state.id
+        calculation.empty_spheres = state.empty_spheres
+        calculation.restarted = True
         self._changed()
         self.structureChanged.emit(atoms)
         return DocumentChange.APPLIED
@@ -562,7 +592,7 @@ class WorkspaceController(QObject):
         if source is None or structure_id is None or state_id is None:
             raise ValueError("No structure is loaded.")
 
-        previous_state = self._workspace.empty_spheres
+        previous_state = self.empty_spheres
         previous_count = previous_state.count if previous_state is not None else 0
         updated, count, structure_changed = edit(source.copy(), previous_count)
         if not self._generation_is_current(expected_generation):
@@ -584,12 +614,13 @@ class WorkspaceController(QObject):
         assert record.output_state_id is not None
         state = self._results.state(record.output_state_id)
         active_atoms = updated if structure_changed else source
-        self._workspace.atoms = active_atoms
-        self._workspace.potential_path = state.potential_path
-        self._workspace.empty_spheres = state.empty_spheres
-        self._workspace.state_id = state.id
+        calculation = self._workspace.calculation
+        calculation.atoms = active_atoms
+        calculation.potential_path = state.potential_path
+        calculation.empty_spheres = state.empty_spheres
+        calculation.state_id = state.id
         if structure_changed:
-            self._workspace.restarted = True
+            calculation.restarted = True
         self._changed()
         if structure_changed:
             self.structureChanged.emit(active_atoms)

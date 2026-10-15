@@ -32,7 +32,6 @@ class SprkkrExecution:
         *,
         profile_name: str | None = None,
         execution_manager=None,
-        project_id: str | None = None,
         output: Callable[[str, str], None] | None = None,
         status: Callable[[str], None] | None = None,
         warning: Callable[[str], None] | None = None,
@@ -42,7 +41,6 @@ class SprkkrExecution:
         self.cancellation = cancellation
         self.profile_name = profile_name
         self.execution_manager = execution_manager
-        self.project_id = project_id
         self._output = output or (lambda _text, _kind: None)
         self._status = status or (lambda _text: None)
         self._warning = warning or (lambda _text: None)
@@ -84,9 +82,10 @@ class SprkkrExecution:
         manager = self.execution_manager
         if manager is None:
             return True
-        if self.project_id is None:
+        project_id = self.request.project_id
+        if project_id is None:
             return manager
-        return manager.for_project(self.project_id)
+        return manager.for_project(project_id)
 
     def _create_runner(self, calculator: SPRKKR):
         input_file, potential_file, output_file = self.file_names()
