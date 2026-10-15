@@ -60,7 +60,11 @@ class WorkflowActionsWidget(QWidget):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # ``deleteLater()`` only schedules destruction. Detach the retired
+                # subtree immediately so it no longer participates in QObject
+                # discovery or presentation while the deferred delete is pending.
                 widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
 
     def _action_button(
