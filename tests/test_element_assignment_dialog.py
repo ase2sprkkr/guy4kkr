@@ -8,7 +8,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 import numpy as np
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication, QDialog
+from PyQt6.QtWidgets import QDialog
 
 from guy4ase.gui.dialogs.structures.element_assignment import (
     ElementAssignmentDialog,
@@ -29,7 +29,6 @@ def _atoms() -> Atoms:
 
 
 def test_break_button_delegates_to_model_and_refreshes_rows():
-    application = QApplication.instance() or QApplication([])
     dialog = ElementAssignmentDialog()
     dialog.setup(_atoms())
     original_site = dialog._draft.sites[0]
@@ -42,7 +41,6 @@ def test_break_button_delegates_to_model_and_refreshes_rows():
 
     dialog._draft.split_site = split
     dialog._letter_widgets[0].break_btn.click()
-    application.processEvents()
 
     assert calls == [original_site]
     assert len(dialog._draft.sites) == 2
@@ -51,7 +49,6 @@ def test_break_button_delegates_to_model_and_refreshes_rows():
 
 
 def test_cancel_does_not_apply_working_state_to_source():
-    application = QApplication.instance() or QApplication([])
     atoms = _atoms()
     original = atoms.copy()
     dialog = ElementAssignmentDialog()
@@ -59,7 +56,6 @@ def test_cancel_does_not_apply_working_state_to_source():
 
     dialog._letter_widgets[0].break_btn.click()
     dialog.reject()
-    application.processEvents()
 
     np.testing.assert_array_equal(atoms.positions, original.positions)
     np.testing.assert_array_equal(
@@ -70,13 +66,11 @@ def test_cancel_does_not_apply_working_state_to_source():
 
 
 def test_accept_returns_unapplied_draft():
-    application = QApplication.instance() or QApplication([])
     dialog = ElementAssignmentDialog()
     dialog.setup(_atoms())
     dialog._letter_widgets[0].break_btn.click()
 
     dialog._on_ok()
-    application.processEvents()
 
     assert dialog.result() == QDialog.DialogCode.Accepted
     assert dialog._result is dialog._draft
