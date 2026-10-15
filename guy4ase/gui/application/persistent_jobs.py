@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
 
+from ase2sprkkr.outputs import attach_persistent_run, load_persistent_result
+
 logger = logging.getLogger(__name__)
 
 _FINAL_STATES = frozenset({"finished", "failed", "cancelled"})
@@ -170,7 +172,15 @@ class PersistentJobSource:
 
     @property
     def supports_results(self) -> bool:
-        return self.available and callable(getattr(self._manager, "load_result", None))
+        if not self.available:
+            return False
+        required = (
+            "retrieve_result_files",
+            "check_result_files",
+            "output_file_is_current",
+            "input_file_is_current",
+        )
+        return all(callable(getattr(self._manager, name, None)) for name in required)
 
     @property
     def supports_attach(self) -> bool:
@@ -292,17 +302,19 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot attach to persistent calculations."
             )
-        kwargs = {"output_listener": output_listener}
-        if callback is not None:
-            kwargs["callback"] = callback
-        return self._manager.attach(job_id, **kwargs)
+        return attach_persistent_run(
+            self._manager,
+            job_id,
+            callback=callback,
+            output_listener=output_listener,
+        )
 
     def load_result(self, job_id: str) -> Any:
         if not self.supports_results:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot load persistent historical results."
             )
-        result = self._manager.load_result(job_id)
+        result = load_persistent_result(self._manager, job_id)
         record = getattr(result, "run_record", None)
         if record is not None:
             job = PersistentJob.from_run_record(record, result_files_verified=True)
