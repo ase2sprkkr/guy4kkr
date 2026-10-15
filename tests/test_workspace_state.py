@@ -5,7 +5,11 @@ from ase.build import bulk
 from ase2sprkkr import SPRKKRAtoms
 from ase2sprkkr.sprkkr.build import semiinfinite_system
 
-from guy4ase.gui.application.workspace import WorkspaceState
+from guy4ase.gui.application.workspace import (
+    CalculationState,
+    WorkspaceContext,
+    WorkspaceState,
+)
 
 
 def _scf_atoms(status=None, *, converged=False):
@@ -19,6 +23,20 @@ def _scf_atoms(status=None, *, converged=False):
             SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
         )
     return atoms
+
+
+def test_workspace_separates_calculation_state_from_launch_context():
+    atoms = Atoms("Fe")
+    calculation = CalculationState(atoms=atoms, input_parameters=object())
+    context = WorkspaceContext(directory="run", active_project_id="project")
+
+    workspace = WorkspaceState(calculation=calculation, context=context)
+
+    assert workspace.calculation is calculation
+    assert workspace.context is context
+    assert workspace.atoms is atoms
+    assert workspace.directory == "run"
+    assert workspace.context.active_project_id == "project"
 
 
 def test_structure_kind_is_derived_from_current_atoms():

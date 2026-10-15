@@ -77,6 +77,29 @@ def test_result_publication_does_not_advance_workspace_generation(tmp_path):
     assert controller.result_store.results[0].result is result
 
 
+def test_workspace_context_change_does_not_advance_calculation_generation(tmp_path):
+    controller = _controller(tmp_path)
+    generation = controller.generation
+
+    controller.change_directory(str(tmp_path / "other"))
+    controller.set_active_project("project-id")
+
+    assert controller.generation == generation
+
+
+def test_context_change_does_not_stale_pending_calculation_edit(tmp_path):
+    controller = _controller(tmp_path)
+    generation = controller.generation
+
+    controller.change_directory(str(tmp_path / "other"))
+    change = controller.apply_structure_edit(
+        lambda atoms: atoms,
+        expected_generation=generation,
+    )
+
+    assert change is DocumentChange.APPLIED
+
+
 def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_path):
     controller = _controller(tmp_path)
     generation = controller.generation

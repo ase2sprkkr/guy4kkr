@@ -330,6 +330,23 @@ class ProjectRepository:
         self._notify(saved.id)
         return saved
 
+    def add_run(self, project_id: str, persistent_ref: str) -> Project:
+        """Idempotently add a persistent run, replaying once after a conflict."""
+        for attempt in range(2):
+            project = self.project(project_id)
+            edited = project.add_run(persistent_ref)
+            if edited is project:
+                return project
+            try:
+                return self.save(
+                    edited,
+                    expected_generation=project.generation,
+                )
+            except ProjectConflictError:
+                if attempt:
+                    raise
+        raise AssertionError("unreachable")
+
     def delete(self, project_id: str, *, expected_generation: int) -> None:
         """Delete a non-root leaf project without touching referenced runs."""
         canonical = _project_id(project_id)

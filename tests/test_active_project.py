@@ -6,10 +6,12 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from ase import Atoms
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.projects import ProjectRepository
+from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 from guy4ase.main import GuiApplication
@@ -51,8 +53,18 @@ class _JobSource:
         return ()
 
 
+class _Parameters:
+    def copy(self, *, copy_values):
+        assert copy_values
+        return _Parameters()
+
+
 class _LaunchWindow(QWidget):
     persistentJobChanged = pyqtSignal(str)
+
+    def __init__(self, request):
+        super().__init__()
+        self.request = request
 
 
 def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
@@ -81,20 +93,58 @@ def test_active_project_is_explicit_not_current_browser_selection(tmp_path):
     dialog.close()
 
 
-def test_launch_is_assigned_to_project_active_when_monitor_is_tracked(tmp_path):
+def test_project_selection_is_context_and_does_not_invalidate_calculation_edits(tmp_path):
+    _application = QApplication.instance() or QApplication([])
+    repository = ProjectRepository(tmp_path / "projects")
+    first = repository.create("First")
+    second = repository.create("Second")
+    workspace = WorkspaceState(
+        atoms=Atoms("Fe"),
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+    )
+    gui = GuiApplication(
+        workspace=workspace,
+        recent_files_path=tmp_path / "recent.json",
+        settings_path=tmp_path / "settings.json",
+        persistent_jobs=_JobSource(),
+        project_repository=repository,
+    )
+
+    generation = gui.controller.generation
+    gui.set_active_project(first.id)
+    assert gui.controller.generation == generation
+    assert workspace.context.active_project_id == first.id
+
+    request = gui.controller.create_calculation_request()
+    gui.set_active_project(second.id)
+
+    assert gui.controller.generation == generation
+    assert request.project_id == first.id
+    assert gui.active_project_id == second.id
+
+
+def test_launch_is_assigned_to_project_captured_by_request(tmp_path):
     _application = QApplication.instance() or QApplication([])
     repository = ProjectRepository(tmp_path / "projects")
     launch_project = repository.create("Launch")
     later_project = repository.create("Later")
     source = _JobSource()
+    workspace = WorkspaceState(
+        atoms=Atoms("Fe"),
+        input_parameters=_Parameters(),
+        directory=str(tmp_path),
+    )
     gui = GuiApplication(
+        workspace=workspace,
         recent_files_path=tmp_path / "recent.json",
         settings_path=tmp_path / "settings.json",
         persistent_jobs=source,
         project_repository=repository,
     )
     gui.set_active_project(launch_project.id)
-    monitor_window = _LaunchWindow()
+    request = gui.controller.create_calculation_request()
+    monitor_window = _LaunchWindow(request)
     gui._track_launch_monitor(monitor_window)
 
     # Persistent-id delivery can be delayed by the backend/store. A later user
@@ -112,7 +162,7 @@ def test_launch_is_assigned_to_project_active_when_monitor_is_tracked(tmp_path):
         "run-17": monitor_window
     }
 
-    # A later lifecycle report reloads metadata but does not assign again.
+    # A later lifecycle report reloads metadata but the assignment is idempotent.
     monitor_window.persistentJobChanged.emit("run-17")
     unchanged = repository.project(launch_project.id)
 

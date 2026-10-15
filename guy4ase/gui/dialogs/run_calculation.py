@@ -69,6 +69,7 @@ class SprkkrRunWindow(RunMonitorWindow):
         profile_description: str | None = None,
         on_finished=None,
     ) -> None:
+        self.request = request
         header = f"Directory: {request.directory}"
         if profile_description:
             header = f"{header}\n{profile_description}"

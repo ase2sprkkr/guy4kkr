@@ -60,7 +60,8 @@ class CalculationRequest:
 
     ``restart_scf`` snapshots the pending workspace execution intent. It asks
     ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
-    authoritative workspace potential.
+    authoritative workspace potential. ``project_id`` snapshots non-physical
+    launch attribution; later project selection cannot move this run.
     """
 
     atoms: Atoms
@@ -70,6 +71,7 @@ class CalculationRequest:
     structure_id: int
     state_id: int
     restart_scf: bool = False
+    project_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,11 +87,12 @@ class ResultAdoption:
 
 
 class WorkspaceController(QObject):
-    """Own the next-calculation draft and an independent result tree."""
+    """Own the next-calculation draft, launch context and independent result tree."""
 
     structureChanged = pyqtSignal(object)
     inputParametersChanged = pyqtSignal(object)
     directoryChanged = pyqtSignal(object)
+    activeProjectChanged = pyqtSignal(object)
     resultChanged = pyqtSignal(object)
     resultSelectionRequested = pyqtSignal(int)
 
@@ -122,6 +125,10 @@ class WorkspaceController(QObject):
     @property
     def directory(self) -> str | None:
         return self._workspace.directory
+
+    @property
+    def active_project_id(self) -> str | None:
+        return self._workspace.context.active_project_id
 
     @property
     def potential_path(self) -> str | None:
@@ -222,6 +229,7 @@ class WorkspaceController(QObject):
             structure_id=structure_id,
             state_id=state_id,
             restart_scf=self.restarted,
+            project_id=self.active_project_id,
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
@@ -236,6 +244,14 @@ class WorkspaceController(QObject):
             return False
         self._workspace.directory = directory
         return True
+
+    def set_active_project(self, project_id: str | None) -> None:
+        """Set launch attribution without invalidating calculation-draft edits."""
+        project_id = None if project_id is None else str(project_id)
+        if project_id == self._workspace.context.active_project_id:
+            return
+        self._workspace.context.active_project_id = project_id
+        self.activeProjectChanged.emit(project_id)
 
     def replace_structure(
         self,
@@ -322,7 +338,6 @@ class WorkspaceController(QObject):
     def change_directory(self, directory: str | None) -> None:
         if not self._set_directory(directory):
             return
-        self._changed()
         self.directoryChanged.emit(directory)
 
     @staticmethod
