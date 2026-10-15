@@ -29,8 +29,21 @@ class _Parameters:
 class _RunWindow:
     """Flow-level test double for the public run-window constructor contract."""
 
-    def __init__(self, request, parent=None, *, on_finished=None, **_kwargs):
-        self.request = request
+    def __init__(
+        self,
+        atoms,
+        input_parameters,
+        directory,
+        provenance,
+        parent=None,
+        *,
+        on_finished=None,
+        **_kwargs,
+    ):
+        self.atoms = atoms
+        self.input_parameters = input_parameters
+        self.directory = directory
+        self.provenance = provenance
         self.parent = parent
         self.on_finished = on_finished
         self.shown = False
@@ -57,11 +70,11 @@ def test_workspace_calculation_input_completeness_requires_all_inputs():
     assert workspace.is_calculation_input_complete()
 
 
-def test_create_calculation_request_reports_missing_preconditions():
+def test_create_run_provenance_reports_missing_preconditions():
     controller = WorkspaceController(WorkspaceState())
 
     with pytest.raises(CalculationNotReady):
-        controller.create_calculation_request()
+        controller.create_run_provenance()
 
 
 def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
@@ -99,9 +112,7 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     )
     monkeypatch.setattr(calculation_flow, "SprkkrRunWindow", _RunWindow)
 
-    def broken_adoption(_loaded, *, request):
-        assert request.structure_id == controller.structure_id
-        assert request.state_id == controller.state_id
+    def broken_adoption(_loaded):
         raise RuntimeError("broken adoption invariant")
 
     monkeypatch.setattr(
@@ -119,6 +130,8 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
     assert window is not None
     assert window.shown
     assert window.started
+    assert window.provenance.structure_id == controller.structure_id
+    assert window.provenance.state_id == controller.state_id
 
     with pytest.raises(RuntimeError, match="broken adoption invariant"):
         window.on_finished(object())
@@ -137,6 +150,7 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
         atoms=None,
         potential_error=None,
         directory=str(tmp_path),
+        input_parameters=_Parameters("scf"),
     )
     controller = WorkspaceController(
         WorkspaceState(
@@ -157,13 +171,14 @@ def test_run_result_handoff_preserves_launch_provenance(tmp_path, monkeypatch):
     assert window is not None
     assert window.started
 
+    backend_result.provenance = window.provenance
     window.on_finished(loaded)
 
     assert controller.result is backend_result
     assert len(controller.result_store.results) == 1
     record = controller.result_store.results[0]
     assert record.result is backend_result
-    assert record.input_state_id == window.request.state_id
+    assert record.input_state_id == window.provenance.state_id
     assert history.paths("output") == (str(output_path.resolve()),)
 
 
