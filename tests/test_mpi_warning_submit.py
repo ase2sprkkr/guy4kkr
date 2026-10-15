@@ -7,8 +7,7 @@ from ase2sprkkr.execution import MpiNotFoundWarning
 
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import Generation
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import RunProvenance
 
 
 class _Cancellation:
@@ -19,16 +18,15 @@ class _Cancellation:
 
 
 def test_execution_forwards_mpi_warning_from_submit(monkeypatch, tmp_path):
-    request = CalculationRequest(
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
-        directory=str(tmp_path),
-        generation=Generation(),
-        structure_id=1,
-        state_id=1,
-    )
     seen = []
-    execution = SprkkrExecution(request, _Cancellation(), warning=seen.append)
+    execution = SprkkrExecution(
+        Atoms("Fe"),
+        object(),
+        str(tmp_path),
+        RunProvenance(1, 1),
+        _Cancellation(),
+        warning=seen.append,
+    )
 
     class Runner:
         reference = None
