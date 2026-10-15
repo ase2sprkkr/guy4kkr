@@ -7,8 +7,8 @@ from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
     DocumentChange,
+    RunProvenance,
     WorkspaceController,
 )
 from guy4ase.gui.workspace_semantics import EmptySpheresAction
@@ -118,18 +118,15 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
 
     assert controller.structure_id is not None
     assert controller.state_id is not None
-    request = CalculationRequest(
-        atoms=workspace.atoms,
-        input_parameters=object(),
-        directory="",
-        generation=controller.generation,
-        structure_id=controller.structure_id,
-        state_id=controller.state_id,
-    )
+    provenance = RunProvenance(controller.structure_id, controller.state_id)
     controller.replace_input_parameters(object())
     assert workspace.empty_spheres is state
 
-    result = SimpleNamespace(task_name="dos", produces_potential=False)
+    result = SimpleNamespace(
+        task_name="dos",
+        produces_potential=False,
+        provenance=provenance,
+    )
     controller.adopt_calculation_result(
         LoadedResult(
             result=result,
@@ -138,8 +135,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
             atoms=None,
             potential_error=None,
             directory=None,
-        ),
-        request=request,
+        )
     )
 
     assert controller.result_store.results[0].result is result

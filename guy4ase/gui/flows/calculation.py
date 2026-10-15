@@ -83,7 +83,7 @@ def run_calculation(
     position_like_window: str | None = None,
     track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
-    """Choose execution, run a task and record its immutable provenance.
+    """Choose execution, snapshot the workspace and record the finished run.
 
     ``position_like_window`` optionally reuses another managed window's top-left
     corner for the profile picker and run window. ``track_launch_monitor``
@@ -91,11 +91,6 @@ def run_calculation(
     worker starts; standalone callers that omit it retain ordinary parent
     ownership.
     """
-    try:
-        request = controller.create_calculation_request()
-    except CalculationNotReady:
-        return None
-
     if select_profile:
         accepted, profile_name = _select_profile(
             parent,
@@ -103,6 +98,18 @@ def run_calculation(
         )
         if not accepted:
             return None
+
+    try:
+        provenance = controller.create_run_provenance()
+    except CalculationNotReady:
+        return None
+
+    atoms = controller.atoms
+    input_parameters = controller.input_parameters
+    directory = controller.directory
+    assert atoms is not None
+    assert input_parameters is not None
+    assert directory is not None
 
     def adoption_completed(adoption) -> None:
         if adoption.output_path is not None:
@@ -116,11 +123,7 @@ def run_calculation(
             )
 
     def finished(loaded) -> None:
-        adoption = controller.adopt_calculation_result(
-            loaded,
-            request=request,
-        )
-        adoption_completed(adoption)
+        adoption_completed(controller.adopt_calculation_result(loaded))
 
     try:
         description = profile_description(profile_name)
@@ -128,7 +131,10 @@ def run_calculation(
         description = None
 
     window = SprkkrRunWindow(
-        request=request,
+        atoms,
+        input_parameters,
+        directory,
+        provenance,
         profile_name=profile_name,
         profile_description=description,
         parent=None if track_launch_monitor is not None else parent,

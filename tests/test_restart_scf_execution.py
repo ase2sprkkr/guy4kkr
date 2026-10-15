@@ -5,9 +5,9 @@ from ase import Atoms
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import Generation, WorkspaceState
+from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
+    RunProvenance,
     WorkspaceController,
 )
 
@@ -25,29 +25,34 @@ class _Cancellation:
         return True
 
 
-def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
+def test_workspace_restart_is_recorded_from_result_provenance(tmp_path):
+    parameters = _Parameters()
     controller = WorkspaceController(
         WorkspaceState(
             atoms=Atoms("Fe"),
-            input_parameters=_Parameters(),
+            input_parameters=parameters,
             directory=str(tmp_path),
             restarted=True,
         )
     )
 
-    request = controller.create_calculation_request()
-    assert request.restart_scf is True
-
+    provenance = controller.create_run_provenance()
+    assert provenance.restart_scf is True
+    result = SimpleNamespace(
+        task_name="DOS",
+        produces_potential=False,
+        provenance=provenance,
+    )
     adoption = controller.adopt_calculation_result(
         LoadedResult(
-            result=SimpleNamespace(task_name="DOS", produces_potential=False),
+            result=result,
             output_path=None,
             potential_path=None,
             atoms=None,
             potential_error=None,
             directory=str(tmp_path),
-        ),
-        request=request,
+            input_parameters=parameters,
+        )
     )
 
     assert adoption.record is not None
@@ -55,17 +60,17 @@ def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
     assert controller.restarted
 
 
-def test_execution_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
-    request = CalculationRequest(
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
-        directory=str(tmp_path),
-        generation=Generation(),
-        structure_id=1,
-        state_id=1,
-        restart_scf=True,
+def test_execution_forwards_restart_scf_and_launch_inputs(monkeypatch, tmp_path):
+    atoms = Atoms("Fe")
+    parameters = _Parameters()
+    provenance = RunProvenance(1, 1, restart_scf=True)
+    execution = SprkkrExecution(
+        atoms,
+        parameters,
+        str(tmp_path),
+        provenance,
+        _Cancellation(),
     )
-    execution = SprkkrExecution(request, _Cancellation())
 
     submitted = []
     seen = {}
@@ -98,7 +103,7 @@ def test_execution_forwards_restart_scf_to_create_run(monkeypatch, tmp_path):
     execution.run()
 
     assert seen["restart_scf"] is True
-    assert seen["atoms"] is execution.request.atoms
-    assert seen["atoms"] is not request.atoms
-    assert seen["input_parameters"] is request.input_parameters
+    assert seen["provenance"] is provenance
+    assert seen["atoms"] is atoms
+    assert seen["input_parameters"] is parameters
     assert submitted == [True]

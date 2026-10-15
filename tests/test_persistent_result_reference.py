@@ -42,11 +42,11 @@ def test_calculation_result_records_persistent_reference(tmp_path):
             directory=str(tmp_path),
         )
     )
-    request = controller.create_calculation_request()
+    result = _result("dos")
+    result.provenance = controller.create_run_provenance()
 
     adoption = controller.adopt_calculation_result(
-        _loaded(_result("dos"), persistent_ref="ase-run-123"),
-        request=request,
+        _loaded(result, persistent_ref="ase-run-123")
     )
 
     assert adoption.record is not None

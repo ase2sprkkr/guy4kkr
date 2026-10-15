@@ -10,7 +10,7 @@ from guy4ase.gui.application.execution_cancellation import (
     RunCancellation,
 )
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import RunProvenance
 from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, RunMonitorWorker
 
 
@@ -24,20 +24,24 @@ class _SprkkrRunWorker(RunMonitorWorker):
 
     def __init__(
         self,
-        request: CalculationRequest,
+        atoms,
+        input_parameters,
+        directory: str,
+        provenance: RunProvenance,
         cancellation: RunCancellation,
         *,
         profile_name: str | None = None,
         execution_manager=None,
-        project_id: str | None = None,
     ) -> None:
         super().__init__()
         self._execution = SprkkrExecution(
-            request,
+            atoms,
+            input_parameters,
+            directory,
+            provenance,
             cancellation,
             profile_name=profile_name,
             execution_manager=execution_manager,
-            project_id=project_id,
             output=self.output.emit,
             status=self.status.emit,
             warning=self.warning.emit,
@@ -60,41 +64,51 @@ class _SprkkrRunWorker(RunMonitorWorker):
 
 
 class SprkkrRunWindow(RunMonitorWindow):
-    """Create an SPR-KKR runner and display it in the generic run monitor."""
+    """Snapshot one launch and display it in the generic run monitor."""
 
     persistentJobChanged = pyqtSignal(str)
 
     def __init__(
         self,
-        request: CalculationRequest,
+        atoms,
+        input_parameters,
+        directory: str,
+        provenance: RunProvenance,
         parent: Any | None = None,
         *,
         profile_name: str | None = None,
         profile_description: str | None = None,
         on_finished=None,
     ) -> None:
-        header = f"Directory: {request.directory}"
+        header = f"Directory: {directory}"
         if profile_description:
             header = f"{header}\n{profile_description}"
 
-        self._request = request
+        # The window is the launch boundary. From here on the calculation owns
+        # detached mutable inputs even if the workspace changes before the
+        # worker actually runs.
+        self._atoms = atoms.copy()
+        self._input_parameters = input_parameters.copy(copy_values=True)
+        self._directory = directory
+        self._provenance = provenance
         self._execution_manager = None
-        self._project_id: str | None = None
 
         def worker_factory(cancellation: RunCancellation) -> _SprkkrRunWorker:
             worker = _SprkkrRunWorker(
-                self._request,
+                self._atoms,
+                self._input_parameters,
+                self._directory,
+                self._provenance,
                 cancellation,
                 profile_name=profile_name,
                 execution_manager=self._execution_manager,
-                project_id=self._project_id,
             )
             worker.persistentJobChanged.connect(self._persistent_job_changed_received)
             return worker
 
-        # Ownership and execution/project context are established by the caller
-        # before ``start()``. This prevents a fast local submit from publishing a
-        # run id before the application owns this top-level window.
+        # Ownership and execution context are established by the caller before
+        # ``start()``. This prevents a fast local submit from publishing a run id
+        # before the application owns this top-level window.
         super().__init__(
             worker_factory,
             parent,
@@ -105,12 +119,11 @@ class SprkkrRunWindow(RunMonitorWindow):
             autostart=False,
         )
 
-    def set_execution_context(self, manager, *, project_id: str | None = None) -> None:
+    def set_execution_manager(self, manager) -> None:
         """Capture persistent execution context before this monitor is started."""
         if self._thread is not None:
             raise RuntimeError("execution context cannot change after the run has started")
         self._execution_manager = manager
-        self._project_id = project_id
 
     @pyqtSlot(str)
     def _persistent_job_changed_received(self, job_id: str) -> None:

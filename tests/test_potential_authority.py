@@ -99,7 +99,7 @@ def test_potential_structure_flow_uses_authoritative_potential_loader(
     assert calls == [path]
 
 
-def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
+def test_run_provenance_does_not_duplicate_physical_inputs(tmp_path):
     atoms = SPRKKRAtoms.promote_ase_atoms(Atoms("Fe"))
     potential = SimpleNamespace(atoms=atoms)
     atoms._potential = potential
@@ -112,11 +112,14 @@ def test_calculation_request_uses_atoms_not_potential_path(tmp_path):
         )
     )
 
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
 
-    assert request.atoms is atoms
-    assert request.atoms.potential is potential
-    assert not hasattr(request, "potential_path")
+    assert controller.atoms is atoms
+    assert controller.atoms.potential is potential
+    assert not hasattr(provenance, "atoms")
+    assert not hasattr(provenance, "potential_path")
+    assert provenance.structure_id == controller.structure_id
+    assert provenance.state_id == controller.state_id
 
 
 def test_potless_historical_state_restores_structure_not_runtime_potential(tmp_path):

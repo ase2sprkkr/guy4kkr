@@ -33,6 +33,7 @@ def _loaded(
     atoms=None,
     potential_path: str | Path | None = None,
     input_parameters=None,
+    directory=None,
 ):
     return LoadedResult(
         result=result,
@@ -40,8 +41,28 @@ def _loaded(
         potential_path=Path(potential_path) if potential_path is not None else None,
         atoms=atoms,
         potential_error=None,
-        directory=None,
+        directory=directory,
         input_parameters=input_parameters,
+    )
+
+
+def _launched(
+    controller: WorkspaceController,
+    result,
+    *,
+    provenance=None,
+    atoms=None,
+    potential_path: str | Path | None = None,
+):
+    if provenance is None:
+        provenance = controller.create_run_provenance()
+    result.provenance = provenance
+    return _loaded(
+        result,
+        atoms=atoms,
+        potential_path=potential_path,
+        input_parameters=controller.input_parameters,
+        directory=controller.directory,
     )
 
 
@@ -65,8 +86,7 @@ def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
     results = [_result("dos") for _ in range(12)]
 
     for result in results:
-        request = controller.create_calculation_request()
-        adoption = controller.adopt_calculation_result(_loaded(result), request=request)
+        adoption = controller.adopt_calculation_result(_launched(controller, result))
         assert not adoption.workspace_updated
 
     assert _results(controller) == tuple(reversed(results))
@@ -77,8 +97,10 @@ def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     controller = _controller(tmp_path)
     first_structure_id = controller.structure_id
     result = _result("dos")
-    request = controller.create_calculation_request()
-    controller.adopt_calculation_result(_loaded(result), request=request)
+    provenance = controller.create_run_provenance()
+    controller.adopt_calculation_result(
+        _launched(controller, result, provenance=provenance)
+    )
 
     controller.replace_input_parameters(_Parameters(2))
     controller.replace_structure(Atoms("Ni"))
@@ -115,24 +137,34 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
 
 def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
-    request_a = controller.create_calculation_request()
-    request_b = controller.create_calculation_request()
+    provenance_a = controller.create_run_provenance()
+    provenance_b = controller.create_run_provenance()
 
     result_b = _result("scf")
     atoms_b = Atoms("Fe")
     adoption_b = controller.adopt_calculation_result(
-        _loaded(result_b, atoms=atoms_b, potential_path=tmp_path / "pb.pot_new"),
-        request=request_b,
+        _launched(
+            controller,
+            result_b,
+            provenance=provenance_b,
+            atoms=atoms_b,
+            potential_path=tmp_path / "pb.pot_new",
+        )
     )
     assert adoption_b.workspace_updated
     state_b = controller.state_id
 
-    request_c = controller.create_calculation_request()
+    provenance_c = controller.create_run_provenance()
     result_c = _result("scf")
     atoms_c = Atoms("Fe")
     adoption_c = controller.adopt_calculation_result(
-        _loaded(result_c, atoms=atoms_c, potential_path=tmp_path / "pc.pot_new"),
-        request=request_c,
+        _launched(
+            controller,
+            result_c,
+            provenance=provenance_c,
+            atoms=atoms_c,
+            potential_path=tmp_path / "pc.pot_new",
+        )
     )
     assert adoption_c.workspace_updated
     state_c = controller.state_id
@@ -142,8 +174,13 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
     result_a = _result("scf")
     atoms_a = Atoms("Fe")
     adoption_a = controller.adopt_calculation_result(
-        _loaded(result_a, atoms=atoms_a, potential_path=tmp_path / "pa.pot_new"),
-        request=request_a,
+        _launched(
+            controller,
+            result_a,
+            provenance=provenance_a,
+            atoms=atoms_a,
+            potential_path=tmp_path / "pa.pot_new",
+        )
     )
 
     assert not adoption_a.workspace_updated
@@ -161,7 +198,7 @@ def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_
 
 def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
-    old_request = controller.create_calculation_request()
+    old_provenance = controller.create_run_provenance()
     old_state = controller.state_id
     old_branch = controller.result_store.state(old_state).branch_id
 
@@ -173,8 +210,13 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
 
     late_result = _result("scf")
     late = controller.adopt_calculation_result(
-        _loaded(late_result, atoms=Atoms("Fe"), potential_path=tmp_path / "old.pot_new"),
-        request=old_request,
+        _launched(
+            controller,
+            late_result,
+            provenance=old_provenance,
+            atoms=Atoms("Fe"),
+            potential_path=tmp_path / "old.pot_new",
+        )
     )
 
     assert not late.workspace_updated
@@ -183,11 +225,16 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
     assert controller.potential_path == "p0.pot"
     assert controller.result_store.branch_id_for_result(late.record) == old_branch
 
-    new_request = controller.create_calculation_request()
+    new_provenance = controller.create_run_provenance()
     new_result = _result("scf")
     new = controller.adopt_calculation_result(
-        _loaded(new_result, atoms=Atoms("Fe"), potential_path=tmp_path / "new.pot_new"),
-        request=new_request,
+        _launched(
+            controller,
+            new_result,
+            provenance=new_provenance,
+            atoms=Atoms("Fe"),
+            potential_path=tmp_path / "new.pot_new",
+        )
     )
     assert new.workspace_updated
     assert controller.result_store.branch_id_for_result(new.record) == restart_branch
@@ -195,19 +242,29 @@ def test_use_for_new_calculation_is_a_new_branch_and_write_barrier(tmp_path):
 
 def test_use_result_state_explicitly_switches_to_historical_potential(tmp_path):
     controller = _controller(tmp_path, potential_path="p0.pot")
-    request_a = controller.create_calculation_request()
-    request_b = controller.create_calculation_request()
+    provenance_a = controller.create_run_provenance()
+    provenance_b = controller.create_run_provenance()
     result_a = _result("scf")
     result_b = _result("scf")
 
     a = controller.adopt_calculation_result(
-        _loaded(result_a, atoms=Atoms("Fe"), potential_path=tmp_path / "pa.pot_new"),
-        request=request_a,
+        _launched(
+            controller,
+            result_a,
+            provenance=provenance_a,
+            atoms=Atoms("Fe"),
+            potential_path=tmp_path / "pa.pot_new",
+        )
     )
     assert a.workspace_updated
     b = controller.adopt_calculation_result(
-        _loaded(result_b, atoms=Atoms("Fe"), potential_path=tmp_path / "pb.pot_new"),
-        request=request_b,
+        _launched(
+            controller,
+            result_b,
+            provenance=provenance_b,
+            atoms=Atoms("Fe"),
+            potential_path=tmp_path / "pb.pot_new",
+        )
     )
     assert not b.workspace_updated
     assert controller.result is result_a

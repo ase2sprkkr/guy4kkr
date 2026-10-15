@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 from ase2sprkkr.execution import (
     ExecutionManager,
     ProjectRepository,
@@ -42,6 +42,7 @@ class GuiApplication(QObject):
     ) -> None:
         super().__init__(parent)
         self.controller = WorkspaceController(workspace, parent=self)
+        self.controller.activeProjectChanged.connect(self._active_project_changed)
         self.recent_files = RecentFiles(
             Path(recent_files_path) if recent_files_path is not None else None,
             parent=self,
@@ -66,14 +67,13 @@ class GuiApplication(QObject):
             self.persistent_jobs,
             parent=self,
         )
-        self._active_project_id: str | None = None
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
 
     @property
     def active_project_id(self) -> str | None:
-        return self._active_project_id
+        return self.controller.active_project_id
 
     def create_workflow_window(self) -> WorkflowWindow:
         """Return the session's workflow view, creating it lazily."""
@@ -164,18 +164,30 @@ class GuiApplication(QObject):
         if project_id is not None:
             try:
                 project_id = self.projects.project(str(project_id)).id
-            except (KeyError, ProjectRepositoryError, ValueError):
+            except (KeyError, ValueError):
                 project_id = None
-        self._active_project_id = project_id
+        self.controller.set_active_project(project_id)
+
+    def _set_active_project_from_ui(self, project_id: str | None) -> None:
+        try:
+            self.set_active_project(project_id)
+        except ProjectRepositoryError as exc:
+            QMessageBox.warning(
+                self._project_browser,
+                "Project Repository Error",
+                f"The project selection could not be changed:\n{exc}",
+            )
+
+    def _active_project_changed(self, project_id: str | None) -> None:
         if self._project_browser is not None:
             self._project_browser.set_active_project(project_id)
 
     def _track_launch_monitor(self, monitor_window: SprkkrRunWindow) -> None:
-        """Capture execution/project context before the monitor starts its worker."""
-        monitor_window.set_execution_context(
-            self.execution_manager,
-            project_id=self._active_project_id,
-        )
+        """Bind persistent execution context before the monitor starts its worker."""
+        manager = self.execution_manager
+        if self.active_project_id is not None:
+            manager = manager.for_project(self.active_project_id)
+        monitor_window.set_execution_manager(manager)
         self.persistent_jobs_controller.track_launch_window(monitor_window)
 
     def show_workflow_window(self) -> None:
@@ -192,9 +204,9 @@ class GuiApplication(QObject):
             dialog = ProjectBrowserDialog(
                 self.projects,
                 self.persistent_jobs_controller,
-                active_project_id=self._active_project_id,
+                active_project_id=self.active_project_id,
             )
-            dialog.activeProjectRequested.connect(self.set_active_project)
+            dialog.activeProjectRequested.connect(self._set_active_project_from_ui)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.destroyed.connect(self._project_browser_closed)
             self._project_browser = dialog

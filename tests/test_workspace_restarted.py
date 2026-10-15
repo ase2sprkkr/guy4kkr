@@ -30,17 +30,21 @@ def _scf_atoms(status="CONVERGED"):
     return atoms
 
 
-def _loaded_result(task, atoms):
+def _loaded_result(task, atoms, *, provenance=None):
+    result = SimpleNamespace(
+        task_name=task,
+        produces_potential=task.lower() == "scf",
+    )
+    if provenance is not None:
+        result.provenance = provenance
     return LoadedResult(
-        result=SimpleNamespace(
-            task_name=task,
-            produces_potential=task.lower() == "scf",
-        ),
+        result=result,
         output_path=None,
         potential_path=Path("Fe.pot"),
         atoms=atoms,
         potential_error=None,
-        directory=None,
+        directory="calculation",
+        input_parameters=_Parameters(),
     )
 
 
@@ -102,12 +106,11 @@ def test_use_for_new_calculation_marks_restart_without_touching_atoms():
 
 def test_active_scf_result_with_new_potential_clears_restart_override():
     controller = _controller()
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
     new_atoms = _scf_atoms()
 
     adoption = controller.adopt_calculation_result(
-        _loaded_result("SCF", new_atoms),
-        request=request,
+        _loaded_result("SCF", new_atoms, provenance=provenance)
     )
 
     assert adoption.workspace_updated
@@ -118,11 +121,10 @@ def test_active_scf_result_with_new_potential_clears_restart_override():
 
 def test_scf_result_without_new_potential_keeps_restart_override():
     controller = _controller()
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
 
     adoption = controller.adopt_calculation_result(
-        _loaded_result("SCF", None),
-        request=request,
+        _loaded_result("SCF", None, provenance=provenance)
     )
 
     assert not adoption.workspace_updated
@@ -132,11 +134,10 @@ def test_scf_result_without_new_potential_keeps_restart_override():
 
 def test_non_scf_result_does_not_clear_restart_override():
     controller = _controller()
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
 
     adoption = controller.adopt_calculation_result(
-        _loaded_result("DOS", _scf_atoms()),
-        request=request,
+        _loaded_result("DOS", _scf_atoms(), provenance=provenance)
     )
 
     assert not adoption.workspace_updated

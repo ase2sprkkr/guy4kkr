@@ -14,16 +14,12 @@ from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 
 @dataclass(frozen=True)
 class Generation:
-    """Monotonic revision of the mutable workspace draft."""
+    """Monotonic revision used by ``WorkspaceController`` for stale callbacks."""
 
     value: int = 0
 
     def next(self) -> Generation:
         return Generation(self.value + 1)
-
-    def next_major(self) -> Generation:
-        """Advance the draft revision after a semantic workspace change."""
-        return self.next()
 
 
 @dataclass(frozen=True)
@@ -47,29 +43,21 @@ class EmptySpheresState:
 
 @dataclass
 class WorkspaceState:
-    """Inputs prepared for the next calculation and facts derived from them.
+    """Application draft from which the next calculation will be launched.
 
-    Results deliberately do not live here. ``structure_id`` identifies the
-    user-visible structure and ``state_id`` the exact structure/potential input
-    from which the next task will start. ``atoms`` is the sole physical
-    authority for that state, including an attached SPR-KKR potential when one
-    exists. ``potential_path`` is provenance metadata only and is never
-    consulted to construct a calculation input.
-
-    Derived queries describe what the current draft *is*. Workflow capabilities
-    and decisions about what the application may do with it belong to
-    ``WorkspaceController``.
+    ``atoms`` is the sole physical authority, including an attached SPR-KKR
+    potential when present. ``potential_path`` is provenance/artifact metadata
+    only. Result-tree identifiers and stale-callback generations deliberately do
+    not live here; they are bookkeeping owned by ``WorkspaceController``.
     """
 
     atoms: Any | None = None
     input_parameters: Any | None = None
     directory: str | None = None
     potential_path: str | None = None
-    structure_id: int | None = None
-    state_id: int | None = None
     empty_spheres: EmptySpheresState | None = None
     restarted: bool = False
-    generation: Generation = Generation()
+    active_project_id: str | None = None
 
     @property
     def empty_spheres_added(self) -> int | None:

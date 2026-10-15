@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from ase import Atoms
+from ase2sprkkr.input_parameters import InputParameters
 
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.execution_cancellation import ExecutionCancelled
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
-from guy4ase.gui.application.workspace import Generation
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import RunProvenance
 
 
 class _Cancellation:
@@ -20,15 +20,20 @@ class _Cancellation:
         return self._register and not self.requested
 
 
-def _request(tmp_path, *, restart_scf: bool = False) -> CalculationRequest:
-    return CalculationRequest(
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
-        directory=str(tmp_path),
-        generation=Generation(),
-        structure_id=1,
-        state_id=1,
-        restart_scf=restart_scf,
+def _execution(
+    tmp_path,
+    cancellation=None,
+    *,
+    restart_scf: bool = False,
+    **kwargs,
+) -> SprkkrExecution:
+    return SprkkrExecution(
+        Atoms("Fe"),
+        InputParameters.create("SCF"),
+        str(tmp_path),
+        RunProvenance(1, 1, restart_scf=restart_scf),
+        cancellation or _Cancellation(),
+        **kwargs,
     )
 
 
@@ -56,16 +61,12 @@ def test_execution_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path
     monkeypatch.setattr(execution_module, "SPRKKR", make_calculator)
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
 
-    SprkkrExecution(
-        _request(tmp_path),
-        _Cancellation(),
-        profile_name="cluster",
-    ).run()
+    _execution(tmp_path, profile_name="cluster").run()
 
     assert captured == {"profile": "cluster"}
 
 
-def test_execution_requests_persistent_backend_run(monkeypatch, tmp_path):
+def test_execution_requests_persistent_backend_run_and_forwards_provenance(monkeypatch, tmp_path):
     captured = {}
 
     class Runner:
@@ -83,7 +84,7 @@ def test_execution_requests_persistent_backend_run(monkeypatch, tmp_path):
             captured.update(kwargs)
             return Runner()
 
-    execution = SprkkrExecution(_request(tmp_path), _Cancellation())
+    execution = _execution(tmp_path)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
 
@@ -92,16 +93,12 @@ def test_execution_requests_persistent_backend_run(monkeypatch, tmp_path):
     assert captured["persistent"] is True
     assert captured["print_output"] is False
     assert captured["empty_spheres"] is False
+    assert captured["provenance"] is execution.provenance
 
 
-def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_path):
+def test_execution_uses_already_bound_persistent_manager(monkeypatch, tmp_path):
     captured = {}
     bound_manager = object()
-
-    class Manager:
-        def for_project(self, project_id):
-            captured["project_id"] = project_id
-            return bound_manager
 
     class Runner:
         reference = None
@@ -118,18 +115,12 @@ def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_p
             captured.update(kwargs)
             return Runner()
 
-    execution = SprkkrExecution(
-        _request(tmp_path),
-        _Cancellation(),
-        execution_manager=Manager(),
-        project_id="project-17",
-    )
+    execution = _execution(tmp_path, execution_manager=bound_manager)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
 
     execution.run()
 
-    assert captured["project_id"] == "project-17"
     assert captured["persistent"] is bound_manager
 
 
@@ -148,7 +139,7 @@ def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
         def create_run(self, **_kwargs):
             return Runner()
 
-    execution = SprkkrExecution(_request(tmp_path), cancellation)
+    execution = _execution(tmp_path, cancellation)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
 
     try:
@@ -181,7 +172,7 @@ def test_cancel_racing_with_submit_is_not_cancelled_twice(monkeypatch, tmp_path)
         def create_run(self, **_kwargs):
             return Runner()
 
-    execution = SprkkrExecution(_request(tmp_path), cancellation)
+    execution = _execution(tmp_path, cancellation)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
 
     try:
@@ -217,7 +208,7 @@ def test_persistent_reference_is_forwarded_to_result_loader(monkeypatch, tmp_pat
         calls.append((result, fallback_directory, persistent_ref))
         return loaded_result
 
-    execution = SprkkrExecution(_request(tmp_path), _Cancellation())
+    execution = _execution(tmp_path)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", load_result)
 
@@ -244,11 +235,7 @@ def test_execution_notifies_persistent_job_id_after_submit_and_completion(
         def create_run(self, **_kwargs):
             return Runner()
 
-    execution = SprkkrExecution(
-        _request(tmp_path),
-        _Cancellation(),
-        persistent_job_changed=changes.append,
-    )
+    execution = _execution(tmp_path, persistent_job_changed=changes.append)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
 
@@ -277,11 +264,7 @@ def test_persistent_job_observer_failure_does_not_fail_calculation(
     def broken_observer(_job_id):
         raise RuntimeError("observer failure")
 
-    execution = SprkkrExecution(
-        _request(tmp_path),
-        _Cancellation(),
-        persistent_job_changed=broken_observer,
-    )
+    execution = _execution(tmp_path, persistent_job_changed=broken_observer)
     monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
     monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
 

@@ -19,6 +19,7 @@ from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
     WorkspaceController,
 )
+from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 from guy4ase.gui.flows import files as file_flows
 
 
@@ -85,12 +86,9 @@ def test_failed_structure_edit_leaves_published_atoms_untouched():
     assert controller.generation == generation
 
 
-def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
-    class UncopyableAtoms(Atoms):
-        def copy(self):  # pragma: no cover - request creation must not copy Atoms
-            raise AssertionError("calculation request must not copy Atoms")
-
-    atoms = UncopyableAtoms("Fe")
+def test_run_window_snapshots_atoms_and_parameter_values(tmp_path):
+    _application = QApplication.instance() or QApplication([])
+    atoms = Atoms("Fe")
     parameters = _Parameters(7)
     controller = WorkspaceController(
         WorkspaceState(
@@ -99,17 +97,24 @@ def test_run_request_borrows_atoms_and_owns_parameter_values(tmp_path):
             directory=str(tmp_path),
         )
     )
+    provenance = controller.create_run_provenance()
 
-    request = controller.create_calculation_request()
+    window = SprkkrRunWindow(
+        atoms,
+        parameters,
+        str(tmp_path),
+        provenance,
+    )
     parameters.value = 11
+    atoms.symbols = "Cu"
 
-    assert request.atoms is atoms
-    assert request.input_parameters is not parameters
-    assert request.input_parameters.value == 7
+    assert window._atoms is not atoms
+    assert window._atoms.get_chemical_symbols() == ["Fe"]
+    assert window._input_parameters is not parameters
+    assert window._input_parameters.value == 7
     assert parameters.copy_calls == [True]
-    assert request.generation == controller.generation
-    assert request.structure_id == controller.structure_id
-    assert request.state_id == controller.state_id
+    assert window._provenance is provenance
+    window.close()
 
 
 def test_backend_preparation_does_not_block_new_workspace_version(
@@ -128,8 +133,16 @@ def test_backend_preparation_does_not_block_new_workspace_version(
             directory=str(tmp_path),
         )
     )
-    request = controller.create_calculation_request()
-    execution = SprkkrExecution(request, _Cancellation())
+    provenance = controller.create_run_provenance()
+    launch_atoms = atoms.copy()
+    launch_parameters = parameters.copy(copy_values=True)
+    execution = SprkkrExecution(
+        launch_atoms,
+        launch_parameters,
+        str(tmp_path),
+        provenance,
+        _Cancellation(),
+    )
 
     class Runner:
         reference = None
@@ -145,9 +158,9 @@ def test_backend_preparation_does_not_block_new_workspace_version(
 
     class Calculator:
         def create_run(self, **kwargs):
-            assert kwargs["atoms"] is execution.request.atoms
+            assert kwargs["atoms"] is launch_atoms
             assert kwargs["atoms"] is not atoms
-            assert kwargs["input_parameters"] is request.input_parameters
+            assert kwargs["input_parameters"] is launch_parameters
             preparation_entered.set()
             assert release_preparation.wait(5)
             return Runner()
@@ -180,7 +193,13 @@ def test_backend_preparation_error_propagates(monkeypatch, tmp_path):
             directory=str(tmp_path),
         )
     )
-    execution = SprkkrExecution(controller.create_calculation_request(), _Cancellation())
+    execution = SprkkrExecution(
+        controller.atoms.copy(),
+        controller.input_parameters.copy(copy_values=True),
+        controller.directory,
+        controller.create_run_provenance(),
+        _Cancellation(),
+    )
 
     class Calculator:
         def create_run(self, **_kwargs):
@@ -203,7 +222,7 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     )
     source_generation = controller.generation
     draft = ElementAssignmentDraft(controller.atoms)
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
     replacement = Atoms("Cu")
     controller.replace_structure(replacement)
 
@@ -212,13 +231,14 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
         directory=str(tmp_path),
         task_name="DOS",
         produces_potential=False,
+        provenance=provenance,
     )
     loaded = load_result(result, fallback_directory=tmp_path)
-    adoption = controller.adopt_calculation_result(loaded, request=request)
+    adoption = controller.adopt_calculation_result(loaded)
     assert not adoption.workspace_updated
     assert controller.atoms is replacement
     assert controller.result_store.results[0].result is result
-    assert controller.result_store.results[0].structure_id == request.structure_id
+    assert controller.result_store.results[0].structure_id == provenance.structure_id
 
     change = controller.apply_structure_edit(
         lambda atoms: draft.apply(atoms),
@@ -300,17 +320,18 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
             directory=str(original_directory),
         )
     )
-    request = controller.create_calculation_request()
+    provenance = controller.create_run_provenance()
     result = SimpleNamespace(
         files={},
         directory=str(original_directory),
         task_name="DOS",
         produces_potential=False,
+        provenance=provenance,
     )
     loaded = load_result(result, fallback_directory=original_directory)
 
     controller.change_directory(str(next_directory))
-    adoption = controller.adopt_calculation_result(loaded, request=request)
+    adoption = controller.adopt_calculation_result(loaded)
 
     assert not adoption.workspace_updated
     assert controller.result_store.results[0].result is result

@@ -1,9 +1,8 @@
-"""Backend execution service for one SPR-KKR calculation request."""
+"""Backend execution service for one SPR-KKR calculation."""
 from __future__ import annotations
 
 import logging
 import warnings
-from dataclasses import replace
 from typing import Any, Callable
 
 from ase2sprkkr import SPRKKR
@@ -16,41 +15,45 @@ from guy4ase.gui.application.execution_cancellation import (
     wait_for_runner,
 )
 from guy4ase.gui.application.result_loading import LoadedResult, load_result
-from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.application.workspace_controller import RunProvenance
 from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
 
 logger = logging.getLogger(__name__)
 
 
 class SprkkrExecution:
-    """Run one immutable calculation request without any Qt dependency."""
+    """Execute one already detached launch snapshot without any Qt dependency."""
 
     def __init__(
         self,
-        request: CalculationRequest,
+        atoms,
+        input_parameters,
+        directory: str,
+        provenance: RunProvenance,
         cancellation: Cancellation,
         *,
         profile_name: str | None = None,
         execution_manager=None,
-        project_id: str | None = None,
         output: Callable[[str, str], None] | None = None,
         status: Callable[[str], None] | None = None,
         warning: Callable[[str], None] | None = None,
         persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
-        self.request = replace(request, atoms=request.atoms.copy())
+        self.atoms = atoms
+        self.input_parameters = input_parameters
+        self.directory = directory
+        self.provenance = provenance
         self.cancellation = cancellation
         self.profile_name = profile_name
         self.execution_manager = execution_manager
-        self.project_id = project_id
         self._output = output or (lambda _text, _kind: None)
         self._status = status or (lambda _text: None)
         self._warning = warning or (lambda _text: None)
         self._persistent_job_changed = persistent_job_changed
 
     def file_names(self) -> tuple[str, str, str]:
-        """Return input, potential and output filename templates for the request."""
-        dataset = dataset_value(self.request.input_parameters)
+        """Return input, potential and output filename templates for the run."""
+        dataset = dataset_value(self.input_parameters)
         if dataset is None:
             return "%a_%T.inp", "%a.pot", "%a_%T.out"
         base = filename_component(dataset)
@@ -81,20 +84,15 @@ class SprkkrExecution:
         return SPRKKR() if self.profile_name is None else SPRKKR(profile=self.profile_name)
 
     def _persistent_context(self):
-        manager = self.execution_manager
-        if manager is None:
-            return True
-        if self.project_id is None:
-            return manager
-        return manager.for_project(self.project_id)
+        return True if self.execution_manager is None else self.execution_manager
 
     def _create_runner(self, calculator: SPRKKR):
         input_file, potential_file, output_file = self.file_names()
         return self._with_mpi_warnings(
             lambda: calculator.create_run(
-                atoms=self.request.atoms,
-                input_parameters=self.request.input_parameters,
-                directory=self.request.directory,
+                atoms=self.atoms,
+                input_parameters=self.input_parameters,
+                directory=self.directory,
                 input_file=input_file,
                 potential_file=potential_file,
                 output_file=output_file,
@@ -102,7 +100,8 @@ class SprkkrExecution:
                 read_callback=self._output,
                 print_output=False,
                 persistent=self._persistent_context(),
-                restart_scf=self.request.restart_scf,
+                provenance=self.provenance,
+                restart_scf=self.provenance.restart_scf,
             )
         )
 
@@ -131,7 +130,7 @@ class SprkkrExecution:
         return runner
 
     def run(self) -> LoadedResult:
-        """Execute the request and return its loaded persistent result."""
+        """Execute the snapshot and return its loaded persistent result."""
         self._status("Preparing calculation…")
         runner = self._submit(self._calculator())
 
@@ -151,7 +150,7 @@ class SprkkrExecution:
         self._status("Loading result…")
         loaded = load_result(
             result,
-            fallback_directory=self.request.directory,
+            fallback_directory=self.directory,
             persistent_ref=runner.id,
         )
         self._status("Finished")

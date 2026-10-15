@@ -7,9 +7,8 @@ from ase import Atoms
 
 from guy4ase.gui.application import result_store as result_store_module
 from guy4ase.gui.application.result_store import ResultStore
-from guy4ase.gui.application.workspace import Generation
 from guy4ase.gui.application.workspace_controller import (
-    CalculationRequest,
+    RunProvenance,
     WorkspaceController,
 )
 
@@ -37,18 +36,11 @@ def _result(task_name: str, *, produces_potential: bool = False):
     )
 
 
-def test_calculation_request_requires_structure_and_state_ids():
-    common = dict(
-        atoms=Atoms("Fe"),
-        input_parameters=object(),
-        directory=".",
-        generation=Generation(),
-    )
-
+def test_run_provenance_requires_structure_and_state_ids():
     with pytest.raises(TypeError, match="structure_id"):
-        CalculationRequest(**common, state_id=1)
+        RunProvenance(state_id=1)
     with pytest.raises(TypeError, match="state_id"):
-        CalculationRequest(**common, structure_id=1)
+        RunProvenance(structure_id=1)
 
 
 @pytest.mark.parametrize(
