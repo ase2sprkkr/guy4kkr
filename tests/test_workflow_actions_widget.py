@@ -7,7 +7,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton
 
-from guy4ase.gui.recent_presentation import RecentLaunch
 from guy4ase.gui.widgets.workflow_actions import WorkflowActionsWidget
 from guy4ase.gui.workflow.model import (
     ActionIcon,
@@ -126,8 +125,8 @@ def test_renderer_emits_typed_command_instead_of_interpreting_title():
 
 def test_renderer_menu_is_fully_driven_by_plan():
     _app()
-    primary = ContinueRecent(RecentLaunch("output", "/tmp/SCF.out"))
-    structure = ContinueRecent(RecentLaunch("structure", "/tmp/Fe.cif"))
+    primary = ContinueRecent("output", "/tmp/SCF.out")
+    structure = ContinueRecent("structure", "/tmp/Fe.cif")
     widget = WorkflowActionsWidget()
     widget.set_plan(
         WorkflowPlan(

@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.dialogs import workflow_window as workflow_module
-from guy4ase.gui.recent_presentation import RecentLaunch
 from guy4ase.gui.workflow.model import (
     Build2D,
     Build2DKind,
@@ -126,7 +125,6 @@ def test_typed_commands_are_dispatched_without_title_interpretation(
     )
     monkeypatch.setattr(window, "_start_over", lambda: events.append("reset"))
 
-    recent = RecentLaunch("output", "/tmp/result.out")
     commands = (
         RunTask("scf"),
         UpdateEmptySpheres(),
@@ -139,7 +137,7 @@ def test_typed_commands_are_dispatched_without_title_interpretation(
         Load(LoadKind.ONLINE_STRUCTURE),
         Load(LoadKind.STRUCTURE),
         Load(LoadKind.OUTPUT),
-        ContinueRecent(recent),
+        ContinueRecent("output", "/tmp/result.out"),
         VisualizeStructure(),
         UseForNewCalculation(),
         StartOver(),

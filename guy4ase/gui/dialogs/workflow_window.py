@@ -344,7 +344,7 @@ class WorkflowWindow(QMainWindow):
             }[command.kind]()
             return
         if isinstance(command, ContinueRecent):
-            self._continue_recent(command.launch.kind, command.launch.path)
+            self._continue_recent(command.kind, command.path)
             return
         if isinstance(command, VisualizeStructure):
             self._visualize_structure()

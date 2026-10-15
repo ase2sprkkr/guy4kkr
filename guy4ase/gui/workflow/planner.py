@@ -14,7 +14,6 @@ from guy4ase.gui.presentation import (
 )
 from guy4ase.gui.recent_presentation import (
     RecentHistorySnapshot,
-    RecentLaunch,
     RecentLaunchPresentation,
     recent_launch_presentation,
 )
@@ -92,7 +91,7 @@ def _recent_menu(
             group.title,
             tuple(
                 ActionMenuItem(
-                    ContinueRecent(RecentLaunch(group.kind, item.path)),
+                    ContinueRecent(group.kind, item.path),
                     item.label,
                     item.tooltip,
                 )
@@ -175,7 +174,7 @@ class WorkflowPlanner:
         if launch is not None:
             load_actions.append(
                 _action(
-                    ContinueRecent(launch),
+                    ContinueRecent(launch.kind, launch.path),
                     launch.title,
                     "",
                     "load",

@@ -407,9 +407,13 @@ def select_guided_input_parameters(
     dataset_default_mode: str,
 ) -> InputParameters | None:
     definition = guided_task_definition(task)
+    if not InputParameters.is_it_an_input_parameters_name(definition.backend_task):
+        raise GuidedTaskUnavailable(
+            f"The {task.upper()} backend task is not available."
+        )
     try:
         parameters = InputParameters.create(definition.backend_task)
-    except (ImportError, KeyError) as exc:
+    except ImportError as exc:
         raise GuidedTaskUnavailable(
             f"The {task.upper()} backend task could not be loaded: {exc}"
         ) from exc
