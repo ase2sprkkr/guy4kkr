@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SprkkrExecution:
-    """Run one detached workspace snapshot without any Qt dependency."""
+    """Execute one already detached launch snapshot without any Qt dependency."""
 
     def __init__(
         self,
@@ -39,8 +39,8 @@ class SprkkrExecution:
         warning: Callable[[str], None] | None = None,
         persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
-        self.atoms = atoms.copy()
-        self.input_parameters = input_parameters.copy(copy_values=True)
+        self.atoms = atoms
+        self.input_parameters = input_parameters
         self.directory = directory
         self.provenance = provenance
         self.cancellation = cancellation
