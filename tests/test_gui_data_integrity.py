@@ -39,6 +39,10 @@ def tree_editor(dialog, name):
     return item, tree.itemWidget(item, 2)
 
 
+def backend_task(task):
+    return 'bsfek' if task == 'bsf' else task
+
+
 @pytest.mark.parametrize('path,value', [(('SCF', 'MIX'), .1234567), (('SCF', 'NITER'), 5000)])
 def test_focus_without_edit_preserves_raw_numeric_value(app, path, value):
     p = InputParameters.create('scf')
@@ -173,7 +177,7 @@ def test_scf_cannot_select_unsupported_relative_bound(app, expert):
 
 @pytest.mark.parametrize('task', ['dos', 'bsf', 'arpes'])
 def test_reference_switch_changes_both_bounds_atomically(app, task):
-    p = InputParameters.create(task)
+    p = InputParameters.create(backend_task(task))
     if task == 'bsf':
         p.ENERGY.NE = [200]
     d = GuidedInputParametersDialog(task, p)
@@ -191,7 +195,7 @@ def test_reference_switch_changes_both_bounds_atomically(app, task):
 
 @pytest.mark.parametrize('task', ['scf', 'dos', 'bsf'])
 def test_backend_rejects_relative_bounds_that_sprkkr_would_ignore(task):
-    p = InputParameters.create(task)
+    p = InputParameters.create(backend_task(task))
     p.CONTROL.POTFIL = 'Fe.pot'
     if task == 'bsf':
         p.set({'ENERGY': {'NE': [200]}, 'TASK': {'KPATH': 1}})
@@ -234,7 +238,7 @@ def test_invalid_expert_text_blocks_ok_until_corrected(app):
 
 
 def test_expert_numeric_error_is_inline_and_keeps_model(app):
-    p = InputParameters.create('bsf')
+    p = InputParameters.create('bsfek')
     p.set({'ENERGY': {'NE': [200]}, 'TASK': {
         'KA': [[0., 0., 0.], [1., 0., 0.]], 'KE': [[1., 0., 0.], [1., 1., 0.]]}})
     d = InputParametersDialog(p)
@@ -412,7 +416,7 @@ def test_guided_dialog_rejects_another_parameter_task(app, task):
 
 
 def test_unrelated_edit_preserves_invalid_kpath_draft_but_undo_discards_it(app):
-    p = InputParameters.create('bsf')
+    p = InputParameters.create('bsfek')
     p.set({'ENERGY': {'NE': [200]}, 'TASK': {'KA': [[0., 0., 0.]], 'KE': [[1., 1., 1.]]}})
     d = GuidedInputParametersDialog('bsf', p)
     editor = d.editors_for(('TASK', 'KA'))[0]

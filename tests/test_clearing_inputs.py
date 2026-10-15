@@ -25,11 +25,15 @@ def erase(control):
     QTest.keyClick(control, Qt.Key.Key_Backspace)
 
 
+def backend_task(task):
+    return 'bsfkk' if task == 'bsf' else task
+
+
 @pytest.mark.parametrize('task', ['scf', 'bsf'])
 @pytest.mark.parametrize('path,value', [(('MODE', 'MALF'), .25), (('TAU', 'IQCNTR'), 2),
                                       (('ENERGY', 'EMINEV'), -3.)])
 def test_guided_delete_number_unsets_and_undo_restores(application, task, path, value):
-    parameters = InputParameters.create(task)
+    parameters = InputParameters.create(backend_task(task))
     parameters.TAU.CLUSTER.set(True)
     parameters[path[0]][path[1]].set(value)
     dialog = GuidedInputParametersDialog(task, parameters)
@@ -66,7 +70,7 @@ def test_guided_delete_number_unsets_and_undo_restores(application, task, path, 
                                               ('TAU', 'NSHLCLU', 2),
                                               ('ENERGY', 'EMINEV', -3.)])
 def test_expert_delete_number_unsets(application, task, section, name, value):
-    parameters = InputParameters.create(task)
+    parameters = InputParameters.create(backend_task(task))
     parameters[section][name].set(value)
     dialog = InputParametersDialog(parameters)
     tree_name = 'EMIN / EMINEV' if name == 'EMINEV' else name

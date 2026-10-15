@@ -20,9 +20,13 @@ def application():
     return QApplication.instance() or QApplication([])
 
 
+def _parameters_for_guided_task(task):
+    return InputParameters.create('bsfkk' if task == 'bsf' else task)
+
+
 @pytest.mark.parametrize('task', ['scf', 'bsf', 'dos', 'arpes'])
 def test_open_energy_pair_does_not_change_parameters(application, task):
-    parameters = InputParameters.create(task)
+    parameters = _parameters_for_guided_task(task)
     dialog = GuidedInputParametersDialog(task, parameters)
     absolute = dialog.editors_for(('ENERGY', 'EMIN'))
     relative = dialog.editors_for(('ENERGY', 'EMINEV'))
@@ -37,7 +41,7 @@ def test_open_energy_pair_does_not_change_parameters(application, task):
 
 @pytest.mark.parametrize('task', ['scf', 'bsf', 'dos'])
 def test_unit_change_only_converts_display_with_full_precision(application, task):
-    parameters = InputParameters.create(task)
+    parameters = _parameters_for_guided_task(task)
     value = -.2345678912345
     parameters.ENERGY.EMIN.set(value)
     dialog = GuidedInputParametersDialog(task, parameters)
@@ -80,7 +84,7 @@ def test_all_unit_reference_combinations_roundtrip(application, unit, relative):
 
 
 def test_reference_change_is_atomic_undoable_and_mirrored(application):
-    parameters = InputParameters.create('bsf')
+    parameters = InputParameters.create('bsfkk')
     parameters.ENERGY.EMIN.set(.5)
     dialog = GuidedInputParametersDialog('bsf', parameters)
     quick, detail = dialog.editors_for(('ENERGY', 'EMIN'))
@@ -181,7 +185,7 @@ def test_arpes_absolute_bounds_and_relative_defaults(application, expert):
 
 
 def test_bsf_relative_kk_import_can_switch_to_ek_and_edit_both_references(application):
-    parameters = InputParameters.create('bsf')
+    parameters = InputParameters.create('bsfkk')
     parameters.ENERGY.EMINEV.set(0.)
     dialog = GuidedInputParametersDialog('bsf', parameters)
     mode = dialog.editors_for(('ENERGY', 'NE'))[0]

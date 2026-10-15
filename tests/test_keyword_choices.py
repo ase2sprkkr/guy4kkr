@@ -47,7 +47,6 @@ def test_generic_atom_choices_apply_to_guided_and_expert_keywords(application, m
     monkeypatch.setattr(parameters.SCF.VXC._definition, "choices_for_atoms", provider, raising=False)
     session = InputParametersSession(parameters)
     editor = ParameterEditor(session, field("SCF", "VXC", "XC", "keyword"), "physical", atoms=atoms)
-    option = session.option(("SCF", "VXC"))
     generic = value_editor(session, field("SCF", "VXC", "XC", "keyword"), atoms=atoms)
     for combo in (editor.control, generic):
         assert choices(combo) == {"PBE"}
@@ -199,7 +198,7 @@ def test_empty_atom_choices_do_not_fall_back_to_static_choices(application, monk
 ])
 def test_real_kpath_atom_choices(application, symbol, lattice, expected):
     atoms = bulk(symbol, lattice, a=3.)
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 1}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=atoms)
     for editor in dialog.editors_for(("TASK", "KPATH")):
@@ -214,7 +213,7 @@ def test_real_kpath_atom_choices(application, symbol, lattice, expected):
 
 
 def test_custom_path_enablement_follows_unset_zero_and_undo(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 0}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=bulk("Fe", "bcc", a=2.8))
     quick, primary = dialog.editors_for(("TASK", "KPATH"))
@@ -235,7 +234,7 @@ def test_custom_path_enablement_follows_unset_zero_and_undo(application):
 
 def test_unsupported_lattice_switches_to_custom_path(application):
     atoms = Atoms("Fe", cell=[2.8, 3.1, 3.7, 70, 80, 75], pbc=True)
-    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsf"), atoms=atoms)
+    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsfek"), atoms=atoms)
     mode = dialog.editors_for(("ENERGY", "NE"))[0]
     mode.control.mode_combo.setCurrentIndex(mode.control.mode_combo.findData("EK"))
     assert not mode._error
@@ -243,7 +242,9 @@ def test_unsupported_lattice_switches_to_custom_path(application):
     path = dialog.editors_for(("TASK", "KPATH"))[0]
     assert choices(path.control.path_combo) == {None}
     assert path.control.path_edit.isEnabled()
-    assert dialog._commit_pending()
+    # No predefined path exists for this lattice. The user must enter custom
+    # path geometry before the setup is complete.
+    assert not dialog._commit_pending()
     dialog.close()
 
 
@@ -259,7 +260,7 @@ def test_keyword_option_hook_works_without_explicit_keyword_placement(applicatio
         return {"PBE": "Option-level choice"}
 
     monkeypatch.setattr(option, "choices_for_atoms", provider, raising=False)
-    editor = ParameterEditor(session, field("SCF", "VXC", "XC"), "physical", atoms=atoms)
+    editor = ParameterEditor(session, field("SCF", "VXC", "XC", "keyword"), "physical", atoms=atoms)
     assert isinstance(editor.control, QComboBox)
     assert choices(editor.control) == {"PBE"}
     assert len(seen) == 1 and seen[0] is atoms
@@ -267,7 +268,7 @@ def test_keyword_option_hook_works_without_explicit_keyword_placement(applicatio
 
 
 def test_expert_dialog_passes_structure_to_keyword_editor(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 1}})
     dialog = InputParametersDialog(parameters, atoms=bulk("Fe", "sc", a=2.8))
     from PyQt6.QtCore import Qt
@@ -285,7 +286,7 @@ def test_expert_dialog_passes_structure_to_keyword_editor(application):
 
 
 def test_unavailable_imported_path_is_preserved_but_not_offered(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200]}, "TASK": {"KPATH": 10}})
     dialog = GuidedInputParametersDialog("bsf", parameters, atoms=bulk("Fe", "sc", a=2.8))
     combo = dialog.editors_for(("TASK", "KPATH"))[0].control.path_combo
