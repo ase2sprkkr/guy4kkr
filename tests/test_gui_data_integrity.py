@@ -370,7 +370,8 @@ def _atoms_with_scf_status(status):
         symmetry=False,
     )
     atoms._potential = SimpleNamespace(
-        SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status)
+        SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: status),
+        is_scf_converged=lambda _atoms: status == 'CONVERGED',
     )
     return atoms
 

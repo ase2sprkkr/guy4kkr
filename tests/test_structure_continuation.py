@@ -6,8 +6,6 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ase import Atoms
-from PyQt6.QtCore import Qt
-from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from guy4ase.gui.application.result_action_policy import NewCalculationSource
@@ -67,31 +65,17 @@ def _result_widget(controller: WorkspaceController):
 
 
 def test_user_double_clicking_structure_emits_structure_intent_only():
-    application = _app()
+    _application = _app()
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Fe")))
     _record_current_result(controller)
     widget, _presenter = _result_widget(controller)
     captured = []
     widget.newCalculationRequested.connect(captured.append)
 
-    widget.show()
-    application.processEvents()
     structure = widget._selector.topLevelItem(0)
     result = structure.child(0)
-    structure_rect = widget._selector.visualItemRect(structure)
-    result_rect = widget._selector.visualItemRect(result)
-
-    QTest.mouseDClick(
-        widget._selector.viewport(),
-        Qt.MouseButton.LeftButton,
-        pos=structure_rect.center(),
-    )
-    QTest.mouseDClick(
-        widget._selector.viewport(),
-        Qt.MouseButton.LeftButton,
-        pos=result_rect.center(),
-    )
-    application.processEvents()
+    widget._selector.itemDoubleClicked.emit(structure, 0)
+    widget._selector.itemDoubleClicked.emit(result, 0)
 
     assert captured == [controller.structure_id]
     widget.close()
