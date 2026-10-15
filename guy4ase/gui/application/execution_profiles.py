@@ -5,7 +5,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any
 
-from ase2sprkkr.configuration import config
+from ase2sprkkr import config
 from ase2sprkkr.sprkkr.profile import resolve_sprkkr_profile
 
 _DEFAULT_PROFILE_VALUES = {"executor": "local", "mpi": "auto", "mpi_warning": True}
