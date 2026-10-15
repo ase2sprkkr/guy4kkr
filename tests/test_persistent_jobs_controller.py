@@ -17,10 +17,15 @@ from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.widgets.persistent_jobs import PersistentJobsWidget
 
 
-def _job(job_id: str, *, updated_at: str = "2026-10-14T08:00:00+00:00") -> PersistentJob:
+def _job(
+    job_id: str,
+    *,
+    state: str = "running",
+    updated_at: str = "2026-10-14T08:00:00+00:00",
+) -> PersistentJob:
     return PersistentJob(
         id=job_id,
-        state="running",
+        state=state,
         created_at="2026-10-14T08:00:00+00:00",
         updated_at=updated_at,
         task="SCF",
@@ -29,7 +34,7 @@ def _job(job_id: str, *, updated_at: str = "2026-10-14T08:00:00+00:00") -> Persi
         target="Local",
         return_code=None,
         message=None,
-        attachable=True,
+        attachable=state not in {"finished", "execution_failed", "finalization_failed", "cancelled"},
     )
 
 
@@ -39,6 +44,7 @@ class _Source:
     supports_refresh = False
     supports_results = False
     supports_attach = True
+    supports_retry_finalization = True
     supports_result_file_check = False
 
     def __init__(self, jobs: tuple[PersistentJob, ...]) -> None:
@@ -162,6 +168,53 @@ def test_two_views_share_one_attached_monitor_window(monkeypatch):
     assert monitor_window.show_calls == 2
     assert monitor_window.raise_calls == 1
     assert monitor_window.activate_calls == 1
+
+
+def test_finalization_retry_uses_attached_monitor_without_marking_job_active(monkeypatch):
+    _application = QApplication.instance() or QApplication([])
+    job = _job("run-17", state="finalization_failed")
+    source = _Source((job,))
+    controller = PersistentJobsController(source)
+    view = _view()
+    controller.bind_view(view)
+    created = []
+
+    def create_monitor_window(
+        _job,
+        _source,
+        parent=None,
+        *,
+        on_finished=None,
+        autostart=True,
+    ):
+        assert _job is job
+        assert _source is source
+        assert parent is None
+        assert autostart is False
+        window = _MonitorWindow()
+        created.append(window)
+        return window
+
+    monkeypatch.setattr(
+        controller_module,
+        "create_attached_run_monitor_window",
+        create_monitor_window,
+    )
+
+    assert job.is_final
+    assert not job.attachable
+    assert job.can_retry_finalization
+    assert view.retry_finalization_button.isVisible() is False
+    # The parent-less test widget is itself hidden, so inspect hidden state rather
+    # than QWidget.isVisible(), which includes ancestor visibility.
+    assert not view.retry_finalization_button.isHidden()
+
+    view.retryFinalizationRequested.emit(job.id)
+
+    assert len(created) == 1
+    assert controller._monitor_windows == {job.id: created[0]}
+    assert created[0].start_calls == 1
+    assert created[0].show_calls == 1
 
 
 def test_pending_launch_runner_is_reused_before_lifecycle_signal(monkeypatch):

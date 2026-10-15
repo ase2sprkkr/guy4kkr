@@ -82,6 +82,7 @@ class PersistentJobsController(QObject):
             lambda bound_view=view: self._refresh_requested(bound_view)
         )
         view.monitorRequested.connect(self.open_monitor_window)
+        view.retryFinalizationRequested.connect(self.retry_finalization)
         view.loadResultRequested.connect(
             lambda job_id, bound_view=view: self._load_result_requested(
                 bound_view, job_id
@@ -106,6 +107,7 @@ class PersistentJobsController(QObject):
             supports_refresh=self._source.supports_refresh,
             supports_results=self._source.supports_results,
             supports_attach=self._source.supports_attach,
+            supports_retry_finalization=self._source.supports_retry_finalization,
         )
 
     def refresh_views(self) -> None:
@@ -116,6 +118,11 @@ class PersistentJobsController(QObject):
     def load_result(self, job_id: str, *, select_result: bool = True) -> Any:
         """Load a persisted result and publish it through the application bridge."""
         job_id = str(job_id)
+        job = self._source.job(job_id)
+        if job is not None and job.can_retry_finalization:
+            raise RuntimeError(
+                f"Persistent job {job_id} requires finalization retry before loading"
+            )
         result = self._source.load_result(job_id)
         self._publish_result(job_id, result, select_result=select_result)
         return result
@@ -230,7 +237,12 @@ class PersistentJobsController(QObject):
         if job_id is None or not self._source.supports_result_file_check:
             return
         job = self._source.job(str(job_id))
-        if job is None or not job.is_final or job.result_files_verified:
+        if (
+            job is None
+            or not job.is_final
+            or job.can_retry_finalization
+            or job.result_files_verified
+        ):
             return
         try:
             checked = self._source.check_result_files(job.id)
@@ -251,25 +263,14 @@ class PersistentJobsController(QObject):
         except Exception as exc:  # noqa: BLE001 - execution backend boundary
             QMessageBox.warning(view, "Status Refresh Failed", str(exc))
 
-    @pyqtSlot(str)
-    def open_monitor_window(self, job_id: str) -> None:
-        """Show the single active monitor window for ``job_id``."""
-        job_id = str(job_id)
-        monitor_window = self._monitor_windows.get(job_id)
-        if monitor_window is None:
-            pending_launch = self._pending_launch_for_job(job_id)
-            if pending_launch is not None:
-                self.register_launch_job(job_id, pending_launch)
-                monitor_window = pending_launch
-        if monitor_window is not None:
-            monitor_window.show()
-            monitor_window.raise_()
-            monitor_window.activateWindow()
-            return
+    @staticmethod
+    def _show_monitor_window(monitor_window: RunMonitorWindow) -> None:
+        monitor_window.show()
+        monitor_window.raise_()
+        monitor_window.activateWindow()
 
-        job = self._source.job(job_id)
-        if job is None or not job.attachable or not self._source.supports_attach:
-            return
+    def _create_attached_monitor(self, job: PersistentJob) -> None:
+        job_id = job.id
 
         def finished(result: Any) -> None:
             self._reload_job(job_id)
@@ -293,6 +294,43 @@ class PersistentJobsController(QObject):
             monitor_window.close()
             raise
 
+    @pyqtSlot(str)
+    def open_monitor_window(self, job_id: str) -> None:
+        """Show the single active monitor window for ``job_id``."""
+        job_id = str(job_id)
+        monitor_window = self._monitor_windows.get(job_id)
+        if monitor_window is None:
+            pending_launch = self._pending_launch_for_job(job_id)
+            if pending_launch is not None:
+                self.register_launch_job(job_id, pending_launch)
+                monitor_window = pending_launch
+        if monitor_window is not None:
+            self._show_monitor_window(monitor_window)
+            return
+
+        job = self._source.job(job_id)
+        if job is None or not job.attachable or not self._source.supports_attach:
+            return
+        self._create_attached_monitor(job)
+
+    @pyqtSlot(str)
+    def retry_finalization(self, job_id: str) -> None:
+        """Explicitly retry a terminal finalization failure through the backend."""
+        job_id = str(job_id)
+        monitor_window = self._monitor_windows.get(job_id)
+        if monitor_window is not None:
+            self._show_monitor_window(monitor_window)
+            return
+
+        job = self._source.job(job_id)
+        if (
+            job is None
+            or not job.can_retry_finalization
+            or not self._source.supports_retry_finalization
+        ):
+            return
+        self._create_attached_monitor(job)
+
     def _publish_result(
         self,
         job_id: str,
@@ -314,17 +352,19 @@ class PersistentJobsController(QObject):
         job_id: str,
     ) -> None:
         job = self._source.job(job_id)
-        if job is None or not job.is_final or not self._source.supports_results:
+        if (
+            job is None
+            or not job.is_final
+            or job.can_retry_finalization
+            or not self._source.supports_results
+        ):
             return
         try:
-            result = run_modal_task(
+            run_modal_task(
                 view,
-                lambda: self._source.load_result(job_id),
+                lambda: self.load_result(job_id, select_result=True),
                 title="Loading Calculation Result",
                 label="Loading result files…",
             )
         except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
             QMessageBox.warning(view, "Result Load Failed", str(exc))
-            return
-
-        self._publish_result(job_id, result, select_result=True)
