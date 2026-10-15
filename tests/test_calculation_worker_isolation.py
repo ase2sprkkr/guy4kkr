@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
+from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
 
 
 class _Parameters:
@@ -14,11 +15,14 @@ class _Parameters:
         return _Parameters()
 
 
-class _Cancellation:
-    requested = False
-
-    def register(self, _runner):
-        return True
+def _window(controller: WorkspaceController) -> SprkkrRunWindow:
+    _application = QApplication.instance() or QApplication([])
+    return SprkkrRunWindow(
+        controller.atoms,
+        controller.input_parameters,
+        controller.directory,
+        controller.create_run_provenance(),
+    )
 
 
 def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
@@ -30,12 +34,9 @@ def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
             directory=str(tmp_path),
         )
     )
-    request = controller.create_calculation_request()
+    window = _window(controller)
+    execution_atoms = window._atoms
 
-    execution = SprkkrExecution(request, _Cancellation())
-    execution_atoms = execution.request.atoms
-
-    assert request.atoms is atoms
     assert controller.atoms is atoms
     assert execution_atoms is not atoms
 
@@ -44,6 +45,7 @@ def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
 
     assert type(controller.atoms) is Atoms
     assert SPRKKRAtoms.sites_array_name not in controller.atoms.arrays
+    window.close()
 
 
 def test_execution_copy_owns_independent_sprkkr_site_state(tmp_path):
@@ -58,14 +60,12 @@ def test_execution_copy_owns_independent_sprkkr_site_state(tmp_path):
             directory=str(tmp_path),
         )
     )
-    execution = SprkkrExecution(
-        controller.create_calculation_request(),
-        _Cancellation(),
-    )
-    copied = execution.request.atoms
+    window = _window(controller)
+    copied = window._atoms
 
     assert copied is not atoms
     assert copied.sites[0].site_type is copied.sites[1].site_type
     assert copied.sites[0].site_type is not original_site_type
     assert copied.sites[0].site_type.atoms is copied
     assert original_site_type.atoms is atoms
+    window.close()
