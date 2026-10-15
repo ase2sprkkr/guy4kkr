@@ -331,21 +331,21 @@ class ProjectRepository:
         return saved
 
     def add_run(self, project_id: str, persistent_ref: str) -> Project:
-        """Idempotently add a persistent run, replaying once after a conflict."""
-        for attempt in range(2):
-            project = self.project(project_id)
-            edited = project.add_run(persistent_ref)
-            if edited is project:
-                return project
-            try:
-                return self.save(
-                    edited,
-                    expected_generation=project.generation,
-                )
-            except ProjectConflictError:
-                if attempt:
-                    raise
-        raise AssertionError("unreachable")
+        """Atomically and idempotently add one persistent run reference."""
+        canonical = _project_id(project_id)
+        ref = _persistent_ref(persistent_ref)
+        with self._project_lock(canonical):
+            current = self._read_path(self._json_path(canonical))
+            updated = current.add_run(ref)
+            if updated is current:
+                saved = current
+            else:
+                saved = self._save_locked(updated, current)
+
+        self._remember_one(saved)
+        if saved is not current:
+            self._notify(saved.id)
+        return saved
 
     def delete(self, project_id: str, *, expected_generation: int) -> None:
         """Delete a non-root leaf project without touching referenced runs."""
