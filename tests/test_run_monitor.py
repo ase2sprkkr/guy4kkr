@@ -6,12 +6,16 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QPlainTextEdit
 
 from guy4ase.gui.application.execution_cancellation import RunCancellation
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.dialogs.attached_run import AttachedRunWorker
-from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import (
+    MAX_LOGICAL_LINE_LENGTH,
+    MAX_OUTPUT_BLOCKS,
+    RunMonitorWindow,
+)
 
 
 class _Source:
@@ -104,3 +108,50 @@ def test_generic_monitor_close_hides_without_cancelling():
     assert window._close_requested
     assert not window.isVisible()
     assert not window._cancellation.requested
+
+
+def test_generic_monitor_uses_bounded_plain_text_output():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
+
+    assert app is QApplication.instance()
+    assert isinstance(window._output, QPlainTextEdit)
+    assert window._output.maximumBlockCount() == MAX_OUTPUT_BLOCKS
+
+
+def test_generic_monitor_wraps_long_logical_lines_across_output_chunks():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
+
+    window._append_output("x" * MAX_LOGICAL_LINE_LENGTH, "out")
+    window._append_output("y", "out")
+
+    assert app is QApplication.instance()
+    assert window._output.toPlainText() == (
+        "x" * MAX_LOGICAL_LINE_LENGTH + "\ny"
+    )
+
+
+def test_generic_monitor_does_not_double_wrap_at_real_newline():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
+
+    window._append_output("x" * MAX_LOGICAL_LINE_LENGTH + "\ny", "out")
+
+    assert app is QApplication.instance()
+    assert window._output.toPlainText() == (
+        "x" * MAX_LOGICAL_LINE_LENGTH + "\ny"
+    )
+
+
+def test_generic_monitor_discards_old_output_blocks():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(lambda cancellation: object(), autostart=False)
+
+    text = "".join(f"line {i}\n" for i in range(MAX_OUTPUT_BLOCKS + 10))
+    window._append_output(text, "out")
+
+    assert app is QApplication.instance()
+    assert window._output.document().blockCount() <= MAX_OUTPUT_BLOCKS
+    assert "line 0\n" not in window._output.toPlainText()
+    assert f"line {MAX_OUTPUT_BLOCKS + 9}" in window._output.toPlainText()

@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +23,9 @@ from guy4ase.gui.application.execution_cancellation import RunCancellation
 
 
 logger = logging.getLogger(__name__)
+
+MAX_OUTPUT_BLOCKS = 4096
+MAX_LOGICAL_LINE_LENGTH = 4096
 
 
 def state_label(state: Any) -> str:
@@ -81,6 +84,7 @@ class RunMonitorWindow(QDialog):
         self._thread: QThread | None = None
         self._worker: RunMonitorWorker | None = None
         self._close_requested = False
+        self._output_line_length = 0
         self.refreshed.connect(self._set_status)
 
         layout = QVBoxLayout(self)
@@ -92,8 +96,9 @@ class RunMonitorWindow(QDialog):
         self._status = QLabel(initial_status, self)
         layout.addWidget(self._status)
 
-        self._output = QTextEdit(self)
+        self._output = QPlainTextEdit(self)
         self._output.setReadOnly(True)
+        self._output.setMaximumBlockCount(MAX_OUTPUT_BLOCKS)
         layout.addWidget(self._output, 1)
 
         buttons = QHBoxLayout()
@@ -169,6 +174,26 @@ class RunMonitorWindow(QDialog):
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
 
+    def _bounded_output(self, text: str) -> str:
+        parts: list[str] = []
+        lines = text.split("\n")
+        for index, line in enumerate(lines):
+            while len(line) > MAX_LOGICAL_LINE_LENGTH - self._output_line_length:
+                available = MAX_LOGICAL_LINE_LENGTH - self._output_line_length
+                if available:
+                    parts.append(line[:available])
+                    line = line[available:]
+                parts.append("\n")
+                self._output_line_length = 0
+
+            parts.append(line)
+            self._output_line_length += len(line)
+            if index < len(lines) - 1:
+                parts.append("\n")
+                self._output_line_length = 0
+
+        return "".join(parts)
+
     @pyqtSlot(str, str)
     def _append_output(self, text: str, kind: str) -> None:
         cursor = self._output.textCursor()
@@ -178,7 +203,7 @@ class RunMonitorWindow(QDialog):
             fmt.setForeground(QColor("red"))
             fmt.setFontWeight(QFont.Weight.Bold)
         cursor.setCharFormat(fmt)
-        cursor.insertText(text)
+        cursor.insertText(self._bounded_output(text))
         self._output.setTextCursor(cursor)
         self._output.ensureCursorVisible()
 
