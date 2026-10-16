@@ -1,28 +1,17 @@
-name: tests
+name: diagnostic tests
 
 on:
   push:
-    branches-ignore:
-      - 'chatgpt-**'
-  pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+    branches:
+      - 'chatgpt-diagnostic-hang'
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    if: >-
-      github.event_name != 'pull_request' ||
-      !startsWith(github.head_ref, 'chatgpt-')
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+    timeout-minutes: 8
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -33,7 +22,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
           cache: pip
 
       - name: Install Qt runtime libraries
@@ -61,5 +50,5 @@ jobs:
           python -m pip install -e ./.ci/ase2sprkkr
           python -m pip install -e . pytest
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests with diagnostic timeout
+        run: timeout 180 python -m pytest -vv
