@@ -33,7 +33,9 @@ def test_load_reports_parser_error(monkeypatch, tmp_path, application):
     monkeypatch.setattr(
         input_parameter_flows,
         "_read_for_task_family",
-        lambda _path, _tasks: _raise(RuntimeError("broken input")),
+        lambda _path, _tasks: _raise(
+            input_parameter_flows.InputParametersLoadError("broken input")
+        ),
     )
     monkeypatch.setattr(
         input_parameter_flows.QMessageBox,
@@ -89,25 +91,20 @@ def test_wrong_schema_is_a_user_facing_load_error(
     assert "Expected SCF input schema, got DOS." in messages[0]
 
 
-def test_task_registry_error_is_not_misreported_as_input_error(
+def test_untyped_loader_error_is_not_misreported_as_input_error(
     monkeypatch, tmp_path, application
 ):
     session = create_input_parameters_session(InputParameters.create("scf"))
     messages = []
     monkeypatch.setattr(
+        input_parameter_flows,
+        "_read_for_task_family",
+        lambda _path, _tasks: _raise(RuntimeError("task registry invariant")),
+    )
+    monkeypatch.setattr(
         input_parameter_flows.QMessageBox,
         "critical",
         lambda _parent, _title, text: messages.append(text),
-    )
-
-    class BrokenRegistry:
-        def __getitem__(self, _name):
-            raise RuntimeError("task registry invariant")
-
-    monkeypatch.setattr(
-        input_parameter_flows.InputParameters,
-        "task_registry",
-        BrokenRegistry(),
     )
 
     with pytest.raises(RuntimeError, match="task registry invariant"):
