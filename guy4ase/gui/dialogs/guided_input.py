@@ -90,12 +90,8 @@ class GuidedInputParametersDialog(QDialog):
         self.spec: TaskDialogSpec = definition.build_spec(
             is_2d=detect_structure_kind(atoms) == "2d",
         )
-        expected_task = InputParameters.is_it_an_input_parameters_name(
-            definition.backend_task
-        )
-        actual_task = InputParameters.is_it_an_input_parameters_name(
-            parameters.task_name
-        )
+        expected_task = InputParameters.is_task_name(definition.backend_task)
+        actual_task = InputParameters.is_task_name(parameters.task_name)
         if (
             not expected_task
             or not actual_task
@@ -284,7 +280,7 @@ class GuidedInputParametersDialog(QDialog):
         self.undo_button.setEnabled(stack.canUndo())
         self.redo_button.setEnabled(stack.canRedo())
         self.undo_button.setToolTip(self.session.history_description(undo=True))
-        self.redo_button.setToolTip(self.session.history_description(undo=False))
+        self.redo_button.setToolTip(self.session.history_description(redo=True))
 
     def _update_all_statuses(self) -> None:
         changed = self.session.changed_paths(self.spec.all_paths())
@@ -416,7 +412,7 @@ def select_guided_input_parameters(
     dataset_default_mode: str,
 ) -> InputParameters | None:
     definition = guided_task_definition(task)
-    if not InputParameters.is_it_an_input_parameters_name(definition.backend_task):
+    if not InputParameters.is_task_name(definition.backend_task):
         raise GuidedTaskUnavailable(
             f"The {task.upper()} backend task is not available."
         )
