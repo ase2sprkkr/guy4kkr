@@ -312,18 +312,21 @@ class InputParametersSession(QObject):
         text: str = "Replace input parameters",
         source_page: str | None = None,
     ) -> bool:
-        """Install same-task serialized input as one undoable full replacement.
+        """Install same-schema serialized input as one undoable full replacement.
 
-        Dormant values are session-only editing state and therefore do not belong
-        to a newly loaded/reparsed ``InputParameters`` object. A full replacement
-        starts with empty dormant state; undo still restores the complete previous
-        snapshot. Use :meth:`replace_from_session` when importing another editing
-        session whose dormant state is intentionally part of the transfer.
+        One schema may represent several effective backend tasks (for example,
+        BSFEK/BSFKK or ARPES/SPLEED), so task changes within the schema are a
+        normal edit. Dormant values are session-only editing state and therefore
+        do not belong to a newly loaded/reparsed ``InputParameters`` object. A
+        full replacement starts with empty dormant state; undo still restores the
+        complete previous snapshot. Use :meth:`replace_from_session` when
+        importing another editing session whose dormant state is intentionally
+        part of the transfer.
         """
-        if parameters.task_name.upper() != self.task_name.upper():
+        if parameters.definition_name.upper() != self._working.definition_name.upper():
             raise ValueError(
-                f"Expected {self.task_name.upper()} input parameters, "
-                f"got {parameters.task_name.upper()}."
+                f"Expected {self._working.definition_name.upper()} input schema, "
+                f"got {parameters.definition_name.upper()}."
             )
         candidate = parameters.copy(copy_values=True)
         return self._push(
@@ -341,17 +344,17 @@ class InputParametersSession(QObject):
         text: str = "Replace input parameters",
         source_page: str | None = None,
     ) -> bool:
-        """Import another session's complete state as one undoable command.
+        """Import another same-schema session as one undoable command.
 
         The source session has already applied its transaction plugins. Its
         dormant state is therefore installed together with its parameters
         without applying the plugins a second time.
         """
         parameters = session.result()
-        if parameters.task_name.upper() != self.task_name.upper():
+        if parameters.definition_name.upper() != self._working.definition_name.upper():
             raise ValueError(
-                f"Expected {self.task_name.upper()} input parameters, "
-                f"got {parameters.task_name.upper()}."
+                f"Expected {self._working.definition_name.upper()} input schema, "
+                f"got {parameters.definition_name.upper()}."
             )
         return self._push_snapshot(
             parameters,
