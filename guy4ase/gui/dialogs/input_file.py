@@ -15,27 +15,38 @@ from PyQt6.QtWidgets import (
 )
 
 
-def _require_declared_task_schema(parameters, expected_schema):
+_TASK_DECLARATION = re.compile(
+    r"^[ \t]*TASK[ \t]+([A-Za-z][A-Za-z0-9_+.-]*)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _require_declared_task_schema(source: str, expected_schema: str) -> None:
     """Reject a TASK declaration belonging to another input schema.
 
-    Shared schemas deliberately allow the effective task to change (for
-    example ARPES/SPLEED). The boundary is therefore the input schema, not the
-    current effective task.
+    SPR-KKR input files declare their task as ``TASK <name>``.  The name can
+    itself be a schema identifier (notably ``BSF``) or a registered task
+    (notably ``SPLEED``).  Backend registries remain authoritative for mapping
+    either form to its input schema.
     """
-    try:
-        declared_task = parameters.TASK.TASK()
-    except AttributeError:
+    match = _TASK_DECLARATION.search(source)
+    if match is None:
         return
-    if declared_task is None:
-        return
-    task_name = InputParameters.is_task_name(declared_task)
-    if not task_name:
-        raise ValueError(f"Unknown SPR-KKR task {declared_task!r}")
-    task = InputParameters.task_registry[task_name]
-    actual_schema = task.input_parameters_definition_name
+
+    declared = match.group(1).upper()
+    if declared in InputParameters.definitions:
+        actual_schema = declared
+    else:
+        task_name = InputParameters.is_task_name(declared)
+        if not task_name:
+            raise ValueError(f"Unknown SPR-KKR task {declared!r}")
+        actual_schema = InputParameters.task_registry[
+            task_name
+        ].input_parameters_definition_name
+
     if actual_schema != expected_schema:
         raise ValueError(
-            f"Input text declares task {task.name}, which uses {actual_schema} "
+            f"Input text declares {declared}, which uses {actual_schema} "
             f"input parameters instead of {expected_schema}."
         )
 
@@ -87,14 +98,15 @@ class InputFileEditor(QDialog):
         """Parse and validate a candidate, then publish it through the callback."""
         self._clear_error()
         candidate = self._parameters.copy(copy_values=True)
+        source = self.editor.toPlainText()
         try:
-            # Parse with the current schema, then validate values that are
-            # actually present in the edited input. Full calculation readiness
-            # is a later boundary: a text editor must not require e.g. POTFIL
-            # merely to edit otherwise valid SCF defaults.
-            candidate.read_from_file(StringIO(self.editor.toPlainText()))
+            # Validate the declared schema before the current schema's fixed
+            # TASK value can normalize it away, then parse and validate only
+            # values actually present in the edited input. Full calculation
+            # readiness is a later boundary (e.g. POTFIL need not be set here).
             expected_schema = self._parameters.definition_name.upper()
-            _require_declared_task_schema(candidate, expected_schema)
+            _require_declared_task_schema(source, expected_schema)
+            candidate.read_from_file(StringIO(source))
             candidate.validate(why="set")
         except Exception as error:
             self._show_error(error)
