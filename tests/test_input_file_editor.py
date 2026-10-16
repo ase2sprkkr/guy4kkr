@@ -52,12 +52,23 @@ def test_parse_error_highlights_suspected_line_and_keeps_draft(application):
     assert editor.parameters.SCF.NITER() == 135
 
 
-def test_different_task_is_rejected(application):
+def test_different_schema_task_is_rejected(application):
     editor = InputFileEditor(InputParameters.create("scf"))
     editor.editor.setPlainText(InputParameters.create("dos").to_string(validate=False))
     editor.accept()
     assert editor.parameters is None
     assert editor.error_label.text()
+
+
+def test_shared_schema_task_change_is_accepted(application):
+    editor = InputFileEditor(InputParameters.create("arpes"))
+    editor.editor.setPlainText(
+        InputParameters.create("spleed").to_string(validate=False)
+    )
+    editor.accept()
+    assert editor.result() == QDialog.DialogCode.Accepted
+    assert editor.parameters.task_name == "SPLEED"
+    assert editor.parameters.definition_name == "ARPES"
 
 
 def test_text_edit_is_one_undoable_session_change(application, monkeypatch):
