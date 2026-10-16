@@ -62,12 +62,12 @@ class InputFileEditor(QDialog):
         self._clear_error()
         candidate = self._parameters.copy(copy_values=True)
         try:
-            # The instance reader uses the current schema's grammar and already
-            # exposes pyparsing exceptions, including line/column information.
-            # Validation is still required: parsing alone may accept a keyword
-            # that belongs to a different task (for example TASK=DOS in SCF).
+            # Parse with the current schema, then validate values that are
+            # actually present in the edited input. Full calculation readiness
+            # is a later boundary: a text editor must not require e.g. POTFIL
+            # merely to edit otherwise valid SCF defaults.
             candidate.read_from_file(StringIO(self.editor.toPlainText()))
-            candidate.validate()
+            candidate.validate(why="set")
         except Exception as error:
             self._show_error(error)
             return
