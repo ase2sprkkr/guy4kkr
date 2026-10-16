@@ -38,6 +38,11 @@ def kk_parameters():
     return parameters
 
 
+def read_bsf(path, task):
+    definition = InputParameters.task_registry[task]
+    return InputParameters.input_parameters_registry.read_for_task(definition, path)
+
+
 @pytest.mark.parametrize("selected", [False, True])
 def test_kpath_editor_parent_and_atomic_history(application, monkeypatch, selected):
     import ase2sprkkr.gui.k_path as k_path_module
@@ -188,7 +193,7 @@ def test_bsf_serializes_and_reloads_without_wrong_mode_keywords(application, fac
         filename = tmp_path / f"Fe_BSF_{mode}.inp"
         result.save_to_file(str(filename))
         text = filename.read_text()
-        loaded = InputParameters.from_file(str(filename))
+        loaded = read_bsf(filename, "BSFEK" if mode == "EK" else "BSFKK")
         assert bsf_mode(loaded) == mode
         if mode == "KK":
             assert "NK1=" in text and "NK2=" in text and "K1=" in text and "K2=" in text
@@ -254,7 +259,7 @@ def test_keyword_path_selection_roundtrip_and_undo(application, path, tmp_path):
     result.CONTROL.POTFIL.set("Fe.pot")
     filename = tmp_path / "Fe_BSF.inp"
     result.save_to_file(str(filename))
-    assert InputParameters.from_file(str(filename)).TASK.KPATH() == path
+    assert read_bsf(filename, "BSFEK").TASK.KPATH() == path
     dialog.session.undo_stack.undo()
     application.processEvents()
     assert quick.control.path_combo.currentData() is None
@@ -355,7 +360,7 @@ def test_bsf_vector_cells_and_cpa_roundtrip(application, tmp_path):
     parameters.CONTROL.POTFIL.set("Fe.pot")
     filename = tmp_path / "Fe_BSF.inp"
     parameters.save_to_file(str(filename))
-    loaded = InputParameters.from_file(str(filename))
+    loaded = read_bsf(filename, "BSFKK")
     assert loaded.CPA.NITER() == 40 and loaded.CPA.TOL() == 1e-6
     np.testing.assert_array_equal(loaded.TASK.K1(), [1., .5, 0.])
     assert dialog._commit_pending()
