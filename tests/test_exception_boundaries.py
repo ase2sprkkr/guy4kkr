@@ -31,9 +31,9 @@ def test_load_reports_parser_error(monkeypatch, tmp_path, application):
     session = create_input_parameters_session(InputParameters.create("scf"))
     messages = []
     monkeypatch.setattr(
-        input_parameter_flows.InputParameters,
-        "from_file",
-        lambda _path: _raise(RuntimeError("broken input")),
+        input_parameter_flows,
+        "_read_for_task_family",
+        lambda _path, _tasks: _raise(RuntimeError("broken input")),
     )
     monkeypatch.setattr(
         input_parameter_flows.QMessageBox,
@@ -51,9 +51,9 @@ def test_load_does_not_hide_session_error(monkeypatch, tmp_path, application):
     session = create_input_parameters_session(InputParameters.create("scf"))
     parameters = InputParameters.create("scf")
     monkeypatch.setattr(
-        input_parameter_flows.InputParameters,
-        "from_file",
-        lambda _path: parameters,
+        input_parameter_flows,
+        "_read_for_task_family",
+        lambda _path, _tasks: parameters,
     )
     monkeypatch.setattr(
         session,
@@ -67,14 +67,14 @@ def test_load_does_not_hide_session_error(monkeypatch, tmp_path, application):
         )
 
 
-def test_wrong_task_is_a_user_facing_load_error(
+def test_wrong_schema_is_a_user_facing_load_error(
     monkeypatch, tmp_path, application
 ):
     session = create_input_parameters_session(InputParameters.create("scf"))
     monkeypatch.setattr(
-        input_parameter_flows.InputParameters,
-        "from_file",
-        lambda _path: InputParameters.create("dos"),
+        input_parameter_flows,
+        "_read_for_task_family",
+        lambda _path, _tasks: InputParameters.create("dos"),
     )
     messages = []
     monkeypatch.setattr(
@@ -86,7 +86,35 @@ def test_wrong_task_is_a_user_facing_load_error(
     assert not input_parameter_flows.load_input_parameters(
         session, tmp_path / "dos.inp", None
     )
-    assert "Expected SCF input parameters, got DOS." in messages[0]
+    assert "Expected SCF input schema, got DOS." in messages[0]
+
+
+def test_task_registry_error_is_not_misreported_as_input_error(
+    monkeypatch, tmp_path, application
+):
+    session = create_input_parameters_session(InputParameters.create("scf"))
+    messages = []
+    monkeypatch.setattr(
+        input_parameter_flows.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    class BrokenRegistry:
+        def __getitem__(self, _name):
+            raise RuntimeError("task registry invariant")
+
+    monkeypatch.setattr(
+        input_parameter_flows.InputParameters,
+        "task_registry",
+        BrokenRegistry(),
+    )
+
+    with pytest.raises(RuntimeError, match="task registry invariant"):
+        input_parameter_flows.load_input_parameters(
+            session, tmp_path / "valid.inp", None
+        )
+    assert messages == []
 
 
 def test_text_editor_flow_does_not_hide_dialog_error(monkeypatch, application):
