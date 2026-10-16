@@ -58,6 +58,7 @@ class _Source:
     supports_refresh = True
     supports_results = True
     supports_attach = True
+    supports_retry_finalization = False
     supports_result_file_check = False
 
     def __init__(self, jobs):
@@ -301,6 +302,7 @@ def test_unavailable_backend_is_an_empty_nonfatal_history():
         supports_refresh = False
         supports_results = False
         supports_attach = False
+        supports_retry_finalization = False
         supports_result_file_check = False
 
     dialog = _dialog(Source(()))
