@@ -5,6 +5,10 @@ on:
     branches:
       - 'chatgpt-diagnostic-targeted'
 
+concurrency:
+  group: targeted-diagnostics
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -40,7 +44,7 @@ jobs:
           python -m pip install -e . pytest
       - name: Run targeted tests
         run: >-
-          python -m pytest -q
+          timeout 180 python -m pytest -vv
           tests/test_bsf_calculation_setup.py
           tests/test_exception_boundaries.py
           tests/test_input_parameter_flows.py
