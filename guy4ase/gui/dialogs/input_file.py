@@ -2,6 +2,7 @@
 import re
 from io import StringIO
 
+from ase2sprkkr import InputParameters
 from pyparsing import ParseBaseException
 from PyQt6.QtGui import QFontDatabase, QTextCursor, QTextFormat
 from PyQt6.QtWidgets import (
@@ -12,6 +13,31 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
 )
+
+
+def _require_declared_task_schema(parameters, expected_schema):
+    """Reject a TASK declaration belonging to another input schema.
+
+    Shared schemas deliberately allow the effective task to change (for
+    example ARPES/SPLEED). The boundary is therefore the input schema, not the
+    current effective task.
+    """
+    try:
+        declared_task = parameters.TASK.TASK()
+    except AttributeError:
+        return
+    if declared_task is None:
+        return
+    task_name = InputParameters.is_task_name(declared_task)
+    if not task_name:
+        raise ValueError(f"Unknown SPR-KKR task {declared_task!r}")
+    task = InputParameters.task_registry[task_name]
+    actual_schema = task.input_parameters_definition_name
+    if actual_schema != expected_schema:
+        raise ValueError(
+            f"Input text declares task {task.name}, which uses {actual_schema} "
+            f"input parameters instead of {expected_schema}."
+        )
 
 
 class InputFileEditor(QDialog):
@@ -67,6 +93,8 @@ class InputFileEditor(QDialog):
             # is a later boundary: a text editor must not require e.g. POTFIL
             # merely to edit otherwise valid SCF defaults.
             candidate.read_from_file(StringIO(self.editor.toPlainText()))
+            expected_schema = self._parameters.definition_name.upper()
+            _require_declared_task_schema(candidate, expected_schema)
             candidate.validate(why="set")
         except Exception as error:
             self._show_error(error)
