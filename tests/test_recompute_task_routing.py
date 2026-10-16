@@ -71,8 +71,9 @@ def test_non_guided_result_recompute_uses_expert_editor(monkeypatch):
     )]
 
 
-def test_recompute_routes_editor_by_requested_input_task(monkeypatch):
+def test_recompute_routes_shared_backend_task_to_guided_family(monkeypatch):
     historical = InputParameters.create("ARPES")
+    historical.TASK.TASK = "SPLEED"
     edited = historical.copy(copy_values=True)
     record = SimpleNamespace(
         task_name="spleed",
@@ -108,7 +109,7 @@ def test_recompute_routes_editor_by_requested_input_task(monkeypatch):
         calculation_flow,
         "edit_input_parameters",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("requested ARPES must use the Guided editor")
+            AssertionError("SPLEED must use the shared ARPES Guided editor")
         ),
     )
     monkeypatch.setattr(
@@ -137,9 +138,10 @@ def test_recompute_routes_editor_by_requested_input_task(monkeypatch):
     assert result is launched
     assert len(dialog_calls) == 1
     task, dialog_parameters, dialog_parent, dialog_atoms = dialog_calls[0]
-    assert task.lower() == "arpes"
+    assert task.lower() == "spleed"
     assert dialog_parameters is not historical
-    assert dialog_parameters.task_name.lower() == "arpes"
+    assert dialog_parameters.definition_name.lower() == "arpes"
+    assert dialog_parameters.task_name.lower() == "spleed"
     assert dialog_parent is parent
     assert dialog_atoms is controller.atoms
     assert replacements == [(edited, controller.generation)]
