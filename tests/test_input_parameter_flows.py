@@ -27,9 +27,9 @@ def test_load_input_parameters_is_one_named_session_transaction(
     path = tmp_path / "loaded.inp"
     path.write_text("not parsed because the reader is stubbed")
     monkeypatch.setattr(
-        input_parameter_flows.InputParameters,
-        "from_file",
-        lambda _path: parameters,
+        input_parameter_flows,
+        "_read_for_task_family",
+        lambda _path, _tasks: parameters,
     )
 
     assert input_parameter_flows.load_input_parameters(session, path, None)
@@ -63,17 +63,14 @@ def test_load_input_parameters_accepts_parsed_compatible_task_family(tmp_path):
     path = tmp_path / "plane.inp"
     plane.save_to_file(path)
 
-    detected = InputParameters.from_file(path)
-    assert detected.task_name is None
-    assert detected.task_definition.name.lower() == "bsfkk"
-
     assert input_parameter_flows.load_input_parameters(
         session,
         path,
         None,
         compatible_tasks=("bsfek", "bsfkk"),
     )
-    assert session.task_name.lower() == "bsfek"
+    assert session.task_name.lower() == "bsfkk"
+    assert session.working_parameters.definition_name.lower() == "bsf"
     assert session.working_parameters.task_definition.name.lower() == "bsfkk"
 
     session.undo_stack.undo()
