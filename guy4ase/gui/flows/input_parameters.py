@@ -46,6 +46,20 @@ def _load_error(parent: QWidget | None, exception: Exception | str) -> bool:
     return False
 
 
+def _read_for_task_family(path: Path, task_names: Iterable[str]):
+    """Read *path* using only the explicitly accepted backend task family."""
+    last_error = None
+    for task_name in dict.fromkeys(str(task).upper() for task in task_names):
+        try:
+            task = InputParameters.task_registry[task_name]
+            return InputParameters.input_parameters_registry.read_for_task(task, path)
+        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
+            last_error = exc
+    if last_error is None:
+        raise ValueError("No compatible input-parameter tasks were supplied")
+    raise last_error
+
+
 def load_input_parameters(
     session: InputParametersSession,
     file_path: str | Path,
@@ -55,42 +69,20 @@ def load_input_parameters(
 ) -> bool:
     """Parse an input file and install it without leaking editor-family policy."""
     path = Path(file_path).resolve()
+    accepted_tasks = (session.task_name, *compatible_tasks)
     try:
-        parameters = InputParameters.from_file(path)
+        parameters = _read_for_task_family(path, accepted_tasks)
     except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
         return _load_error(parent, exc)
 
-    expected_task = session.task_name.lower()
-    allowed = {expected_task, *(str(task).lower() for task in compatible_tasks)}
-    effective_task = parameters.task_definition
-    actual_task = (
-        effective_task.name.lower()
-        if effective_task is not None
-        else parameters.task_name.lower()
-    )
-    if actual_task not in allowed:
-        expected = "/".join(sorted(task.upper() for task in allowed))
-        return _load_error(
-            parent,
-            f"Expected {expected} input parameters, got {actual_task.upper()}.",
+    try:
+        session.replace_parameters(
+            parameters,
+            text=f"Load {path.name}",
+            source_page="load",
         )
-
-    # A Guided family may expose multiple concrete backend tasks backed by one
-    # schema (currently BSFEK/BSFKK).  Keep the session's originally selected
-    # task view, exactly as an in-dialog mode switch does; ASE2SPRKKR derives the
-    # effective TaskDefinition from the loaded values.
-    if actual_task != expected_task:
-        try:
-            parameters = InputParameters.create(session.task_name)
-            parameters.read_from_file(path)
-        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
-            return _load_error(parent, exc)
-
-    session.replace_parameters(
-        parameters,
-        text=f"Load {path.name}",
-        source_page="load",
-    )
+    except ValueError as exc:
+        return _load_error(parent, exc)
     return True
 
 
