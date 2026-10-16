@@ -13,6 +13,10 @@ from guy4ase.gui.input_parameters.session import InputParametersSession
 _INPUT_FILE_FILTER = "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
 
 
+class InputParametersLoadError(RuntimeError):
+    """A user input file could not be parsed as any accepted backend task."""
+
+
 def choose_and_load_input_parameters(
     session: InputParametersSession,
     parent: QWidget | None,
@@ -47,12 +51,14 @@ def _load_error(parent: QWidget | None, exception: Exception | str) -> bool:
 
 
 def _read_for_task_family(path: Path, task_names: Iterable[str]):
-    """Read *path* using only the explicitly accepted backend task family."""
+    """Read *path* using only the explicitly accepted backend task family.
+
+    Backend parsers expose heterogeneous exception types, so parse failures are
+    normalized here. Resolving a declared task happens outside that boundary:
+    registry/configuration errors are programming errors and must propagate.
+    """
     last_error = None
     for task_name in dict.fromkeys(str(task).upper() for task in task_names):
-        # Resolving a declared task is application configuration, not parsing.
-        # Let registry/configuration failures propagate instead of presenting
-        # them as malformed user input.
         task = InputParameters.task_registry[task_name]
         try:
             return InputParameters.input_parameters_registry.read_for_task(task, path)
@@ -60,7 +66,7 @@ def _read_for_task_family(path: Path, task_names: Iterable[str]):
             last_error = exc
     if last_error is None:
         raise ValueError("No compatible input-parameter tasks were supplied")
-    raise last_error
+    raise InputParametersLoadError(str(last_error)) from last_error
 
 
 def load_input_parameters(
@@ -75,7 +81,7 @@ def load_input_parameters(
     accepted_tasks = (session.task_name, *compatible_tasks)
     try:
         parameters = _read_for_task_family(path, accepted_tasks)
-    except Exception as exc:  # noqa: BLE001 - backend parser errors are heterogeneous.
+    except InputParametersLoadError as exc:
         return _load_error(parent, exc)
 
     expected_schema = session.working_parameters.definition_name.upper()
