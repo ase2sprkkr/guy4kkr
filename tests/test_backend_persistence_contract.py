@@ -21,7 +21,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     monkeypatch,
     tmp_path,
 ):
-    """Keep requested/effective task semantics intact across both packages."""
+    """Keep effective task and input-schema identity intact across both packages."""
     parameters = InputParameters.create("ARPES")
     parameters.TASK.TASK = "SPLEED"
     parameters.CONTROL.DATASET = "contract"
@@ -36,7 +36,6 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     run = manager.new_record(
         task="SPLEED",
         input_definition="ARPES",
-        requested_task="ARPES",
         directory=tmp_path,
         result_files=ResultFilesRecord(
             input_file=str(input_path),
@@ -95,11 +94,11 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     assert resolved_tasks[0].name == "SPLEED"
     assert resolved_tasks[0].input_parameters_definition_name == "ARPES"
     assert loaded.task_name.lower() == "spleed"
-    assert loaded.input_parameters.task_name.upper() == "ARPES"
+    assert loaded.input_parameters.definition_name.upper() == "ARPES"
+    assert loaded.input_parameters.task_name.upper() == "SPLEED"
     assert loaded.input_parameters.task_definition.name.upper() == "SPLEED"
     assert loaded.run_record.task == "SPLEED"
     assert loaded.run_record.input_definition == "ARPES"
-    assert loaded.run_record.requested_task == "ARPES"
 
     history = ResultStore()
     record = history.add_external_result(
@@ -113,7 +112,8 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     )
 
     assert record.task_name == "spleed"
-    assert record.input_parameters.task_name.upper() == "ARPES"
+    assert record.input_parameters.definition_name.upper() == "ARPES"
+    assert record.input_parameters.task_name.upper() == "SPLEED"
     assert record.input_parameters.task_definition.name.upper() == "SPLEED"
 
     edited = record.input_parameters.copy(copy_values=True)
@@ -147,7 +147,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
         calculation_flow,
         "edit_input_parameters",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("requested ARPES must use the Guided editor")
+            AssertionError("SPLEED must use the shared ARPES Guided editor")
         ),
     )
     monkeypatch.setattr(
@@ -172,7 +172,8 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     assert result is launched
     assert len(dialog_calls) == 1
     task, dialog_parameters, _parent, _atoms = dialog_calls[0]
-    assert task.lower() == "arpes"
-    assert dialog_parameters.task_name.upper() == "ARPES"
+    assert task.lower() == "spleed"
+    assert dialog_parameters.definition_name.upper() == "ARPES"
+    assert dialog_parameters.task_name.upper() == "SPLEED"
     assert dialog_parameters.task_definition.name.upper() == "SPLEED"
     assert replacements == [(edited, controller.generation)]
