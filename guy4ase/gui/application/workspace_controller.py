@@ -379,17 +379,6 @@ class WorkspaceController(QObject):
         a write barrier. Results finishing from an older state remain in their
         original branch and can become active only through an explicit action.
         """
-        produces_potential = loaded.result.produces_potential
-        output_atoms = (
-            loaded.atoms
-            if produces_potential and loaded.atoms is not None
-            else None
-        )
-        output_potential_path = (
-            str(loaded.potential_path)
-            if produces_potential and loaded.potential_path is not None
-            else None
-        )
         record = self._results.add_result(
             loaded.result,
             structure_id=request.structure_id,
@@ -400,27 +389,30 @@ class WorkspaceController(QObject):
             restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
-            output_atoms=output_atoms,
-            output_potential_path=output_potential_path,
+            output_atoms=loaded.atoms,
+            output_potential_path=(
+                str(loaded.potential_path)
+                if loaded.potential_path is not None
+                else None
+            ),
         )
 
         workspace_updated = False
         if (
-            produces_potential
-            and output_atoms is not None
+            loaded.atoms is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
             and request.state_id == self._workspace.state_id
         ):
             state = self._results.state(record.output_state_id)
-            self._workspace.atoms = output_atoms
+            self._workspace.atoms = loaded.atoms
             self._workspace.potential_path = state.potential_path
             self._workspace.empty_spheres = state.empty_spheres
             self._workspace.state_id = state.id
             self._workspace.restarted = False
             self._changed()
             workspace_updated = True
-            self.structureChanged.emit(output_atoms)
+            self.structureChanged.emit(loaded.atoms)
 
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(
