@@ -28,8 +28,8 @@ def test_load_input_parameters_is_one_named_session_transaction(
     path.write_text("not parsed because the reader is stubbed")
     monkeypatch.setattr(
         input_parameter_flows,
-        "_read_for_task_family",
-        lambda _path, _tasks: parameters,
+        "_read_for_schema",
+        lambda _path, _schema: parameters,
     )
 
     assert input_parameter_flows.load_input_parameters(session, path, None)
