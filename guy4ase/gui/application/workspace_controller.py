@@ -54,16 +54,6 @@ class WorkspaceConflict:
     current_generation: Generation
 
 
-@dataclass(frozen=True)
-class WorkspaceGenerations:
-    """Snapshot of the independently revisioned workspace values."""
-
-    structure: Generation
-    input_parameters: Generation
-    directory: Generation
-    active_project: Generation
-
-
 ConflictResolver = Callable[[tuple[WorkspaceConflict, ...]], bool]
 
 
@@ -203,21 +193,6 @@ class WorkspaceController(QObject):
         return self._workspace.context.active_project_id.generation
 
     @property
-    def generations(self) -> WorkspaceGenerations:
-        """Return one consistent snapshot for a potentially multi-value operation."""
-        return WorkspaceGenerations(
-            structure=self.structure_generation,
-            input_parameters=self.input_parameters_generation,
-            directory=self.directory_generation,
-            active_project=self.active_project_generation,
-        )
-
-    @property
-    def generation(self) -> WorkspaceGenerations:
-        """Return the composite revision snapshot used by workspace operations."""
-        return self.generations
-
-    @property
     def result(self) -> Any | None:
         """Return the latest result attached to the active workspace state."""
         record = self._results.latest_result_for_state(self.state_id)
@@ -305,14 +280,6 @@ class WorkspaceController(QObject):
         )
 
     @staticmethod
-    def _expected(
-        generations: WorkspaceGenerations | None, component: str
-    ) -> Generation | None:
-        if generations is None:
-            return None
-        return getattr(generations, component)
-
-    @staticmethod
     def _conflict(
         component: str,
         locked: OptimisticLocked[Any],
@@ -335,18 +302,32 @@ class WorkspaceController(QObject):
         The bool result says that the user explicitly approved overwriting a
         newer value, so the caller must commit with ``force_change``.
         """
-        conflicts = tuple(
-            conflict
-            for component, locked, expected in checks
-            if (conflict := self._conflict(component, locked, expected)) is not None
-        )
-        if not conflicts:
-            return None, False
-        if self._conflict_resolver is None:
-            return DocumentChange.STALE, False
-        if not self._conflict_resolver(conflicts):
-            return DocumentChange.CANCELLED, False
-        return None, True
+        while True:
+            conflicts = tuple(
+                conflict
+                for component, locked, expected in checks
+                if (conflict := self._conflict(component, locked, expected)) is not None
+            )
+            if not conflicts:
+                return None, False
+            if self._conflict_resolver is None:
+                return DocumentChange.STALE, False
+
+            displayed = {
+                component: locked.generation
+                for component, locked, _expected in checks
+            }
+            if not self._conflict_resolver(conflicts):
+                return DocumentChange.CANCELLED, False
+
+            # A Qt resolver may run a nested event loop. If the workspace changed
+            # again while the confirmation dialog was open, the user has not seen
+            # that newer conflict yet; ask again instead of force-overwriting it.
+            if all(
+                locked.generation == displayed[component]
+                for component, locked, _expected in checks
+            ):
+                return None, True
 
     @staticmethod
     def _commit_locked(
@@ -368,18 +349,21 @@ class WorkspaceController(QObject):
         *,
         potential_path: str | None = None,
         directory: Any = _KEEP_DIRECTORY,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_structure_generation: Generation | None = None,
+        expected_directory_generation: Generation | None = None,
         restarted: bool = False,
     ) -> DocumentChange:
-        expected_structure = self._expected(expected_generation, "structure")
-        expected_directory = self._expected(expected_generation, "directory")
-        checks = [("structure", self._workspace.structure, expected_structure)]
+        checks = [(
+            "structure",
+            self._workspace.structure,
+            expected_structure_generation,
+        )]
         if directory is not _KEEP_DIRECTORY:
             checks.append(
                 (
                     "working directory",
                     self._workspace.context.directory,
-                    expected_directory,
+                    expected_directory_generation,
                 )
             )
         rejected, force = self._prepare_change(tuple(checks))
@@ -405,7 +389,7 @@ class WorkspaceController(QObject):
         self._commit_locked(
             self._workspace.structure,
             structure,
-            expected_generation=expected_structure,
+            expected_generation=expected_structure_generation,
             force=force,
         )
 
@@ -415,7 +399,7 @@ class WorkspaceController(QObject):
             self._commit_locked(
                 self._workspace.context.directory,
                 directory,
-                expected_generation=expected_directory,
+                expected_generation=expected_directory_generation,
                 force=force,
             )
         if directory_changed:
@@ -427,10 +411,14 @@ class WorkspaceController(QObject):
         self,
         edit: Callable[[Any], Any],
         *,
-        expected_generation: WorkspaceGenerations,
+        expected_structure_generation: Generation,
     ) -> DocumentChange | None:
         rejected, _ = self._prepare_change(
-            (("structure", self._workspace.structure, expected_generation.structure),)
+            ((
+                "structure",
+                self._workspace.structure,
+                expected_structure_generation,
+            ),)
         )
         if rejected is not None:
             return rejected
@@ -476,20 +464,27 @@ class WorkspaceController(QObject):
         parameters: Any,
         *,
         directory: Any = _KEEP_DIRECTORY,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_input_parameters_generation: Generation | None = None,
+        expected_structure_generation: Generation | None = None,
+        expected_directory_generation: Generation | None = None,
     ) -> DocumentChange:
-        expected_input = self._expected(expected_generation, "input_parameters")
-        expected_structure = self._expected(expected_generation, "structure")
-        expected_directory = self._expected(expected_generation, "directory")
-        checks = [("input parameters", self._workspace.input_parameters, expected_input)]
-        if expected_structure is not None:
-            checks.append(("structure", self._workspace.structure, expected_structure))
+        checks = [(
+            "input parameters",
+            self._workspace.input_parameters,
+            expected_input_parameters_generation,
+        )]
+        if expected_structure_generation is not None:
+            checks.append((
+                "structure",
+                self._workspace.structure,
+                expected_structure_generation,
+            ))
         if directory is not _KEEP_DIRECTORY:
             checks.append(
                 (
                     "working directory",
                     self._workspace.context.directory,
-                    expected_directory,
+                    expected_directory_generation,
                 )
             )
         rejected, force = self._prepare_change(tuple(checks))
@@ -499,7 +494,7 @@ class WorkspaceController(QObject):
         self._commit_locked(
             self._workspace.input_parameters,
             parameters,
-            expected_generation=expected_input,
+            expected_generation=expected_input_parameters_generation,
             force=force,
         )
         directory_changed = False
@@ -508,7 +503,7 @@ class WorkspaceController(QObject):
             self._commit_locked(
                 self._workspace.context.directory,
                 directory,
-                expected_generation=expected_directory,
+                expected_generation=expected_directory_generation,
                 force=force,
             )
         if directory_changed:
@@ -520,20 +515,23 @@ class WorkspaceController(QObject):
         self,
         directory: str | None,
         *,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_directory_generation: Generation | None = None,
     ) -> DocumentChange:
         if directory == self.directory:
             return DocumentChange.APPLIED
-        expected = self._expected(expected_generation, "directory")
         rejected, force = self._prepare_change(
-            (("working directory", self._workspace.context.directory, expected),)
+            ((
+                "working directory",
+                self._workspace.context.directory,
+                expected_directory_generation,
+            ),)
         )
         if rejected is not None:
             return rejected
         self._commit_locked(
             self._workspace.context.directory,
             directory,
-            expected_generation=expected,
+            expected_generation=expected_directory_generation,
             force=force,
         )
         self.directoryChanged.emit(directory)
@@ -543,20 +541,23 @@ class WorkspaceController(QObject):
         self,
         project_id: str | None,
         *,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_active_project_generation: Generation | None = None,
     ) -> DocumentChange:
         if project_id == self.active_project_id:
             return DocumentChange.APPLIED
-        expected = self._expected(expected_generation, "active_project")
         rejected, force = self._prepare_change(
-            (("active project", self._workspace.context.active_project_id, expected),)
+            ((
+                "active project",
+                self._workspace.context.active_project_id,
+                expected_active_project_generation,
+            ),)
         )
         if rejected is not None:
             return rejected
         self._commit_locked(
             self._workspace.context.active_project_id,
             project_id,
-            expected_generation=expected,
+            expected_generation=expected_active_project_generation,
             force=force,
         )
         self.activeProjectChanged.emit(project_id)
@@ -606,6 +607,17 @@ class WorkspaceController(QObject):
         request: CalculationRequest,
     ) -> ResultAdoption:
         """Record a launched result against its exact captured provenance."""
+        produces_potential = loaded.result.produces_potential
+        output_atoms = (
+            loaded.atoms
+            if produces_potential and loaded.atoms is not None
+            else None
+        )
+        output_potential_path = (
+            str(loaded.potential_path)
+            if produces_potential and loaded.potential_path is not None
+            else None
+        )
         record = self._results.add_result(
             loaded.result,
             structure_id=request.structure_id,
@@ -616,18 +628,15 @@ class WorkspaceController(QObject):
             restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
-            output_atoms=loaded.atoms,
-            output_potential_path=(
-                str(loaded.potential_path)
-                if loaded.potential_path is not None
-                else None
-            ),
+            output_atoms=output_atoms,
+            output_potential_path=output_potential_path,
         )
 
         workspace_updated = False
         current = self.structure_state
         if (
-            loaded.atoms is not None
+            produces_potential
+            and output_atoms is not None
             and record.output_state_id is not None
             and request.structure_id == current.structure_id
             and request.state_id == current.state_id
@@ -635,7 +644,7 @@ class WorkspaceController(QObject):
             state = self._results.state(record.output_state_id)
             self._workspace.structure.force_change(
                 StructureState(
-                    atoms=loaded.atoms,
+                    atoms=output_atoms,
                     potential_path=state.potential_path,
                     structure_id=state.structure_id,
                     state_id=state.id,
@@ -644,7 +653,7 @@ class WorkspaceController(QObject):
                 )
             )
             workspace_updated = True
-            self.structureChanged.emit(loaded.atoms)
+            self.structureChanged.emit(output_atoms)
 
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(
@@ -658,13 +667,13 @@ class WorkspaceController(QObject):
         result_id: int,
         expected_potential: PotentialFileVersion | None = None,
         *,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_structure_generation: Generation | None = None,
     ) -> DocumentChange:
         rejected, _ = self._prepare_change(
             ((
                 "structure",
                 self._workspace.structure,
-                self._expected(expected_generation, "structure"),
+                expected_structure_generation,
             ),)
         )
         if rejected is not None:
@@ -742,14 +751,14 @@ class WorkspaceController(QObject):
         *,
         result_id: int | None = None,
         expected_potential: PotentialFileVersion | None = None,
-        expected_generation: WorkspaceGenerations | None = None,
+        expected_structure_generation: Generation | None = None,
     ) -> DocumentChange:
         """Create one new calculation branch from active or historical state."""
         rejected, _ = self._prepare_change(
             ((
                 "structure",
                 self._workspace.structure,
-                self._expected(expected_generation, "structure"),
+                expected_structure_generation,
             ),)
         )
         if rejected is not None:
@@ -817,11 +826,15 @@ class WorkspaceController(QObject):
         self,
         edit: Callable[[Any, int], tuple[Any, int, bool]],
         *,
-        expected_generation: WorkspaceGenerations,
+        expected_structure_generation: Generation,
         parameters: Mapping[str, Any] | None = None,
     ) -> DocumentChange:
         rejected, _ = self._prepare_change(
-            (("structure", self._workspace.structure, expected_generation.structure),)
+            ((
+                "structure",
+                self._workspace.structure,
+                expected_structure_generation,
+            ),)
         )
         if rejected is not None:
             return rejected
