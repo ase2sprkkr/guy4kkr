@@ -1,4 +1,4 @@
-"""Transactional text editing of a task's SPRKKR input file."""
+"""Transactional text editing of a task's SPR-KKR input file."""
 import re
 from io import StringIO
 
@@ -24,26 +24,17 @@ _TASK_DECLARATION = re.compile(
 def _require_declared_task_schema(source: str, expected_schema: str) -> None:
     """Reject a TASK declaration belonging to another input schema.
 
-    SPR-KKR input files declare their task as ``TASK <name>``.  The name can
-    itself be a schema identifier (notably ``BSF``) or a registered task
-    (notably ``SPLEED``).  Backend registries remain authoritative for mapping
-    either form to its input schema.
+    SPR-KKR input files declare their task as ``TASK <name>``. The backend's
+    public ``definition`` resolver accepts both schema names (such as ``BSF``)
+    and concrete task names (such as ``SPLEED``), so task knowledge stays in
+    ase2sprkkr rather than being duplicated here.
     """
     match = _TASK_DECLARATION.search(source)
     if match is None:
         return
 
     declared = match.group(1).upper()
-    if declared in InputParameters.definitions:
-        actual_schema = declared
-    else:
-        task_name = InputParameters.is_task_name(declared)
-        if not task_name:
-            raise ValueError(f"Unknown SPR-KKR task {declared!r}")
-        actual_schema = InputParameters.task_registry[
-            task_name
-        ].input_parameters_definition_name
-
+    actual_schema = InputParameters.definition(declared).name.upper()
     if actual_schema != expected_schema:
         raise ValueError(
             f"Input text declares {declared}, which uses {actual_schema} "
