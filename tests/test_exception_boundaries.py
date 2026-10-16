@@ -32,8 +32,8 @@ def test_load_reports_parser_error(monkeypatch, tmp_path, application):
     messages = []
     monkeypatch.setattr(
         input_parameter_flows,
-        "_read_for_task_family",
-        lambda _path, _tasks: _raise(
+        "_read_for_schema",
+        lambda _path, _schema: _raise(
             input_parameter_flows.InputParametersLoadError("broken input")
         ),
     )
@@ -54,8 +54,8 @@ def test_load_does_not_hide_session_error(monkeypatch, tmp_path, application):
     parameters = InputParameters.create("scf")
     monkeypatch.setattr(
         input_parameter_flows,
-        "_read_for_task_family",
-        lambda _path, _tasks: parameters,
+        "_read_for_schema",
+        lambda _path, _schema: parameters,
     )
     monkeypatch.setattr(
         session,
@@ -75,8 +75,8 @@ def test_wrong_schema_is_a_user_facing_load_error(
     session = create_input_parameters_session(InputParameters.create("scf"))
     monkeypatch.setattr(
         input_parameter_flows,
-        "_read_for_task_family",
-        lambda _path, _tasks: InputParameters.create("dos"),
+        "_read_for_schema",
+        lambda _path, _schema: InputParameters.create("dos"),
     )
     messages = []
     monkeypatch.setattr(
@@ -98,8 +98,8 @@ def test_untyped_loader_error_is_not_misreported_as_input_error(
     messages = []
     monkeypatch.setattr(
         input_parameter_flows,
-        "_read_for_task_family",
-        lambda _path, _tasks: _raise(RuntimeError("task registry invariant")),
+        "_read_for_schema",
+        lambda _path, _schema: _raise(RuntimeError("schema registry invariant")),
     )
     monkeypatch.setattr(
         input_parameter_flows.QMessageBox,
@@ -107,7 +107,7 @@ def test_untyped_loader_error_is_not_misreported_as_input_error(
         lambda _parent, _title, text: messages.append(text),
     )
 
-    with pytest.raises(RuntimeError, match="task registry invariant"):
+    with pytest.raises(RuntimeError, match="schema registry invariant"):
         input_parameter_flows.load_input_parameters(
             session, tmp_path / "valid.inp", None
         )
