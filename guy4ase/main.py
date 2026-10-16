@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from ase2sprkkr.execution import (
     ExecutionManager,
     ProjectRepository,
-    ProjectRepositoryError,
 )
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
@@ -184,11 +183,6 @@ class GuiApplication(QObject):
 
     def set_active_project(self, project_id: str | None) -> None:
         """Select the project that receives subsequently created persistent runs."""
-        if project_id is not None:
-            try:
-                project_id = self.projects.project(str(project_id)).id
-            except (KeyError, ProjectRepositoryError, ValueError):
-                project_id = None
         self._active_project_id = project_id
         if self._project_browser is not None:
             self._project_browser.set_active_project(project_id)
