@@ -91,6 +91,7 @@ _TASKS = (
             "Angle-resolved photoemission spectroscopy",
             WorkflowStage.POST_SCF,
         ),
+        compatible_backend_tasks=("aipes", "spleed", "band"),
     ),
     GuidedTaskDefinition(
         "dos",
