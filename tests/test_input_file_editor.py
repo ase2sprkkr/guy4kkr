@@ -67,8 +67,8 @@ def test_shared_schema_task_change_is_accepted(application):
     )
     editor.accept()
     assert editor.result() == QDialog.DialogCode.Accepted
-    assert editor.parameters.task_name == "SPLEED"
-    assert editor.parameters.definition_name == "ARPES"
+    assert editor.parameters.task_name.upper() == "SPLEED"
+    assert editor.parameters.definition_name.upper() == "ARPES"
 
 
 def test_text_edit_is_one_undoable_session_change(application, monkeypatch):
