@@ -280,7 +280,7 @@ class GuidedInputParametersDialog(QDialog):
         self.undo_button.setEnabled(stack.canUndo())
         self.redo_button.setEnabled(stack.canRedo())
         self.undo_button.setToolTip(self.session.history_description(undo=True))
-        self.redo_button.setToolTip(self.session.history_description(redo=True))
+        self.redo_button.setToolTip(self.session.history_description(undo=False))
 
     def _update_all_statuses(self) -> None:
         changed = self.session.changed_paths(self.spec.all_paths())
