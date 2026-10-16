@@ -375,7 +375,7 @@ class SpaceGroupSelectorDialog(QDialog):
                 raise ValueError(
                     f"Prototype {prototype.name!r}, site {site.wyckoff_letter!r}, "
                     f"has multiplicity {site.multiplicity}; the selected PyXtal "
-                    f"setting has multiplicity {wp.multiplicity}.\"
+                    f"setting has multiplicity {wp.multiplicity}."
                 )
 
             occurrence = occurrences.get(wp.letter, 0)
