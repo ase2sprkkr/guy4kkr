@@ -1,10 +1,11 @@
 """Shared file workflows for transactional input-parameter editors."""
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 
+import pyparsing as pp
 from ase2sprkkr import InputParameters
+from ase2sprkkr.common.warnings import DataValidityError
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.dialogs.input_file import InputFileEditor
@@ -14,14 +15,12 @@ _INPUT_FILE_FILTER = "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
 
 
 class InputParametersLoadError(RuntimeError):
-    """A user input file could not be parsed as any accepted backend task."""
+    """A user input file could not be parsed by the session's input schema."""
 
 
 def choose_and_load_input_parameters(
     session: InputParametersSession,
     parent: QWidget | None,
-    *,
-    compatible_tasks: Iterable[str] = (),
 ) -> bool:
     """Choose an input file and install it as one session transaction."""
     file_path, _ = QFileDialog.getOpenFileName(
@@ -32,12 +31,7 @@ def choose_and_load_input_parameters(
     )
     return bool(
         file_path
-        and load_input_parameters(
-            session,
-            file_path,
-            parent,
-            compatible_tasks=compatible_tasks,
-        )
+        and load_input_parameters(session, file_path, parent)
     )
 
 
@@ -50,41 +44,38 @@ def _load_error(parent: QWidget | None, exception: Exception | str) -> bool:
     return False
 
 
-def _read_for_task_family(path: Path, task_names: Iterable[str]):
-    """Read *path* using only the explicitly accepted backend task family.
+def _read_for_schema(path: Path, schema_name: str):
+    """Read *path* with one already-known input schema.
 
-    Backend parsers expose heterogeneous exception types, so parse failures are
-    normalized here. Resolving a declared task happens outside that boundary:
-    registry/configuration errors are programming errors and must propagate.
+    Guided editing already knows the schema of the active session.  Shared
+    schemas derive the effective backend task from the parsed values, so trying
+    each task separately is both redundant and unsafe: a mismatched task parser
+    can be much more expensive than parsing the schema once.
+
+    Registry/configuration errors happen before the parsing boundary and must
+    propagate.  Only ordinary parser/validation failures are normalized as a
+    user-facing load error.
     """
-    last_error = None
-    for task_name in dict.fromkeys(str(task).upper() for task in task_names):
-        task = InputParameters.task_registry[task_name]
-        try:
-            return InputParameters.input_parameters_registry.read_for_task(task, path)
-        except Exception as exc:  # noqa: BLE001 - backend parser errors are heterogeneous.
-            last_error = exc
-    if last_error is None:
-        raise ValueError("No compatible input-parameter tasks were supplied")
-    raise InputParametersLoadError(str(last_error)) from last_error
+    definition = InputParameters.definition(schema_name)
+    try:
+        return definition.read_from_file(path)
+    except (pp.ParseBaseException, DataValidityError) as exc:
+        raise InputParametersLoadError(str(exc)) from exc
 
 
 def load_input_parameters(
     session: InputParametersSession,
     file_path: str | Path,
     parent: QWidget | None,
-    *,
-    compatible_tasks: Iterable[str] = (),
 ) -> bool:
     """Parse an input file and install it as one session transaction."""
     path = Path(file_path).resolve()
-    accepted_tasks = (session.task_name, *compatible_tasks)
+    expected_schema = session.working_parameters.definition_name.upper()
     try:
-        parameters = _read_for_task_family(path, accepted_tasks)
+        parameters = _read_for_schema(path, expected_schema)
     except InputParametersLoadError as exc:
         return _load_error(parent, exc)
 
-    expected_schema = session.working_parameters.definition_name.upper()
     actual_schema = parameters.definition_name.upper()
     if actual_schema != expected_schema:
         return _load_error(
