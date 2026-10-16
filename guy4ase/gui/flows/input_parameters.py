@@ -50,10 +50,13 @@ def _read_for_task_family(path: Path, task_names: Iterable[str]):
     """Read *path* using only the explicitly accepted backend task family."""
     last_error = None
     for task_name in dict.fromkeys(str(task).upper() for task in task_names):
+        # Resolving a declared task is application configuration, not parsing.
+        # Let registry/configuration failures propagate instead of presenting
+        # them as malformed user input.
+        task = InputParameters.task_registry[task_name]
         try:
-            task = InputParameters.task_registry[task_name]
             return InputParameters.input_parameters_registry.read_for_task(task, path)
-        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
+        except Exception as exc:  # noqa: BLE001 - backend parser errors are heterogeneous.
             last_error = exc
     if last_error is None:
         raise ValueError("No compatible input-parameter tasks were supplied")
@@ -67,22 +70,31 @@ def load_input_parameters(
     *,
     compatible_tasks: Iterable[str] = (),
 ) -> bool:
-    """Parse an input file and install it without leaking editor-family policy."""
+    """Parse an input file and install it as one session transaction."""
     path = Path(file_path).resolve()
     accepted_tasks = (session.task_name, *compatible_tasks)
     try:
         parameters = _read_for_task_family(path, accepted_tasks)
-    except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
+    except Exception as exc:  # noqa: BLE001 - backend parser errors are heterogeneous.
         return _load_error(parent, exc)
 
-    try:
-        session.replace_parameters(
-            parameters,
-            text=f"Load {path.name}",
-            source_page="load",
+    expected_schema = session.working_parameters.definition_name.upper()
+    actual_schema = parameters.definition_name.upper()
+    if actual_schema != expected_schema:
+        return _load_error(
+            parent,
+            ValueError(
+                f"Expected {expected_schema} input schema, got {actual_schema}."
+            ),
         )
-    except ValueError as exc:
-        return _load_error(parent, exc)
+
+    # Session application is a separate boundary. Programming/invariant errors
+    # here must propagate rather than be re-labelled as file parsing failures.
+    session.replace_parameters(
+        parameters,
+        text=f"Load {path.name}",
+        source_page="load",
+    )
     return True
 
 
