@@ -67,8 +67,10 @@ class SpaceGroupSelectorDialog(QDialog):
             Conversion factor applied to the lattice when rendering.
         wyckoff_positions
             Sorted cache of Wyckoff position objects for the active group.
-        _draw_counter
-            Monotonically increasing token used to drop stale draw requests.
+        _draw_timer
+            Dialog-owned single-shot timer coalescing preview redraws.
+        _focus_timer
+            Dialog-owned timer deferring focus until the dialog enters its event loop.
         _focused_letter
             Wyckoff label under mouse/keyboard focus, used for hover highlighting.
         _mouse_over_letter
@@ -93,7 +95,6 @@ class SpaceGroupSelectorDialog(QDialog):
         self.wyckoff_positions: dict[str, WyckoffPosition] = {}
         self.lattice_params: Dict[str, float] = {}
         self.units: float = 1.0
-        self._draw_counter = 0
         self._mouse_over_letter: Optional[str] = None
         self._focused_letter: Optional[str] = None
         # Cached space-group rows for fast filtering: (id, symbol, lattice, hay)
@@ -102,6 +103,12 @@ class SpaceGroupSelectorDialog(QDialog):
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.timeout.connect(self._populate_table)
+        self._draw_timer = QTimer(self)
+        self._draw_timer.setSingleShot(True)
+        self._draw_timer.timeout.connect(self._draw_preview)
+        self._focus_timer = QTimer(self)
+        self._focus_timer.setSingleShot(True)
+        self._focus_timer.timeout.connect(self.focus_lattice_parameters)
         self._selected_sites: Dict[str, list[list[float]]] = {}
         self._active_prototype: Optional[StructurePrototype] = None
         # Durable user-entered lattice memory (not cleared when params become fixed)
@@ -391,6 +398,10 @@ class SpaceGroupSelectorDialog(QDialog):
                 editor.selectAll()
                 return
 
+    def _schedule_lattice_parameter_focus(self) -> None:
+        """Defer lattice focus while keeping the callback owned by the dialog."""
+        self._focus_timer.start(0)
+
     def create_atoms(self) -> Atoms:
         """Build an ASE structure from the current validated editor state."""
         if not self._is_valid():
@@ -667,13 +678,8 @@ class SpaceGroupSelectorDialog(QDialog):
         if q.type != 'PLACEHOLDER':
             self._update_degeneracy_warnings(q)
 
-    def _next_draw_token(self) -> int:
-        """Return a new draw token used to discard stale plot requests."""
-        self._draw_counter += 1
-        return self._draw_counter
-
-    def _capture_draw_state(self, token: int) -> Optional[Dict[str, Any]]:
-        """Capture lattice and Wyckoff state for downstream plotting."""
+    def _capture_draw_state(self) -> Optional[Dict[str, Any]]:
+        """Capture current lattice and Wyckoff state for preview plotting."""
         if not self.selected_group:
             return None
         # Determine lattice for drawing: prefer user-defined, else default preview lattice
@@ -691,7 +697,6 @@ class SpaceGroupSelectorDialog(QDialog):
                 return None
 
         return {
-            'token': token,
             'lattice': lat,
             'sites': self._selected_sites.copy(),
             'wp': self.wyckoff_positions,
@@ -700,55 +705,46 @@ class SpaceGroupSelectorDialog(QDialog):
         }
 
     def _schedule_draw(self) -> None:
-        """Queue a redraw of the 3D lattice preview using the latest state."""
-        token = self._next_draw_token()
-        snap = self._capture_draw_state(token)
+        """Coalesce preview redraws on a timer owned by this dialog."""
+        self._draw_timer.start(0)
+
+    def _draw_preview(self) -> None:
+        """Draw the latest preview state while this dialog is alive."""
+        snap = self._capture_draw_state()
         if snap is None:
-            def clear_latest(tok=token):
-                if tok != self._draw_counter:
-                    return
-                self.ax.clear()
-                self.canvas.draw()
-            QTimer.singleShot(0, clear_latest)
+            self.ax.clear()
+            self.canvas.draw()
             return
 
-        def compute_and_apply(req=snap):
-            tok = req['token']
-            if tok != self._draw_counter:
-                return
+        lattice = snap['lattice']
+        sites = snap['sites']
+        wps = snap['wp']
+        highligh = snap['mouse_over_letter'] if snap['mouse_over_letter'][0] else snap['focused_letter']
 
-            lattice = req['lattice']
-            sites = req['sites']
-            wps = req['wp']
-            highligh = req['mouse_over_letter'] if req['mouse_over_letter'][0] else req['focused_letter']
+        inactive_positions = []
+        focused_positions = []
+        active_positions = []
 
-            inactive_positions = []
-            focused_positions = []
-            active_positions = []
+        for wp in wps.values():
+            vals = sites.get(wp.letter, [])
+            if highligh[0] == wp.letter and (highligh[1] >= len(vals)):
+                focused_positions.append(wp.all_positions_for_free_dofs([]))
+            for i, value in enumerate(vals):
+                if highligh[0] == wp.letter and (highligh[1] == i):
+                    to = active_positions
+                else:
+                    to = inactive_positions
+                to.append(wp.all_positions_for_free_dofs(value))
 
-            focused = None
-            for wp in wps.values():
-                vals = sites.get(wp.letter, [])
-                if highligh[0] == wp.letter and (highligh[1] >= len(vals)):
-                    focused_positions.append(wp.all_positions_for_free_dofs([]))
-                for i, value in enumerate(vals):
-                    if highligh[0] == wp.letter and (highligh[1] == i):
-                        to = active_positions
-                    else:
-                        to = inactive_positions
-                    to.append(wp.all_positions_for_free_dofs(value))
-
-            self.ax.clear()
-            plot_lattice(self.ax, lattice)
-            for arr in inactive_positions:
-                plot_sites_in_lattice(self.ax, lattice, arr, role='inactive')
-            for arr in focused_positions:
-                plot_sites_in_lattice(self.ax, lattice, arr, role='focused')
-            for arr in active_positions:
-                plot_sites_in_lattice(self.ax, lattice, arr, role='active')
-            self.canvas.draw()
-
-        QTimer.singleShot(0, compute_and_apply)
+        self.ax.clear()
+        plot_lattice(self.ax, lattice)
+        for arr in inactive_positions:
+            plot_sites_in_lattice(self.ax, lattice, arr, role='inactive')
+        for arr in focused_positions:
+            plot_sites_in_lattice(self.ax, lattice, arr, role='focused')
+        for arr in active_positions:
+            plot_sites_in_lattice(self.ax, lattice, arr, role='active')
+        self.canvas.draw()
 
     def _is_any_position_selected(self) -> bool:
         """Return True if any Wyckoff checkbox (duplicate or single) is checked."""
@@ -819,7 +815,7 @@ def select_spacegroup(
         return "back" if back else None
 
     if prototype is not None:
-        QTimer.singleShot(0, dlg.focus_lattice_parameters)
+        dlg._schedule_lattice_parameter_focus()
 
     result = dlg.exec()
     if result == 42:
