@@ -1,6 +1,7 @@
 """Shared file workflows for transactional input-parameter editors."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import pyparsing as pp
@@ -21,6 +22,8 @@ class InputParametersLoadError(RuntimeError):
 def choose_and_load_input_parameters(
     session: InputParametersSession,
     parent: QWidget | None,
+    *,
+    compatible_tasks: Iterable[str] = (),
 ) -> bool:
     """Choose an input file and install it as one session transaction."""
     file_path, _ = QFileDialog.getOpenFileName(
@@ -31,7 +34,12 @@ def choose_and_load_input_parameters(
     )
     return bool(
         file_path
-        and load_input_parameters(session, file_path, parent)
+        and load_input_parameters(
+            session,
+            file_path,
+            parent,
+            compatible_tasks=compatible_tasks,
+        )
     )
 
 
@@ -47,13 +55,12 @@ def _load_error(parent: QWidget | None, exception: Exception | str) -> bool:
 def _read_for_schema(path: Path, schema_name: str):
     """Read *path* with one already-known input schema.
 
-    Guided editing already knows the schema of the active session.  Shared
+    Guided editing already knows the schema of the active session. Shared
     schemas derive the effective backend task from the parsed values, so trying
-    each task separately is both redundant and unsafe: a mismatched task parser
-    can be much more expensive than parsing the schema once.
+    each task separately is both redundant and unsafe.
 
     Registry/configuration errors happen before the parsing boundary and must
-    propagate.  Only ordinary parser/validation failures are normalized as a
+    propagate. Only ordinary parser/validation failures are normalized as a
     user-facing load error.
     """
     definition = InputParameters.definition(schema_name)
@@ -67,6 +74,8 @@ def load_input_parameters(
     session: InputParametersSession,
     file_path: str | Path,
     parent: QWidget | None,
+    *,
+    compatible_tasks: Iterable[str] = (),
 ) -> bool:
     """Parse an input file and install it as one session transaction."""
     path = Path(file_path).resolve()
@@ -84,6 +93,22 @@ def load_input_parameters(
                 f"Expected {expected_schema} input schema, got {actual_schema}."
             ),
         )
+
+    accepted_tasks = tuple(
+        dict.fromkeys(str(task).strip().upper() for task in compatible_tasks)
+    )
+    if accepted_tasks:
+        actual_task = parameters.task_name
+        actual_task = None if actual_task is None else str(actual_task).upper()
+        if actual_task not in accepted_tasks:
+            expected = "/".join(accepted_tasks)
+            return _load_error(
+                parent,
+                ValueError(
+                    f"Expected {expected} input parameters, got "
+                    f"{actual_task or 'an unresolved task'}."
+                ),
+            )
 
     # Session application is a separate boundary. Programming/invariant errors
     # here must propagate rather than be re-labelled as file parsing failures.
