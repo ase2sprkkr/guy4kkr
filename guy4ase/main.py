@@ -211,7 +211,7 @@ class GuiApplication(QObject):
         """Select the project that receives subsequently created persistent runs."""
         self.controller.set_active_project(
             project_id,
-            expected_generation=self.controller.generation,
+            expected_active_project_generation=self.controller.active_project_generation,
         )
 
     def _active_project_changed(self, project_id: str | None) -> None:
