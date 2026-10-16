@@ -52,9 +52,9 @@ def test_parse_error_highlights_suspected_line_and_keeps_draft(application):
     assert editor.parameters.SCF.NITER() == 135
 
 
-def test_different_schema_task_is_rejected(application):
+def test_explicit_different_schema_task_is_rejected(application):
     editor = InputFileEditor(InputParameters.create("scf"))
-    editor.editor.setPlainText(InputParameters.create("dos").to_string(validate=False))
+    editor.editor.setPlainText("TASK DOS\n")
     editor.accept()
     assert editor.parameters is None
     assert editor.error_label.text()
