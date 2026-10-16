@@ -12,8 +12,10 @@ from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJob
 
 class _State(str, Enum):
     RUNNING = "running"
-    FINISHING = "finishing"
+    FINALIZING = "finalizing"
     FINISHED = "finished"
+    EXECUTION_FAILED = "execution_failed"
+    FINALIZATION_FAILED = "finalization_failed"
 
 
 def _record(*, state=_State.RUNNING, endpoint=None, reference=None, finished_at=None):
@@ -34,15 +36,28 @@ def _record(*, state=_State.RUNNING, endpoint=None, reference=None, finished_at=
     )
 
 
-def _finishing_record():
+def _finalizing_record():
     return _record(
-        state=_State.FINISHING,
+        state=_State.FINALIZING,
         endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
         reference=SimpleNamespace(
             executor="local",
             native_id="1234567890abcdef",
             computer=None,
         ),
+    )
+
+
+def _finalization_failed_record():
+    return _record(
+        state=_State.FINALIZATION_FAILED,
+        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+        reference=SimpleNamespace(
+            executor="local",
+            native_id="1234567890abcdef",
+            computer=None,
+        ),
+        finished_at="2026-10-13T06:40:00+00:00",
     )
 
 
@@ -80,6 +95,7 @@ def test_persistent_job_maps_endpoint_metadata():
     assert job.result_files_state == "current"
     assert job.finished_at is None
     assert not job.is_final
+    assert not job.can_retry_finalization
     assert not job.attachable
 
 
@@ -93,6 +109,27 @@ def test_persistent_job_maps_stable_finished_at_independently_of_updated_at():
 
     assert job.finished_at == "2026-10-13T06:20:00+00:00"
     assert job.updated_at == "2026-10-13T08:45:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "state",
+    (_State.FINISHED, _State.EXECUTION_FAILED, _State.FINALIZATION_FAILED),
+)
+def test_terminal_states_are_not_attachable(state):
+    record = _record(
+        state=state,
+        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
+        reference=SimpleNamespace(
+            executor="local",
+            native_id="1234567890abcdef",
+            computer=None,
+        ),
+    )
+    job = PersistentJob.from_run_record(record)
+
+    assert job.is_final
+    assert not job.attachable
+    assert job.can_retry_finalization is (state is _State.FINALIZATION_FAILED)
 
 
 def test_active_reconnectable_job_is_attachable():
@@ -232,8 +269,8 @@ def test_source_attach_uses_persistent_boundary_atomically(monkeypatch):
     assert calls == [(manager, record.id, None, listener)]
 
 
-def test_source_owns_finishing_recovery_until_completion(monkeypatch):
-    record = _finishing_record()
+def test_source_owns_finalizing_recovery_until_completion(monkeypatch):
+    record = _finalizing_record()
     store = _Store((record,))
     callbacks = {}
     runner = object()
@@ -267,8 +304,69 @@ def test_source_owns_finishing_recovery_until_completion(monkeypatch):
     assert store.get_calls == [record.id]
 
 
+def test_finalization_failed_is_not_automatically_recovered(monkeypatch):
+    record = _finalization_failed_record()
+    store = _Store((record,))
+
+    class Manager:
+        def __init__(self):
+            self.store = store
+
+        @staticmethod
+        def attach(*_args, **_kwargs):
+            raise AssertionError("terminal finalization failure must not auto-attach")
+
+        @staticmethod
+        def retry_finalization(*_args, **_kwargs):
+            raise AssertionError("retry must be explicit")
+
+    monkeypatch.setattr(
+        persistent_jobs_module,
+        "attach_persistent_run",
+        lambda *_args, **_kwargs: pytest.fail("retry must be explicit"),
+    )
+    source = PersistentJobSource(Manager())
+
+    job = source.job(record.id)
+    assert job.is_final
+    assert job.can_retry_finalization
+    assert not job.attachable
+    assert source.supports_retry_finalization
+    assert source.active_recovery_ids == ()
+
+
+def test_explicit_finalization_retry_uses_same_attach_boundary(monkeypatch):
+    record = _finalization_failed_record()
+    store = _Store((record,))
+    runner = object()
+    calls = []
+
+    class Manager:
+        def __init__(self):
+            self.store = store
+
+        @staticmethod
+        def attach(*_args, **_kwargs):
+            pass
+
+        @staticmethod
+        def retry_finalization(*_args, **_kwargs):
+            pass
+
+    def attach(manager, job_id, *, callback=None, output_listener=None):
+        calls.append((manager, job_id, callback, output_listener))
+        return runner
+
+    manager = Manager()
+    monkeypatch.setattr(persistent_jobs_module, "attach_persistent_run", attach)
+    source = PersistentJobSource(manager)
+
+    assert source.attach(record.id) is runner
+    assert calls == [(manager, record.id, None, None)]
+
+
 def test_source_recovery_handles_synchronous_completion_without_stale_runner(monkeypatch):
-    record = _finishing_record()
+    record = _finalizing_record()
     finished = _record(
         state=_State.FINISHED,
         finished_at="2026-10-13T07:00:00+00:00",
@@ -296,7 +394,7 @@ def test_source_recovery_handles_synchronous_completion_without_stale_runner(mon
 
 
 def test_recovery_completion_does_not_propagate_metadata_refresh_failure(monkeypatch):
-    record = _finishing_record()
+    record = _finalizing_record()
     callbacks = {}
 
     class Store(_Store):
@@ -323,7 +421,7 @@ def test_recovery_completion_does_not_propagate_metadata_refresh_failure(monkeyp
     callbacks[record.id](object())
 
     assert source.active_recovery_ids == ()
-    assert source.job(record.id).state == "finishing"
+    assert source.job(record.id).state == "finalizing"
 
 
 def test_explicit_manager_must_satisfy_run_store_contract():
