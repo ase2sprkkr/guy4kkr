@@ -6,6 +6,39 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QGridLayout, QLabel, QWidget
 
 
+class _FocusFilter(QObject):
+    """Track focus across a Wyckoff row without outliving its widget."""
+
+    def __init__(self, widget: "WyckoffPositionWidget"):
+        super().__init__(widget)
+        self.widget = widget
+        self.focused = 0
+        self._leave_timer = QTimer(self)
+        self._leave_timer.setSingleShot(True)
+        self._leave_timer.timeout.connect(self._emit_leave)
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+
+        if et == QEvent.Type.FocusIn:
+            self.focused += 1
+            self._leave_timer.stop()
+            self.widget.focus_changed.emit(
+                self.widget.letter, self.widget.index, True
+            )
+        elif et == QEvent.Type.FocusOut:
+            self.focused = max(0, self.focused - 1)
+            self._leave_timer.start(0)
+
+        return False
+
+    def _emit_leave(self) -> None:
+        if self.focused == 0:
+            self.widget.focus_changed.emit(
+                self.widget.letter, self.widget.index, False
+            )
+
+
 class WyckoffPositionWidget(QWidget):
     # Custom signals
     checkbox_toggled = pyqtSignal(bool, str, int)
@@ -49,33 +82,8 @@ class WyckoffPositionWidget(QWidget):
         # Columns 1–6: spinboxes with labels
         self.spinboxes = []
         self.spin_labels_widgets = []
-
-        class _FocusFilter(QObject):
-
-            def __init__(self, widget):
-                super().__init__(widget)
-                self.widget = widget
-                self.focused = 0
-
-            def eventFilter(self, obj, event):
-                et = event.type()
-
-                if et == QEvent.Type.FocusIn:
-                    self.focused += 1
-                    self.widget.focus_changed.emit(self.widget.letter, index, True)
-                elif et == QEvent.Type.FocusOut:
-                    self.focused -= 1
-
-                    def really_leave(focus_count=self.focused):
-                        if self.focused > 0:
-                            return
-                        self.widget.focus_changed.emit(self.widget.letter, index, False)
-                    QTimer.singleShot(0, really_leave)
-
-                return False
-
-        ff = _FocusFilter(self)
-        self.checkbox.installEventFilter(ff)
+        self._focus_filter = _FocusFilter(self)
+        self.checkbox.installEventFilter(self._focus_filter)
 
         if self.type == 'MULTIPLE':
             col = 1
@@ -94,7 +102,7 @@ class WyckoffPositionWidget(QWidget):
                 spin.setSingleStep(0.05)
                 spin.setDecimals(4)   # IMPORTANT: must allow 2 decimals
                 spin.setValue(val)
-                spin.installEventFilter(ff)
+                spin.installEventFilter(self._focus_filter)
                 spin.valueChanged.connect(self.on_spin_changed)
                 layout.addWidget(spin, 0, col)
                 self.spinboxes.append(spin)

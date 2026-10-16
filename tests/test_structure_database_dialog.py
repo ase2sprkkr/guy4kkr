@@ -3,7 +3,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QCoreApplication, QEvent
 
 from guy4ase.gui.dialogs.structures.spacegroup_selector import SpaceGroupSelectorDialog
 from guy4ase.gui.dialogs.structures.database import StructureDatabaseDialog
@@ -35,7 +35,7 @@ def test_unknown_structure_type_is_presented_without_source_placeholder():
     dialog.close()
 
 
-def test_every_database_prototype_can_preload_the_shared_editor(_qt_application):
+def test_every_database_prototype_can_preload_the_shared_editor():
     dialog = SpaceGroupSelectorDialog()
 
     for prototype in load_structure_database():
@@ -46,14 +46,10 @@ def test_every_database_prototype_can_preload_the_shared_editor(_qt_application)
         assert selected_space_group == prototype.space_group
         assert sum(map(len, dialog._selected_sites.values())) == len(prototype.sites)
 
-    # load_prototype() queues zero-delay preview redraws.  Drain those callbacks
-    # while the dialog and its canvas still exist, rather than leaving them for
-    # a later test after deterministic Qt teardown has deleted the widgets.
-    _qt_application.processEvents()
     dialog.close()
 
 
-def test_shared_editor_creates_representative_database_structures(_qt_application):
+def test_shared_editor_creates_representative_database_structures():
     dialog = SpaceGroupSelectorDialog()
     expected_atom_counts = {
         "B2    cP2   CsCl": 2,
@@ -83,8 +79,29 @@ def test_shared_editor_creates_representative_database_structures(_qt_applicatio
             prototypes[name].sites
         )
 
-    _qt_application.processEvents()
     dialog.close()
+
+
+def test_structure_editor_deferred_gui_work_is_object_owned(_qt_application):
+    dialog = SpaceGroupSelectorDialog()
+    prototype = next(
+        item for item in load_structure_database() if item.name.startswith("C4 ")
+    )
+    dialog.load_prototype(prototype)
+
+    assert dialog._draw_timer.parent() is dialog
+    assert dialog._draw_timer.isActive()
+    assert dialog._focus_timer.parent() is dialog
+
+    wyckoff = next(iter(dialog._wyckoff_widgets.values()))
+    assert wyckoff._focus_filter.parent() is wyckoff
+    assert wyckoff._focus_filter._leave_timer.parent() is wyckoff._focus_filter
+
+    # Deleting the dialog must cancel its pending redraw rather than leaving a
+    # Python callback that can run against an already-destroyed Qt widget tree.
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    _qt_application.processEvents()
 
 
 def test_database_editor_focuses_first_editable_lattice_parameter(_qt_application):
