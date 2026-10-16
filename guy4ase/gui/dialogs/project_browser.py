@@ -62,7 +62,6 @@ class ProjectBrowserDialog(QDialog):
         self._repository = repository
         self._persistent_jobs_controller = persistent_jobs_controller
         self._projects: tuple[Project, ...] = ()
-        self._projects_by_id: dict[str, Project] = {}
         self._selected_project_id: str | None = None
         self._active_project_id = active_project_id
 
@@ -156,12 +155,19 @@ class ProjectBrowserDialog(QDialog):
     def active_project_id(self) -> str | None:
         return self._active_project_id
 
+    def project_by_id(self, project_id: str | None) -> Project | None:
+        """Return a project from the currently loaded dialog snapshot."""
+        if project_id is None:
+            return None
+        return next(
+            (project for project in self._projects if project.id == project_id),
+            None,
+        )
+
     def set_active_project(self, project_id: str | None) -> None:
         """Render the application-owned active project selection."""
-        if project_id is not None and project_id not in self._projects_by_id:
-            project_id = None
-        self._active_project_id = project_id
-        project = self._projects_by_id.get(project_id) if project_id is not None else None
+        project = self.project_by_id(project_id)
+        self._active_project_id = None if project is None else project.id
         self.active_project_label.setText(
             "Active project: (none)"
             if project is None
@@ -188,7 +194,6 @@ class ProjectBrowserDialog(QDialog):
             projects = tuple(self._repository.projects())
         except (ProjectRepositoryError, OSError, ValueError) as exc:
             self._projects = ()
-            self._projects_by_id = {}
             self.project_tree.clear()
             self.project_notice.setText(f"Project repository unavailable: {exc}")
             self.project_notice.show()
@@ -198,10 +203,9 @@ class ProjectBrowserDialog(QDialog):
             return
 
         self._projects = projects
-        self._projects_by_id = {project.id: project for project in projects}
         if (
             self._active_project_id is not None
-            and self._active_project_id not in self._projects_by_id
+            and self.project_by_id(self._active_project_id) is None
         ):
             self._active_project_id = None
             self.activeProjectRequested.emit(None)
@@ -304,7 +308,7 @@ class ProjectBrowserDialog(QDialog):
             self.project_notice.hide()
             return
 
-        project = self._projects_by_id.get(project_id)
+        project = self.project_by_id(project_id)
         if project is None:
             self.jobs.set_visible_refs(())
             return
@@ -323,7 +327,7 @@ class ProjectBrowserDialog(QDialog):
         project_id = self._selected_project_id
         if project_id in (None, _UNASSIGNED):
             return None
-        return self._projects_by_id.get(project_id)
+        return self.project_by_id(project_id)
 
     def _request_selected_active(self) -> None:
         project = self._selected_project()
@@ -513,6 +517,7 @@ class ProjectBrowserDialog(QDialog):
                 return None
             except (ProjectRepositoryError, KeyError, ValueError) as exc:
                 QMessageBox.warning(self, f"{title} Failed", str(exc))
+                self.reload_projects()
                 return None
         except (ProjectRepositoryError, KeyError, ValueError) as exc:
             QMessageBox.warning(self, f"{title} Failed", str(exc))

@@ -6,7 +6,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QTreeWidgetItem
-from ase2sprkkr.execution import ProjectRepository
+from ase2sprkkr.execution import ProjectRepository, ProjectRepositoryError
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
@@ -114,6 +114,18 @@ def test_project_browser_uses_parent_hierarchy_and_direct_run_membership(tmp_pat
     dialog.close()
 
 
+def test_project_lookup_uses_loaded_snapshot_without_duplicate_index(tmp_path):
+    _application = QApplication.instance() or QApplication([])
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create("Project")
+    dialog = _dialog(repository, _JobSource(()))
+
+    assert dialog.project_by_id(project.id) == project
+    assert dialog.project_by_id(None) is None
+    assert not hasattr(dialog, "_projects_by_id")
+    dialog.close()
+
+
 def test_unassigned_and_missing_references_are_explicit(tmp_path):
     _application = QApplication.instance() or QApplication([])
     repository = ProjectRepository(tmp_path / "projects")
@@ -217,4 +229,51 @@ def test_conflict_replays_only_requested_project_change(tmp_path, monkeypatch):
     assert persisted.name == "Local rename"
     assert persisted.persistent_refs == ("external-run",)
     assert persisted.generation == 3
+    dialog.close()
+
+
+def test_failed_conflict_retry_reloads_external_project_state(tmp_path, monkeypatch):
+    _application = QApplication.instance() or QApplication([])
+    directory = tmp_path / "projects"
+    repository = ProjectRepository(directory)
+    project = repository.create("Original")
+    dialog = _dialog(repository, _JobSource(()))
+
+    external = ProjectRepository(directory)
+    current = external.project(project.id)
+    external.save(
+        current.rename("Changed elsewhere"),
+        expected_generation=current.generation,
+    )
+
+    original_save = repository.save
+    save_calls = 0
+
+    def fail_retry(edited, *, expected_generation):
+        nonlocal save_calls
+        save_calls += 1
+        if save_calls == 2:
+            raise ProjectRepositoryError("simulated write failure")
+        return original_save(edited, expected_generation=expected_generation)
+
+    monkeypatch.setattr(repository, "save", fail_retry)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+
+    saved = dialog._save_project_change(
+        project,
+        lambda current: current.add_run("local-run"),
+        "Add Run to Project",
+    )
+
+    assert saved is None
+    assert save_calls == 2
+    persisted = repository.project(project.id)
+    assert persisted.name == "Changed elsewhere"
+    assert persisted.persistent_refs == ()
+    assert _find_project_item(dialog, "Changed elsewhere").text(0) == "Changed elsewhere"
     dialog.close()
