@@ -177,25 +177,22 @@ class WorkspaceContext:
         )
 
 
-@dataclass
+@dataclass(init=False)
 class WorkspaceState:
     """Revisioned values that define the user's current calculation workspace.
 
     Results deliberately live outside this object in ``ResultStore``. Each
     independently changeable workspace value owns its own optimistic generation.
+    Plain constructor arguments are initial values only; stored/public state is
+    always represented by the explicit locks below.
     """
 
-    structure: OptimisticLocked[StructureState] = field(
-        default_factory=lambda: OptimisticLocked(StructureState())
-    )
-    input_parameters: OptimisticLocked[Any | None] = field(
-        default_factory=lambda: OptimisticLocked(None)
-    )
-    context: WorkspaceContext = field(default_factory=WorkspaceContext)
+    structure: OptimisticLocked[StructureState]
+    input_parameters: OptimisticLocked[Any | None]
+    context: WorkspaceContext
 
-    @classmethod
-    def from_values(
-        cls,
+    def __init__(
+        self,
         *,
         atoms: Any | None = None,
         input_parameters: Any | None = None,
@@ -204,20 +201,22 @@ class WorkspaceState:
         empty_spheres: EmptySpheresState | None = None,
         restarted: bool = False,
         active_project_id: str | None = None,
-    ) -> WorkspaceState:
-        """Build initial revision-zero workspace values from plain inputs."""
-        return cls(
-            structure=OptimisticLocked(
-                StructureState(
-                    atoms=atoms,
-                    potential_path=potential_path,
-                    empty_spheres=empty_spheres,
-                    restarted=restarted,
-                )
-            ),
-            input_parameters=OptimisticLocked(input_parameters),
-            context=WorkspaceContext.from_values(
-                directory=directory,
-                active_project_id=active_project_id,
-            ),
+    ) -> None:
+        self.structure = OptimisticLocked(
+            StructureState(
+                atoms=atoms,
+                potential_path=potential_path,
+                empty_spheres=empty_spheres,
+                restarted=restarted,
+            )
         )
+        self.input_parameters = OptimisticLocked(input_parameters)
+        self.context = WorkspaceContext.from_values(
+            directory=directory,
+            active_project_id=active_project_id,
+        )
+
+    @classmethod
+    def from_values(cls, **values: Any) -> WorkspaceState:
+        """Explicit spelling for callers that prefer factory-style construction."""
+        return cls(**values)
