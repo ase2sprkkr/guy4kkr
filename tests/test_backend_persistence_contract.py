@@ -118,14 +118,29 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
 
     edited = record.input_parameters.copy(copy_values=True)
     replacements = []
+
+    def replace_input_parameters(
+        value,
+        *,
+        expected_input_parameters_generation,
+        expected_structure_generation,
+    ):
+        replacements.append(
+            (
+                value,
+                expected_input_parameters_generation,
+                expected_structure_generation,
+            )
+        )
+        return object()
+
     controller = SimpleNamespace(
         result_store=history,
         directory=str(tmp_path),
-        generation=object(),
+        structure_generation=object(),
+        input_parameters_generation=object(),
         atoms=Atoms("Fe"),
-        replace_input_parameters=lambda value, *, expected_generation: (
-            replacements.append((value, expected_generation)) or object()
-        ),
+        replace_input_parameters=replace_input_parameters,
     )
     dialog_calls = []
 
@@ -175,4 +190,10 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
     assert task.lower() == "arpes"
     assert dialog_parameters.task_name.upper() == "ARPES"
     assert dialog_parameters.task_definition.name.upper() == "SPLEED"
-    assert replacements == [(edited, controller.generation)]
+    assert replacements == [
+        (
+            edited,
+            controller.input_parameters_generation,
+            controller.structure_generation,
+        )
+    ]
