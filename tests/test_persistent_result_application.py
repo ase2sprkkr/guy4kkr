@@ -47,7 +47,6 @@ def _finished_dos_run(tmp_path):
     run = manager.new_record(
         task="DOS",
         input_definition="DOS",
-        requested_task="DOS",
         directory=tmp_path,
         result_files=ResultFilesRecord(
             input_file=str(input_path),
