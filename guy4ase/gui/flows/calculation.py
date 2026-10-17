@@ -298,14 +298,14 @@ def recompute_result(
 
     try:
         parameters = record.input_parameters.copy(copy_values=True)
-        requested_task = parameters.task_name
+        task_name = parameters.task_name
     except AttributeError:
         return None
 
     position_like_window: str
-    if is_guided_task(requested_task):
+    if is_guided_task(task_name):
         dialog = GuidedInputParametersDialog(
-            requested_task,
+            task_name,
             parameters,
             parent=parent,
             atoms=atoms,

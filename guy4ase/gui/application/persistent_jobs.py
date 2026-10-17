@@ -287,9 +287,14 @@ class PersistentJobSource:
         return job
 
     def refresh(self) -> tuple[PersistentJob, ...]:
-        """Refresh backend state and then reload persisted metadata."""
+        """Recover interrupted submissions, refresh backend state, and reload."""
         if self._manager is None:
             return ()
+        recover_submitting = getattr(self._manager, "recover_submitting", None)
+        if callable(recover_submitting):
+            for record in self._manager.store.runs():
+                if _value(record.state) == "submitting":
+                    recover_submitting(record)
         if self.supports_refresh:
             self._manager.refresh()
         return self.reload()
