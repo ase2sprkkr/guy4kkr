@@ -57,8 +57,8 @@ def test_workflow_and_expert_share_one_workspace(tmp_path):
     )
     application.processEvents()
 
-    assert workspace.atoms is not None
-    assert expert.controller.atoms is workspace.atoms
+    assert workspace.structure.value.atoms is not None
+    assert expert.controller.atoms is workspace.structure.value.atoms
     assert RunTask("scf") in _commands(window)
     expert.close()
     window.close()
@@ -187,5 +187,5 @@ def test_cancelled_surface_creation_does_not_reuse_previous_structure(
     window._create_surface()
 
     assert builds == []
-    assert workspace.atoms is not None
+    assert workspace.structure.value.atoms is not None
     window.close()
