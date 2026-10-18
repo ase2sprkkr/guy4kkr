@@ -405,3 +405,37 @@ def test_destroyed_view_is_removed_from_controller_registry():
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     assert len(controller._views) == 0
+
+
+def test_modal_result_loading_publishes_only_on_gui_thread(monkeypatch):
+    from threading import get_ident
+
+    _application = QApplication.instance() or QApplication([])
+    gui_thread = get_ident()
+    source = _Source((_job("completed", state="finished"),))
+    source.supports_results = True
+    result = object()
+    load_threads = []
+    published = []
+
+    def load_result(job_id):
+        assert job_id == "completed"
+        load_threads.append(get_ident())
+        return result
+
+    source.load_result = load_result
+    controller = PersistentJobsController(source)
+    monkeypatch.setattr(
+        controller, "_publish_result",
+        lambda job_id, value, *, select_result: published.append(
+            (get_ident(), job_id, value, select_result)
+        ),
+    )
+    view = _view()
+
+    controller._load_result_requested(view, "completed")
+
+    assert len(load_threads) == 1
+    assert load_threads[0] != gui_thread
+    assert published == [(gui_thread, "completed", result, True)]
+    view.close()
