@@ -360,11 +360,15 @@ class PersistentJobsController(QObject):
         ):
             return
         try:
-            run_modal_task(
+            # Backend/file I/O belongs in the worker. Result adoption modifies
+            # WorkspaceController and Qt widgets, so publish only on the GUI thread
+            # after the modal worker has returned its value.
+            result = run_modal_task(
                 view,
-                lambda: self.load_result(job_id, select_result=True),
+                lambda: self._source.load_result(job_id),
                 title="Loading Calculation Result",
                 label="Loading result files…",
             )
+            self._publish_result(job_id, result, select_result=True)
         except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
             QMessageBox.warning(view, "Result Load Failed", str(exc))
