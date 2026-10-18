@@ -165,6 +165,54 @@ def download_structure(
     return atoms
 
 
+
+def create_2d_from_new_structure(
+    controller: WorkspaceController,
+    recent_files: RecentFiles,
+    parent: QWidget,
+    *,
+    surface_mode: bool = False,
+) -> Any | None:
+    """Create a detached 3D candidate, then publish exactly one chosen result."""
+    generation = controller.structure_generation
+    candidate = create_structure_candidate(
+        parent,
+        chain=chain_dialogs,
+        spacegroup_selector=select_spacegroup,
+        site_selector=select_site_elements,
+    )
+    if candidate is None:
+        return None
+
+    bulk = candidate.atoms
+    result = select_build_2d_structure(
+        bulk.copy(),
+        parent=parent,
+        recent_files=recent_files,
+        surface_mode=surface_mode,
+    )
+    if result is None:
+        answer = QMessageBox.question(
+            parent,
+            "Keep 3D Structure?",
+            "The 2D structure was not created. Keep the newly created "
+            "3D structure instead? Choose No to discard it.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return None
+        result = bulk
+
+    change = controller.replace_structure(
+        result,
+        expected_structure_generation=generation,
+    )
+    if not document_change_applied(parent, change):
+        return None
+    return result
+
+
 def build_2d_structure(
     controller: WorkspaceController,
     recent_files: RecentFiles,
