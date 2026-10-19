@@ -77,7 +77,7 @@ class PersistentJob:
 
     @property
     def can_retry_download(self) -> bool:
-        """Whether an explicit retry-finalization action is meaningful."""
+        """Whether an explicit retry of failed output transfer is meaningful."""
         return self.state == "failed" and self.failure_phase == "download" and self.return_code == 0
 
     @classmethod
@@ -220,7 +220,7 @@ class PersistentJobSource:
             return self._jobs.get(str(job_id))
 
     def reload(self, *, notify: bool = True) -> tuple[PersistentJob, ...]:
-        """Reload persisted metadata and recover interrupted finalization."""
+        """Reload metadata and resume interrupted transfer/postprocessing."""
         if self._manager is None:
             return ()
         records = self._manager.store.runs()
@@ -306,7 +306,7 @@ class PersistentJobSource:
             and not self.supports_retry_download
         ):
             raise NotImplementedError(
-                "This ASE2SPRKKR version cannot retry persistent finalization."
+                "This ASE2SPRKKR version cannot retry a failed download."
             )
         return attach_project_run(
             self._manager,
