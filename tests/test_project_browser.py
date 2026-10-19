@@ -201,7 +201,6 @@ def test_conflict_replays_only_requested_project_change(tmp_path, monkeypatch):
     assert saved is not None
     persisted = repository.project(project.id)
     assert persisted.name == "Local rename"
-    assert persisted.name == "Local rename"
     assert persisted.generation == 3
     dialog.close()
 

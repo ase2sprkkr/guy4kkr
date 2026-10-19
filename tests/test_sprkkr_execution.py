@@ -101,6 +101,11 @@ def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_p
 
     class Runner:
         id = "run-1"
+        record = type("Record", (), {
+            "execution": type("Execution", (), {
+                "endpoint": type("Endpoint", (), {"executor": "local", "host": None})()
+            })()
+        })()
 
         def submit(self):
             pass
