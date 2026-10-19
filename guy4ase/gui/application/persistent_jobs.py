@@ -151,6 +151,9 @@ class PersistentJobSource:
             raise TypeError("persistent run store must provide runs() and get()")
 
         self.reload(notify=False)
+        # Recover persisted work at startup. Ordinary state notifications can
+        # describe runs still owned by their original live monitor.
+        self._recover_incomplete(self.jobs())
 
     @property
     def available(self) -> bool:
@@ -222,7 +225,7 @@ class PersistentJobSource:
             return self._jobs.get(str(job_id))
 
     def reload(self, *, notify: bool = True) -> tuple[PersistentJob, ...]:
-        """Reload metadata and resume interrupted transfer/postprocessing."""
+        """Reload authoritative metadata without starting another runner."""
         if self._manager is None:
             return ()
         records = self._manager.store.runs()
@@ -238,7 +241,6 @@ class PersistentJobSource:
             for job_id in set(previous) | set(loaded)
             if previous.get(job_id) != loaded.get(job_id)
         )
-        self._recover_incomplete(tuple(loaded.values()))
         if notify:
             for job_id in changed:
                 self._notify(job_id)
@@ -260,7 +262,6 @@ class PersistentJobSource:
 
         job = PersistentJob.from_run_record(record)
         changed = self._replace_cached_job(job)
-        self._recover_incomplete((job,))
         if changed:
             self._notify(job_id)
         return job
@@ -363,7 +364,7 @@ class PersistentJobSource:
 
     def _recover(self, job_id: str) -> Any | None:
         # Reserve the identity before attach, then release the lock. A second
-        # reload sees the sentinel and cannot attach the same finalizing run.
+        # reload sees the sentinel and cannot attach the same recovering run.
         with self._lock:
             if job_id in self._recovery_runners:
                 value = self._recovery_runners[job_id]
