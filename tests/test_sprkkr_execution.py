@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ase import Atoms
+from types import SimpleNamespace
 
 from guy4ase.gui.application import sprkkr_execution as execution_module
 from guy4ase.gui.application.execution_cancellation import ExecutionCancelled
@@ -101,11 +102,11 @@ def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_p
 
     class Runner:
         id = "run-1"
-        record = type("Record", (), {
-            "execution": type("Execution", (), {
-                "endpoint": type("Endpoint", (), {"executor": "local", "host": None})()
-            })()
-        })()
+        record = SimpleNamespace(
+            execution=SimpleNamespace(
+                endpoint=SimpleNamespace(executor="local", host=None)
+            )
+        )
 
         def submit(self):
             pass
