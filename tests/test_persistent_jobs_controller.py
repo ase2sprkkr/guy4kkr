@@ -32,9 +32,10 @@ def _job(
         directory=f"/tmp/{job_id}",
         dataset="Fe-SCF",
         target="Local",
-        return_code=None,
         message=None,
-        attachable=state not in {"finished", "execution_failed", "finalization_failed", "cancelled"},
+        attachable=state not in {"finished", "failed", "cancelled"},
+        failure_phase=("download" if state == "failed" else None),
+        return_code=0 if state == "failed" else None,
     )
 
 
@@ -44,7 +45,7 @@ class _Source:
     supports_refresh = False
     supports_results = False
     supports_attach = True
-    supports_retry_finalization = True
+    supports_retry_download = True
     supports_result_file_check = False
 
     def __init__(self, jobs: tuple[PersistentJob, ...]) -> None:
@@ -172,7 +173,7 @@ def test_two_views_share_one_attached_monitor_window(monkeypatch):
 
 def test_finalization_retry_uses_attached_monitor_without_marking_job_active(monkeypatch):
     _application = QApplication.instance() or QApplication([])
-    job = _job("run-17", state="finalization_failed")
+    job = _job("run-17", state="failed")
     source = _Source((job,))
     controller = PersistentJobsController(source)
     view = _view()
@@ -203,13 +204,13 @@ def test_finalization_retry_uses_attached_monitor_without_marking_job_active(mon
 
     assert job.is_final
     assert not job.attachable
-    assert job.can_retry_finalization
-    assert view.retry_finalization_button.isVisible() is False
+    assert job.can_retry_download
+    assert view.retry_download_button.isVisible() is False
     # The parent-less test widget is itself hidden, so inspect hidden state rather
     # than QWidget.isVisible(), which includes ancestor visibility.
-    assert not view.retry_finalization_button.isHidden()
+    assert not view.retry_download_button.isHidden()
 
-    view.retryFinalizationRequested.emit(job.id)
+    view.retryDownloadRequested.emit(job.id)
 
     assert len(created) == 1
     assert controller._monitor_windows == {job.id: created[0]}

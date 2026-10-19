@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 from ase import Atoms
 from ase2sprkkr import InputParameters, TaskResult
+from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution import (
-    ExecutionManager,
-    ResultFilesRecord,
+    FileEntry,
+    FileManifest,
     RunState,
     RunStore,
 )
@@ -39,15 +40,13 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
         task="SPLEED",
         input_definition="ARPES",
         directory=tmp_path,
-        result_files=ResultFilesRecord(
-            input_file=str(input_path),
-            output_file=str(output_path),
-            input_files=(str(input_path),),
-            output_files=(str(output_path),),
+        files=FileManifest(
+            inputs=(FileEntry(local_path=str(input_path)),),
+            stdout=FileEntry(local_path=str(output_path)),
         ),
     )
     manager.store.save(run)
-    run = manager.finalize(run, state=RunState.FINISHED, return_code=0)
+    run = manager.complete(run, state=RunState.FINISHED, return_code=0, artifacts_available=True)
 
     class Reader:
         def __init__(
@@ -65,6 +64,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
         def read_from_file(
             self,
             output_file,
+            error_file=None,
             *,
             return_code,
             input_file=None,
