@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from ase2sprkkr.execution import Execution, ExecutorEndpoint, WorkingDirectory, FileManifest
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 
@@ -13,13 +14,13 @@ def _record(state: str):
         updated_at="2026-10-17T08:00:00+00:00",
         finished_at=None,
         task="SCF",
-        directory="/tmp/calc",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory("/tmp/calc")),
+        files=FileManifest(), failure_phase=None,
         dataset=None,
-        endpoint=SimpleNamespace(executor="local", host=None, psij_backend=None),
-        reference=None,
+
         return_code=None,
         message=None,
-        result_files=None,
+
     )
 
 
@@ -45,11 +46,7 @@ def test_refresh_recovers_submitting_before_backend_refresh():
         def recover_submitting(self, record):
             calls.append(("recover", record.state.value))
             recovered = _record("running")
-            recovered.reference = SimpleNamespace(
-                executor="local",
-                native_id=recovered.id,
-                computer=None,
-            )
+            recovered.execution = Execution(ExecutorEndpoint(), WorkingDirectory("/tmp/calc"), "pid-42")
             self.store.record = recovered
             return recovered
 
