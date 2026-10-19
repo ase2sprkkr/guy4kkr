@@ -32,9 +32,10 @@ def _job(
         directory=f"/tmp/{job_id}",
         dataset="Fe-SCF",
         target="Local",
-        return_code=None,
         message=None,
-        attachable=state not in {"finished", "failed", "failed", "cancelled"},
+        attachable=state not in {"finished", "failed", "cancelled"},
+        failure_phase=("download" if state == "failed" else None),
+        return_code=0 if state == "failed" else None,
     )
 
 

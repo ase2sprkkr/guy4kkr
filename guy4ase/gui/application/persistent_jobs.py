@@ -66,6 +66,7 @@ class PersistentJob:
     attachable: bool = False
     result_files_verified: bool = False
     failure_phase: str | None = None
+    project_id: str | None = None
 
     @property
     def started_at(self) -> str:
@@ -107,6 +108,7 @@ class PersistentJob:
             attachable=_is_attachable(record, state),
             result_files_verified=result_files_verified,
             failure_phase=(None if record.failure_phase is None else _value(record.failure_phase)),
+            project_id=getattr(record, "project_id", None),
         )
 
 
