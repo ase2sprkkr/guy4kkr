@@ -169,7 +169,6 @@ class PersistentJobSource:
             return False
         required = (
             "retrieve_result_files",
-            "check_result_files",
             "output_file_is_current",
             "input_file_is_current",
         )
