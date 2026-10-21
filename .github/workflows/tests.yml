@@ -51,7 +51,7 @@ jobs:
       - name: Checkout Guy4ase-compatible ase2sprkkr
         uses: actions/checkout@v7
         with:
-          repository: ase2sprkkr/ase2sprkkr
+          repository: lokik/ase2sprkkr-chat
           ref: workflow
           path: .ci/ase2sprkkr
 
