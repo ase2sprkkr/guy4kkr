@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
 
-from ase2sprkkr.execution import ExecutionManager, RunStore, default_projects_directory
+from ase2sprkkr.execution import ExecutionManager, ProjectRepository
 from ase2sprkkr.outputs import attach_project_run, load_project_result
 
 logger = logging.getLogger(__name__)
@@ -136,9 +136,7 @@ class PersistentJobSource:
         if manager is None:
             # The backend stores project runs globally, not in a legacy default
             # persistent-run manager. Browse that same authoritative store.
-            manager = ExecutionManager(
-                RunStore(default_projects_directory().parent / "projects_runs")
-            )
+            manager = ExecutionManager(project_repository=ProjectRepository())
             self._manager = manager
 
         try:
@@ -165,14 +163,9 @@ class PersistentJobSource:
 
     @property
     def supports_results(self) -> bool:
-        if not self.available:
-            return False
-        required = (
-            "retrieve_result_files",
-            "output_file_is_current",
-            "input_file_is_current",
+        return self.available and callable(
+            getattr(self._manager, "retrieve_result_files", None)
         )
-        return all(callable(getattr(self._manager, name, None)) for name in required)
 
     @property
     def supports_attach(self) -> bool:
@@ -184,9 +177,7 @@ class PersistentJobSource:
 
     @property
     def supports_result_file_check(self) -> bool:
-        return self.available and callable(
-            getattr(self._manager, "check_result_files", None)
-        )
+        return self.available
 
     @property
     def active_recovery_ids(self) -> tuple[str, ...]:
@@ -283,7 +274,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot verify persistent result files."
             )
-        record = self._manager.check_result_files(job_id)
+        record = self._manager.store.get(str(job_id))
         job = PersistentJob.from_run_record(record, result_files_verified=True)
         if self._replace_cached_job(job):
             self._notify(job.id)

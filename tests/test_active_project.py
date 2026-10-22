@@ -127,6 +127,7 @@ def test_launch_captures_active_project_before_later_selection_change(tmp_path):
 
     assert captured_manager is gui.execution_manager
     assert captured_manager.projects is repository
+    assert captured_manager.store is repository.run_store
     assert captured_project == launch_project.id
     assert gui.active_project_id == later_project.id
     monitor_window.close()

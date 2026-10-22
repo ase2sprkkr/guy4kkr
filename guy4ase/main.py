@@ -8,7 +8,6 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 from ase2sprkkr.execution import (
     ExecutionManager,
-    RunStore,
     ProjectRepository,
 )
 
@@ -69,7 +68,6 @@ class GuiApplication(QObject):
             else ProjectRepository()
         )
         self.execution_manager = ExecutionManager(
-            store=RunStore(self.projects.directory.parent / "projects_runs"),
             project_repository=self.projects,
         )
         self.persistent_jobs = (

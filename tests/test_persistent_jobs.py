@@ -82,7 +82,6 @@ def test_attach_and_load_delegate_to_backend_api(monkeypatch):
     manager = SimpleNamespace(
         store=store, attach=lambda *args, **kwargs: None,
         retrieve_result_files=lambda x: x,
-        input_file_is_current=lambda x: True, output_file_is_current=lambda x: True,
     )
     calls = []
     result = SimpleNamespace(run_record=item)
@@ -90,7 +89,7 @@ def test_attach_and_load_delegate_to_backend_api(monkeypatch):
     monkeypatch.setattr(module, "load_project_result", lambda *args, **kwargs: calls.append("load") or result)
     source = PersistentJobSource(manager)
     assert source.supports_results
-    assert not source.supports_result_file_check
+    assert source.supports_result_file_check
     source.attach(item.id)
     assert source.load_result(item.id) is result
     assert calls == ["attach", "load"]

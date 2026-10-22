@@ -85,7 +85,7 @@ class SprkkrExecution:
             return None
         if self.execution_manager is None:
             return self.project_id
-        return self.execution_manager.for_project(self.project_id)
+        return (self.execution_manager, self.project_id)
 
     def _create_runner(self, calculator: SPRKKR):
         input_file, potential_file, output_file = self.file_names()

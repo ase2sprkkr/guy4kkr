@@ -48,9 +48,7 @@ def test_attach_and_result_loading_delegate_to_backend(monkeypatch):
             return item
     manager = SimpleNamespace(store=Store(), attach=lambda *a, **k: None,
                               retrieve_result_files=lambda r: r,
-                              check_result_files=lambda r: r,
-                              output_file_is_current=lambda r: True,
-                              input_file_is_current=lambda r: True)
+                              )
     source = PersistentJobSource(manager)
     calls = []
     runner = object()
