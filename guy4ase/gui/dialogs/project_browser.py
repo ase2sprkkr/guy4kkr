@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from ase2sprkkr.execution import (
-    Project,
+    ProjectRecord,
     ProjectConflictError,
     ProjectRepository,
     ProjectRepositoryError,
@@ -61,8 +61,8 @@ class ProjectBrowserDialog(QDialog):
         )
         self._repository = repository
         self._persistent_jobs_controller = persistent_jobs_controller
-        self._projects: tuple[Project, ...] = ()
-        self._projects_by_id: dict[str, Project] = {}
+        self._projects: tuple[ProjectRecord, ...] = ()
+        self._projects_by_id: dict[str, ProjectRecord] = {}
         self._selected_project_id: str | None = None
         self._active_project_id = active_project_id
 
@@ -176,7 +176,7 @@ class ProjectBrowserDialog(QDialog):
     def reload_projects(self) -> None:
         """Reload project JSONs, preserving selection when possible."""
         try:
-            projects = tuple(self._repository.projects())
+            projects = tuple(self._repository.project_records())
         except (ProjectRepositoryError, OSError, ValueError) as exc:
             self._projects = ()
             self._projects_by_id = {}
@@ -207,7 +207,7 @@ class ProjectBrowserDialog(QDialog):
     def _populate_project_tree(self) -> None:
         previous = self._selected_project_id
         available_refs = {job.id for job in self.jobs.all_jobs}
-        children: dict[str | None, list[Project]] = defaultdict(list)
+        children: dict[str | None, list[ProjectRecord]] = defaultdict(list)
         for project in self._projects:
             children[project.parent_id].append(project)
         for siblings in children.values():
@@ -223,7 +223,7 @@ class ProjectBrowserDialog(QDialog):
             self.project_tree.clear()
             selected_item: QTreeWidgetItem | None = None
 
-            def add_project(project: Project, parent: QTreeWidgetItem | None) -> None:
+            def add_project(project: ProjectRecord, parent: QTreeWidgetItem | None) -> None:
                 nonlocal selected_item
                 total = sum(
                     job.project_id == project.id for job in self.jobs.all_jobs
@@ -298,7 +298,7 @@ class ProjectBrowserDialog(QDialog):
         )
         self.project_notice.hide()
 
-    def _selected_project(self) -> Project | None:
+    def _selected_project(self) -> ProjectRecord | None:
         project_id = self._selected_project_id
         if project_id in (None, _UNASSIGNED):
             return None
@@ -407,9 +407,9 @@ class ProjectBrowserDialog(QDialog):
     def _save_project_change(
         self,
         original: Project,
-        change: Callable[[Project], Project],
+        change: Callable[[ProjectRecord], ProjectRecord],
         title: str,
-    ) -> Project | None:
+    ) -> ProjectRecord | None:
         try:
             edited = change(original)
         except ValueError as exc:
@@ -436,7 +436,7 @@ class ProjectBrowserDialog(QDialog):
                 self.reload_projects()
                 return None
             try:
-                current = self._repository.project(original.id)
+                current = self._repository.project_record(original.id)
                 edited = change(current)
                 if edited == current:
                     saved = current

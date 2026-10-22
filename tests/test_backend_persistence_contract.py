@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from ase import Atoms
 from ase2sprkkr import InputParameters, TaskResult
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution import RunManager
 from ase2sprkkr.execution import (
     FileEntry,
     FileManifest,
@@ -35,7 +35,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
         parameters.save_to_file(stream, validate=False)
     output_path.write_text("synthetic persistent output\n")
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     run = manager.new_record(
         task="SPLEED",
         input_definition="ARPES",

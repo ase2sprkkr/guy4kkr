@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
 
-from ase2sprkkr.execution import ExecutionManager, ProjectRepository
-from ase2sprkkr.outputs import attach_project_run, load_project_result
+from ase2sprkkr.execution import Job, ProjectRepository
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +135,7 @@ class PersistentJobSource:
         if manager is None:
             # The backend stores project runs globally, not in a legacy default
             # persistent-run manager. Browse that same authoritative store.
-            manager = ExecutionManager(project_repository=ProjectRepository())
+            manager = ProjectRepository().manager
             self._manager = manager
 
         try:
@@ -274,7 +273,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot verify persistent result files."
             )
-        record = self._manager.store.get(str(job_id))
+        record = Job(self._manager, str(job_id)).refresh()
         job = PersistentJob.from_run_record(record, result_files_verified=True)
         if self._replace_cached_job(job):
             self._notify(job.id)
@@ -301,9 +300,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot retry a failed download."
             )
-        return attach_project_run(
-            self._manager,
-            job_id,
+        return Job(self._manager, str(job_id)).attach(
             callback=callback,
             output_listener=output_listener,
         )
@@ -313,7 +310,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot load persistent historical results."
             )
-        result = load_project_result(self._manager, job_id)
+        result = Job(self._manager, str(job_id)).load_result()
         record = getattr(result, "run_record", None)
         if record is not None:
             job = PersistentJob.from_run_record(record, result_files_verified=True)

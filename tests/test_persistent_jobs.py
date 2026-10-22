@@ -85,8 +85,8 @@ def test_attach_and_load_delegate_to_backend_api(monkeypatch):
     )
     calls = []
     result = SimpleNamespace(run_record=item)
-    monkeypatch.setattr(module, "attach_project_run", lambda *args, **kwargs: calls.append("attach") or object())
-    monkeypatch.setattr(module, "load_project_result", lambda *args, **kwargs: calls.append("load") or result)
+    monkeypatch.setattr(module.Job, "attach", lambda self, **kwargs: calls.append("attach") or object())
+    monkeypatch.setattr(module.Job, "load_result", lambda self: calls.append("load") or result)
     source = PersistentJobSource(manager)
     assert source.supports_results
     assert source.supports_result_file_check

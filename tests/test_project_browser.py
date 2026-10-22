@@ -159,7 +159,7 @@ def test_repository_refresh_updates_open_project_browser(tmp_path):
     dialog = _dialog(repository, source)
 
     second = ProjectRepository(directory)
-    snapshot = second.project(project.id)
+    snapshot = second.project_record(project.id)
     second.save(
         snapshot.rename("Changed elsewhere"),
         expected_generation=snapshot.generation,
@@ -180,7 +180,7 @@ def test_conflict_replays_only_requested_project_change(tmp_path, monkeypatch):
     dialog = _dialog(repository, _JobSource((_job("external-run", dataset="Run"),)))
 
     external = ProjectRepository(directory)
-    current = external.project(project.id)
+    current = external.project_record(project.id)
     external.save(
         current.rename("Externally renamed"),
         expected_generation=current.generation,
@@ -199,7 +199,7 @@ def test_conflict_replays_only_requested_project_change(tmp_path, monkeypatch):
     )
 
     assert saved is not None
-    persisted = repository.project(project.id)
+    persisted = repository.project_record(project.id)
     assert persisted.name == "Local rename"
     assert persisted.generation == 3
     dialog.close()
@@ -213,7 +213,7 @@ def test_failed_conflict_retry_reloads_external_project_state(tmp_path, monkeypa
     dialog = _dialog(repository, _JobSource(()))
 
     external = ProjectRepository(directory)
-    current = external.project(project.id)
+    current = external.project_record(project.id)
     external.save(
         current.rename("Changed elsewhere"),
         expected_generation=current.generation,
@@ -245,7 +245,7 @@ def test_failed_conflict_retry_reloads_external_project_state(tmp_path, monkeypa
 
     assert saved is None
     assert save_calls == 2
-    persisted = repository.project(project.id)
+    persisted = repository.project_record(project.id)
     assert persisted.name == "Changed elsewhere"
 
     assert _find_project_item(dialog, "Changed elsewhere").text(0) == "Changed elsewhere"

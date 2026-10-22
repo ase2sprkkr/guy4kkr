@@ -59,8 +59,8 @@ def test_attach_and_result_loading_delegate_to_backend(monkeypatch):
     def load(m, ref):
         calls.append(("load", m, ref))
         return result
-    monkeypatch.setattr(jobs_module, "attach_project_run", attach)
-    monkeypatch.setattr(jobs_module, "load_project_result", load)
+    monkeypatch.setattr(jobs_module.Job, "attach", lambda self, **kwargs: attach(self.manager, self.id, **kwargs))
+    monkeypatch.setattr(jobs_module.Job, "load_result", lambda self: load(self.manager, self.id))
     assert source.attach(item.id) is runner
     assert source.load_result(item.id) is result
     assert [x[0] for x in calls] == ["attach", "load"]

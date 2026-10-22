@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ase import Atoms
 from ase2sprkkr import InputParameters
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution import RunManager
 from ase2sprkkr.execution import (
     FileEntry,
     FileManifest,
@@ -44,7 +44,7 @@ def _finished_dos_run(tmp_path):
         "\n"
     )
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     run = manager.new_record(
         task="DOS",
         input_definition="DOS",
