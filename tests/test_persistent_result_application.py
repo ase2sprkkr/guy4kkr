@@ -58,7 +58,7 @@ def _finished_dos_run(tmp_path):
         ),
     )
     manager.store.save(run)
-    run = manager.complete(run, state=RunState.FINISHED, return_code=0, files_available=True)
+    run = manager.complete(run, state=RunState.FINISHED, return_code=0, artifacts_available=True)
     return PersistentJobSource(manager), run
 
 
