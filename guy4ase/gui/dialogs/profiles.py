@@ -1,15 +1,20 @@
 """Execution-profile dialogs for SPR-KKR calculations."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from dataclasses import dataclass
+
+from PyQt6.QtCore import Qt, QRegularExpression
+from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -26,7 +31,16 @@ from guy4ase.gui.application.execution_profiles import (
     kind_label,
 )
 from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
 from guy4ase.gui.widgets.execution_profiles import ProfileForm
+
+
+@dataclass(frozen=True)
+class RunIdentification:
+    """Output identifiers for a single calculation, independent of its profile."""
+
+    dataset: str | None
+    adsi: str
 
 
 class ProfilesDialog(QDialog):
@@ -201,6 +215,7 @@ class ProfileSelectionDialog(QDialog):
         parent: QWidget | None = None,
         *,
         store: ExecutionProfileStore | None = None,
+        input_parameters=None,
     ) -> None:
         super().__init__(parent)
         self._store = store or ExecutionProfileStore()
@@ -224,6 +239,46 @@ class ProfileSelectionDialog(QDialog):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        self.dataset_edit: QLineEdit | None = None
+        self.adsi_edit: QLineEdit | None = None
+        if input_parameters is not None and hasattr(input_parameters, "CONTROL"):
+            identifiers = QGroupBox("Calculation identification", self)
+            identifier_form = QFormLayout(identifiers)
+
+            self.dataset_edit = QLineEdit(identifiers)
+            self.dataset_edit.setText(dataset_value(input_parameters) or "")
+            self.dataset_edit.setPlaceholderText("Automatic naming")
+            self.dataset_edit.setValidator(
+                QRegularExpressionValidator(
+                    QRegularExpression(r"[A-Za-z0-9_.-]*"), self.dataset_edit
+                )
+            )
+            self.dataset_edit.setToolTip(
+                "SPR-KKR CONTROL.DATASET. Base name for output files. "
+                "Use a different name for simultaneous runs in the same directory."
+            )
+            identifier_form.addRow("Output file prefix:", self.dataset_edit)
+            dataset_hint = QLabel(
+                "Used to name output files (CONTROL.DATASET); leave empty for "
+                "automatic naming.", identifiers
+            )
+            dataset_hint.setWordWrap(True)
+            identifier_form.addRow("", dataset_hint)
+
+            self.adsi_edit = QLineEdit(identifiers)
+            adsi = input_parameters.CONTROL.ADSI()
+            self.adsi_edit.setText("" if adsi is None else str(adsi))
+            self.adsi_edit.setToolTip(
+                "SPR-KKR CONTROL.ADSI. An additional identifier for the calculation."
+            )
+            identifier_form.addRow("Calculation label:", self.adsi_edit)
+            adsi_hint = QLabel(
+                "Additional calculation identifier (CONTROL.ADSI).", identifiers
+            )
+            adsi_hint.setWordWrap(True)
+            identifier_form.addRow("", adsi_hint)
+            layout.addWidget(identifiers)
 
         profile_box = QGroupBox("Run configuration", self)
         profile_layout = QVBoxLayout(profile_box)
@@ -280,6 +335,38 @@ class ProfileSelectionDialog(QDialog):
         selected = self.profiles.currentData()
         if ProfilesDialog(self, store=self._store).exec() == QDialog.DialogCode.Accepted:
             self._reload_profiles(selected)
+
+    def accept(self) -> None:  # type: ignore[override]
+        if self.dataset_edit is not None and not self.dataset_edit.hasAcceptableInput():
+            QMessageBox.warning(
+                self, "Invalid output prefix",
+                "Use only letters, digits, periods, underscores and hyphens.",
+            )
+            return
+        if self.dataset_edit is not None:
+            dataset = self.dataset_edit.text().strip()
+            if dataset and filename_component(dataset) != dataset:
+                QMessageBox.warning(
+                    self, "Invalid output prefix",
+                    "The output prefix must be a valid single filename component.",
+                )
+                return
+        if self.adsi_edit is not None and not self.adsi_edit.text().strip():
+            QMessageBox.warning(
+                self, "Missing calculation label",
+                "Enter a calculation label (SPR-KKR CONTROL.ADSI).",
+            )
+            return
+        super().accept()
+
+    def identification(self) -> RunIdentification | None:
+        """Return accepted run identifiers without changing input parameters."""
+        if self.dataset_edit is None or self.adsi_edit is None:
+            return None
+        return RunIdentification(
+            dataset=self.dataset_edit.text().strip() or None,
+            adsi=self.adsi_edit.text().strip(),
+        )
 
     def profile_name(self) -> str | None:
         value = self.profiles.currentData()

@@ -43,7 +43,7 @@ def test_run_flow_tracks_top_level_monitor_before_start(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, "cluster"),
+        lambda _parent, **_kwargs: (True, "cluster", None),
     )
     monkeypatch.setattr(
         calculation_flow,
@@ -92,7 +92,7 @@ def test_monitor_is_closed_when_ownership_transfer_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, None),
+        lambda _parent, **_kwargs: (True, None, None),
     )
     monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
 
@@ -133,7 +133,7 @@ def test_tracked_monitor_is_closed_and_start_error_propagates(monkeypatch, tmp_p
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, None),
+        lambda _parent, **_kwargs: (True, None, None),
     )
     monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
 
@@ -170,7 +170,7 @@ def test_tracked_monitor_is_closed_when_show_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, None),
+        lambda _parent, **_kwargs: (True, None, None),
     )
     monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
 
@@ -203,7 +203,7 @@ def test_standalone_run_keeps_parent_ownership(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, None),
+        lambda _parent, **_kwargs: (True, None, None),
     )
     monkeypatch.setattr(calculation_flow, "profile_description", lambda _name: None)
 
@@ -223,7 +223,7 @@ def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (False, None),
+        lambda _parent, **_kwargs: (False, None, None),
     )
     monkeypatch.setattr(
         calculation_flow,
@@ -257,7 +257,7 @@ def test_automatic_profile_is_distinct_from_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calculation_flow,
         "_select_profile",
-        lambda _parent, **_kwargs: (True, None),
+        lambda _parent, **_kwargs: (True, None, None),
     )
     monkeypatch.setattr(
         calculation_flow,
