@@ -27,7 +27,7 @@ def test_recovery_failure_updates_terminal_metadata(monkeypatch):
         store.record = _record(RunState.FAILED)
         store.record.message = "cannot reconstruct historical result"
         raise RuntimeError(store.record.message)
-    monkeypatch.setattr(module, "attach_project_run", attach)
+    monkeypatch.setattr(manager, "attach_sprkkr", attach)
     source = PersistentJobSource(manager)
     assert source.active_recovery_ids == ()
     assert source.job("run-1").state == "failed"
