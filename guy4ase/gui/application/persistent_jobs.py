@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
 
-from ase2sprkkr.execution import Job, ProjectRepository
+from ase2sprkkr.execution import ExecutionManager, ProjectRepository, RunStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,13 @@ _FINAL_STATES = frozenset(
 )
 JobChangedListener = Callable[[str], None]
 _RECOVERING = object()
+
+
+def project_run_manager(projects: ProjectRepository) -> ExecutionManager:
+    return ExecutionManager(
+        store=RunStore(projects.directory.parent / "projects_runs"),
+        project_repository=projects,
+    )
 
 
 def _value(value: Any) -> str:
@@ -135,7 +142,7 @@ class PersistentJobSource:
         if manager is None:
             # The backend stores project runs globally, not in a legacy default
             # persistent-run manager. Browse that same authoritative store.
-            manager = ProjectRepository().manager
+            manager = project_run_manager(ProjectRepository())
             self._manager = manager
 
         try:
@@ -163,12 +170,12 @@ class PersistentJobSource:
     @property
     def supports_results(self) -> bool:
         return self.available and callable(
-            getattr(self._manager, "retrieve_result_files", None)
+            getattr(self._manager, "load_result", None)
         )
 
     @property
     def supports_attach(self) -> bool:
-        return self.available and callable(getattr(self._manager, "attach", None))
+        return self.available and callable(getattr(self._manager, "attach_sprkkr", None))
 
     @property
     def supports_retry_download(self) -> bool:
@@ -273,7 +280,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot verify persistent result files."
             )
-        record = Job(self._manager, str(job_id)).refresh()
+        record = self._manager.store.get(str(job_id))
         job = PersistentJob.from_run_record(record, result_files_verified=True)
         if self._replace_cached_job(job):
             self._notify(job.id)
@@ -300,7 +307,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot retry a failed download."
             )
-        return Job(self._manager, str(job_id)).attach(
+        return self._manager.attach_sprkkr(str(job_id),
             callback=callback,
             output_listener=output_listener,
         )
@@ -310,7 +317,7 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot load persistent historical results."
             )
-        result = Job(self._manager, str(job_id)).load_result()
+        result = self._manager.load_result(str(job_id))
         record = getattr(result, "run_record", None)
         if record is not None:
             job = PersistentJob.from_run_record(record, result_files_verified=True)

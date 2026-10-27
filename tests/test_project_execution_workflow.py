@@ -39,28 +39,26 @@ def test_only_completed_execution_download_can_be_retried():
     ).can_retry_download
 
 
-def test_attach_and_result_loading_delegate_to_backend(monkeypatch):
+def test_attach_and_result_loading_delegate_to_backend():
     item = record(RunState.FINISHED)
+
     class Store:
-        def runs(self): return (item,)
+        def runs(self):
+            return (item,)
+
         def get(self, job_id):
             assert job_id == item.id
             return item
-    manager = SimpleNamespace(store=Store(), attach=lambda *a, **k: None,
-                              retrieve_result_files=lambda r: r,
-                              )
-    source = PersistentJobSource(manager)
+
     calls = []
     runner = object()
     result = SimpleNamespace(run_record=item)
-    def attach(m, ref, **kwargs):
-        calls.append(("attach", m, ref, kwargs))
-        return runner
-    def load(m, ref):
-        calls.append(("load", m, ref))
-        return result
-    monkeypatch.setattr(jobs_module.Job, "attach", lambda self, **kwargs: attach(self.manager, self.id, **kwargs))
-    monkeypatch.setattr(jobs_module.Job, "load_result", lambda self: load(self.manager, self.id))
+    manager = SimpleNamespace(
+        store=Store(),
+        attach_sprkkr=lambda ref, **kwargs: calls.append(("attach", ref)) or runner,
+        load_result=lambda ref: calls.append(("load", ref)) or result,
+    )
+    source = PersistentJobSource(manager)
     assert source.attach(item.id) is runner
     assert source.load_result(item.id) is result
-    assert [x[0] for x in calls] == ["attach", "load"]
+    assert calls == [("attach", item.id), ("load", item.id)]
