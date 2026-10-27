@@ -48,13 +48,12 @@ jobs:
       - name: Check Python 3.9 source compatibility
         run: python tests/test_python39_compat.py
 
-      # PR #229 contains the Project/Job/RunManager contract under validation.
-      # Do not test against the older ase2sprkkr/workflow API.
-      - name: Checkout ASE2SPRKKR API refactor PR #229
+      # The frontend tests target the new historical-result API.
+      - name: Checkout ASE2SPRKKR persistent result API
         uses: actions/checkout@v7
         with:
           repository: lokik/ase2sprkkr-chat
-          ref: refs/pull/229/head
+          ref: feature/persistent-run-result-loading
           path: .ci/ase2sprkkr
 
       - name: Install package and test dependencies
