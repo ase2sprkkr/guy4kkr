@@ -48,7 +48,7 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
         ),
     )
     manager.store.save(run)
-    run = manager.complete(run, state=RunState.FINISHED, return_code=0, files_available=True)
+    run = manager.complete(run, state=RunState.FINISHED, return_code=0, artifacts_available=True)
 
     class Reader:
         def __init__(
