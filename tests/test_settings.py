@@ -14,11 +14,13 @@ def test_settings_round_trip(tmp_path):
     assert settings.viewer == "ase"
 
     settings.viewer = "vmd"
+    settings.share_python_shell_history = False
     assert settings.save()
 
     loaded = ApplicationSettings(path)
     loaded.load()
     assert loaded.viewer == "vmd"
+    assert loaded.share_python_shell_history is False
 
 
 def test_corrupt_settings_keep_defaults(tmp_path):
@@ -28,6 +30,7 @@ def test_corrupt_settings_keep_defaults(tmp_path):
     settings.load()
 
     assert settings.viewer == "ase"
+    assert settings.share_python_shell_history is True
 
 
 def test_visualization_uses_configured_viewer(monkeypatch):
@@ -118,6 +121,11 @@ def test_settings_has_independent_frame_tabs(tmp_path):
     assert isinstance(dialog.run_configurations_page, RunConfigurationsPage)
     assert dialog.general_page.visualization_group.title() == "Visualization"
     assert dialog.general_page.sprkkr_group.title() == "SPR-KKR"
+    assert dialog.general_page.python_shell_group.title() == "Python shell"
+    assert dialog.share_python_shell_history is (
+        dialog.general_page.share_python_shell_history
+    )
+    assert dialog.share_python_shell_history.isChecked()
     assert dialog.viewer is dialog.general_page.viewer
     assert dialog.dataset_default_mode is dialog.general_page.dataset_default_mode
     dialog.close()
@@ -135,6 +143,7 @@ def test_settings_accept_commits_run_profiles_and_application_defaults(tmp_path)
     page.form.executable_dir.setText("/opt/sprkkr")
     dataset = dialog.general_page.dataset_default_mode
     dataset.setCurrentIndex(dataset.findData("uuid"))
+    dialog.share_python_shell_history.setChecked(False)
 
     dialog.accept()
 
@@ -143,6 +152,7 @@ def test_settings_accept_commits_run_profiles_and_application_defaults(tmp_path)
     reloaded = ApplicationSettings(settings.path)
     reloaded.load()
     assert reloaded.dataset_default_mode == "uuid"
+    assert reloaded.share_python_shell_history is False
     dialog.close()
 
 

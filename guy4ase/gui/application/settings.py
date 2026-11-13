@@ -24,6 +24,7 @@ class ApplicationSettings:
         self.path = path or default_settings_path()
         self.viewer = "ase"
         self.dataset_default_mode = DEFAULT_DATASET_MODE
+        self.share_python_shell_history = True
 
     def load(self) -> None:
         """Load settings; corrupt or unreadable files keep defaults."""
@@ -46,6 +47,9 @@ class ApplicationSettings:
         dataset_mode = data.get("dataset_default_mode")
         if dataset_mode in DATASET_DEFAULT_MODES:
             self.dataset_default_mode = dataset_mode
+        enabled = data.get("share_python_shell_history")
+        if isinstance(enabled, bool):
+            self.share_python_shell_history = enabled
 
     def save(self) -> bool:
         """Persist settings, returning false when the file is not writable."""
@@ -55,6 +59,7 @@ class ApplicationSettings:
                 {
                     "viewer": self.viewer,
                     "dataset_default_mode": self.dataset_default_mode,
+                    "share_python_shell_history": self.share_python_shell_history,
                 },
             )
         except OSError:

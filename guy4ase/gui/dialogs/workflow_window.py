@@ -274,7 +274,9 @@ class WorkflowWindow(QMainWindow):
         structure_flows.create_structure(self.controller, self)
 
     def _create_shell(self) -> None:
-        structure_flows.create_structure_by_shell(self.controller, self)
+        structure_flows.create_structure_by_shell(
+            self.controller, self, settings=self.settings
+        )
 
     def _create_from_database(self) -> None:
         structure_flows.create_structure_from_database(self.controller, self)

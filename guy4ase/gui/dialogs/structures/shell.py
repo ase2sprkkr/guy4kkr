@@ -6,6 +6,8 @@ workspace unchanged.
 """
 from __future__ import annotations
 
+import logging
+
 from ase import Atoms
 from ase.build import bulk, surface
 from PyQt6.QtWidgets import (
@@ -16,6 +18,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from qonsole import PythonConsole
+
+from guy4ase.gui.application.settings import ApplicationSettings
+from guy4ase.gui.application.shell_history import PythonReplHistory, ShellHistory
+
+logger = logging.getLogger(__name__)
 
 
 _HINT = """Interactive ASE Python shell
@@ -32,11 +39,72 @@ Press Enter to execute. Type exit(), quit() or sys.exit() to discard the session
 """
 
 
+class _StructurePythonConsole(PythonConsole):
+    """Persist own commands, optionally exchanging them with the Python REPL."""
+
+    def __init__(
+        self, *args,
+        history: ShellHistory,
+        python_history: PythonReplHistory | None = None,
+        **kwargs,
+    ):
+        self._history_store = history
+        self._python_history = python_history
+        self._saved_commands = history.load()
+        super().__init__(*args, **kwargs)
+
+        external = python_history.load() if python_history is not None else []
+        external_commands = set(external)
+        for command in self._saved_commands:
+            if command not in external_commands:
+                self.command_history.add(command)
+        for command in external:
+            self.command_history.add(command)
+
+    def process_input(self, source: str) -> None:
+        before = len(self.command_history._cmd_history)
+        try:
+            super().process_input(source)
+        finally:
+            # Only persist actual newly executed commands, not commands
+            # imported from Python's history or an incomplete input block.
+            commands = self.command_history._cmd_history[before:]
+            if commands:
+                self._saved_commands.extend(commands)
+                try:
+                    self._history_store.save(self._saved_commands)
+                except OSError:
+                    logger.exception(
+                        "Cannot save Python shell history to %s",
+                        self._history_store.path,
+                    )
+                if self._python_history is not None:
+                    try:
+                        self._python_history.append(commands)
+                    except OSError:
+                        logger.exception(
+                            "Cannot append to Python REPL history %s",
+                            self._python_history.path,
+                        )
+
+
 class StructureShellDialog(QDialog):
     """Present a real editable console; publish only an explicit ASE candidate."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *,
+        settings: ApplicationSettings | None = None,
+        history: ShellHistory | None = None,
+        python_history: PythonReplHistory | None = None,
+    ) -> None:
         super().__init__(parent)
+        if settings is None:
+            settings = ApplicationSettings()
+            settings.load()
+        history_store = history if history is not None else ShellHistory()
+        shared_history = (
+            python_history if python_history is not None else PythonReplHistory()
+        ) if settings.share_python_shell_history else None
         self.setWindowTitle("Create Structure by Python Shell")
         self.resize(800, 500)
         self._candidate: Atoms | None = None
@@ -50,7 +118,9 @@ class StructureShellDialog(QDialog):
         notice.setWordWrap(True)
         layout.addWidget(notice)
 
-        self.console = PythonConsole(
+        self.console = _StructurePythonConsole(
+            history=history_store,
+            python_history=shared_history,
             parent=self,
             locals={
                 "Atoms": Atoms,
@@ -91,9 +161,17 @@ class StructureShellDialog(QDialog):
         self.accept()
 
 
-def select_shell_structure(parent: QWidget | None = None) -> Atoms | None:
+def select_shell_structure(
+    parent: QWidget | None = None, *,
+    settings: ApplicationSettings | None = None,
+    history: ShellHistory | None = None,
+    python_history: PythonReplHistory | None = None,
+) -> Atoms | None:
     """Return a structure only if the user explicitly selected it in Python."""
-    dialog = StructureShellDialog(parent)
+    dialog = StructureShellDialog(
+        parent, settings=settings, history=history,
+        python_history=python_history,
+    )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.candidate

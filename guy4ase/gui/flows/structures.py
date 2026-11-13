@@ -121,13 +121,16 @@ def create_structure(
 
 
 def create_structure_by_shell(
-    controller: WorkspaceController, parent: QWidget
+    controller: WorkspaceController, parent: QWidget, *, settings=None,
 ) -> Any | None:
     """Publish only the structure explicitly selected in the Python console."""
     from guy4ase.gui.dialogs.structures.shell import select_shell_structure
 
     generation = controller.structure_generation
-    atoms = select_shell_structure(parent)
+    if settings is None:
+        atoms = select_shell_structure(parent)
+    else:
+        atoms = select_shell_structure(parent, settings=settings)
     if atoms is None:
         return None
     change = controller.replace_structure(

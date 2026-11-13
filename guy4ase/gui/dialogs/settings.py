@@ -45,6 +45,9 @@ class SettingsDialog(QDialog):
         self.viewer = self.general_page.viewer
         self.viewer_warning = self.general_page.viewer_warning
         self.dataset_default_mode = self.general_page.dataset_default_mode
+        self.share_python_shell_history = (
+            self.general_page.share_python_shell_history
+        )
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -71,13 +74,18 @@ class SettingsDialog(QDialog):
                 return
         previous_viewer = self._settings.viewer
         previous_dataset_mode = self._settings.dataset_default_mode
+        previous_share_history = self._settings.share_python_shell_history
         self._settings.viewer = self.viewer.currentText()
         self._settings.dataset_default_mode = str(
             self.dataset_default_mode.currentData()
         )
+        self._settings.share_python_shell_history = (
+            self.share_python_shell_history.isChecked()
+        )
         if not self._settings.save():
             self._settings.viewer = previous_viewer
             self._settings.dataset_default_mode = previous_dataset_mode
+            self._settings.share_python_shell_history = previous_share_history
             QMessageBox.critical(
                 self,
                 "Cannot Save Settings",

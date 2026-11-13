@@ -5,6 +5,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+
 from ase import Atoms
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
@@ -16,6 +18,22 @@ from guy4ase.gui.dialogs.structures import source as source_dialog
 from guy4ase.gui.flows import structures
 from guy4ase.gui.workflow.model import CreateStructure, CreateStructureKind, WorkflowSection
 from guy4ase.gui.workflow.planner import WorkflowPlanner
+
+
+
+@pytest.fixture(autouse=True)
+def isolated_shell_history(monkeypatch, tmp_path):
+    """GUI tests must never touch the user's real Python command history."""
+    from guy4ase.gui.application import shell_history
+
+    monkeypatch.setattr(
+        shell_history, "default_shell_history_path",
+        lambda: tmp_path / "gui_history.json",
+    )
+    monkeypatch.setattr(
+        shell_history, "python_repl_history_path",
+        lambda: tmp_path / "python_history",
+    )
 
 
 def _app():

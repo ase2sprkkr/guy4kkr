@@ -4,6 +4,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -81,6 +82,23 @@ class GeneralSettingsPage(QFrame):
         )
         sprkkr_form.addRow("Default DATASET:", self.dataset_default_mode)
         layout.addWidget(self.sprkkr_group)
+
+        self.python_shell_group = QGroupBox("Python shell", self)
+        shell_form = QFormLayout(self.python_shell_group)
+        self.share_python_shell_history = QCheckBox(
+            "Share command history with regular Python",
+            self.python_shell_group,
+        )
+        self.share_python_shell_history.setChecked(
+            settings.share_python_shell_history
+        )
+        self.share_python_shell_history.setToolTip(
+            "Guy4ASE always saves its own command history. When enabled, "
+            "also load the ordinary Python REPL history and append new "
+            "Guy4ASE commands to it."
+        )
+        shell_form.addRow(self.share_python_shell_history)
+        layout.addWidget(self.python_shell_group)
         layout.addStretch(1)
 
     def selected_viewer_unavailability(self) -> str | None:
