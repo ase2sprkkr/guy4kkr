@@ -38,19 +38,19 @@ def test_explicit_import_selects_new_result_but_background_update_does_not(tmp_p
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    window = SimpleNamespace(_result_actions_widget=widget)
+    window = SimpleNamespace(result_actions_widget=widget)
     gui._wire_result_actions(window)
 
     first = gui.controller.adopt_external_result(_loaded("first"), select_result=True)
     assert first.record is not None
-    assert widget._selected_result_id() == first.record.id
+    assert widget.selected_result_id == first.record.id
 
     background = gui.controller.adopt_external_result(_loaded("background"))
     assert background.record is not None
-    assert widget._selected_result_id() == first.record.id
+    assert widget.selected_result_id == first.record.id
 
     explicit = gui.controller.adopt_external_result(_loaded("explicit"), select_result=True)
     assert explicit.record is not None
-    assert widget._selected_result_id() == explicit.record.id
+    assert widget.selected_result_id == explicit.record.id
 
     widget.close()

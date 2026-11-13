@@ -26,11 +26,11 @@ class EmptySpheresCount:
 
 @dataclass(frozen=True)
 class EmptySpheresResult:
-    """Presentation result of one explicit empty-sphere search/recalculation."""
+    """Result of one explicit empty-sphere search/recalculation."""
 
     found: int
 
-    display_name: ClassVar[str] = "Empty spheres"
+    task_name: ClassVar[str] = "empty_spheres"
 
     @property
     def output_values(self) -> dict[str, EmptySpheresCount]:

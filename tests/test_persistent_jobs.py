@@ -31,7 +31,7 @@ def _record(*, state=_State.RUNNING, endpoint=None, reference=None, finished_at=
         reference=reference,
         return_code=None,
         message="queued remotely",
-        artifacts=SimpleNamespace(state=SimpleNamespace(value="current")),
+        result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
     )
 
 
@@ -49,7 +49,7 @@ def test_persistent_job_maps_endpoint_metadata():
     assert job.state == "running"
     assert job.task == "DOS"
     assert job.target == "SSH · cluster.example · PSI/J slurm"
-    assert job.artifact_state == "current"
+    assert job.result_files_state == "current"
     assert job.finished_at is None
     assert not job.is_final
     assert not job.attachable

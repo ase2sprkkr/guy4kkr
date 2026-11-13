@@ -108,6 +108,7 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
     assert controller.state_id == original_state_id
     assert controller.result_history[0].result is external
     assert controller.result_history[0].output_state_id is not None
+    assert controller.result_history[0].imported
 
 
 def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_path):
@@ -262,7 +263,7 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
     assert record.output_state_id == controller.state_id
     assert controller.state_id != input_state_id
     assert controller.atoms is atoms
-    assert state.atoms is atoms
+    assert state.structure_snapshot is not None
     assert controller.potential_path == "Fe.pot"
     assert state.potential_path == "Fe.pot"
     assert controller.generation != generation
@@ -324,7 +325,6 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         older,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
     )
@@ -332,7 +332,6 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
         newest,
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
     )
@@ -355,7 +354,7 @@ def test_result_selector_groups_by_formula_and_switches_displayed_result():
     widget.close()
 
 
-def test_result_selector_shows_branch_nodes_only_after_real_fork():
+def test_result_selector_does_not_expose_internal_branch_nodes():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
     structure_id, root_state = store.new_structure_state(Atoms("Fe"), potential_path="p0")
@@ -364,35 +363,32 @@ def test_result_selector_shows_branch_nodes_only_after_real_fork():
         _ui_result("scf", "a"),
         structure_id=structure_id,
         input_state_id=root_state,
-        atoms=Atoms("Fe"),
         input_parameters=None,
         directory=None,
         output_atoms=Atoms("Fe"),
         output_potential_path="pa",
     )
+    second = store.add_result(
+        _ui_result("scf", "b"),
+        structure_id=structure_id,
+        input_state_id=root_state,
+        input_parameters=None,
+        directory=None,
+        output_atoms=Atoms("Fe"),
+        output_potential_path="pb",
+    )
+
+    assert store.branch_id_for_result(first) != store.branch_id_for_result(second)
+
     widget = ResultActionsWidget(
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
     widget.set_results(store)
     structure = widget._selector.topLevelItem(0)
-    assert structure.childCount() == 1
-    assert not structure.child(0).text(0).startswith("Branch")
-
-    second = store.add_result(
-        _ui_result("scf", "b"),
-        structure_id=structure_id,
-        input_state_id=root_state,
-        atoms=Atoms("Fe"),
-        input_parameters=None,
-        directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pb",
+    assert structure.childCount() == 2
+    assert all(
+        not structure.child(index).text(0).startswith("Branch")
+        for index in range(structure.childCount())
     )
-    widget.set_results(store)
-    structure = widget._selector.topLevelItem(0)
-    labels = {structure.child(i).text(0) for i in range(structure.childCount())}
-    assert labels == {"Branch 1", "Branch 2"}
-    assert store.branch_path(first) == (1,)
-    assert store.branch_path(second) == (2,)
     widget.close()

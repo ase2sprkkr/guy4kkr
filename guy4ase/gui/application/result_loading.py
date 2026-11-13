@@ -1,4 +1,4 @@
-"""Interpret calculation results and artifacts without changing a workspace."""
+"""Interpret calculation results and result files without changing a workspace."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,17 +7,20 @@ from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 
 @dataclass(frozen=True)
 class LoadedResult:
     """A result whose filesystem references have already been interpreted.
 
-    ``output_path`` and ``potential_path`` are provenance/artifact locations.
+    ``output_path`` and ``potential_path`` are provenance file locations.
     The authoritative physical potential, when successfully loaded, is attached
     to ``atoms``. A missing referenced potential is different: reconstructing
     atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
+
+    ``persistent_ref`` is the stable ASE2SPRKKR persistent-run identity when
+    this result originated from a persistent execution. It deliberately does
+    not duplicate the backend-specific run reference.
     """
 
     result: TaskResult
@@ -28,30 +31,21 @@ class LoadedResult:
     directory: str | None
     input_parameters: Any | None = None
     input_parameters_error: Exception | None = None
+    persistent_ref: str | None = None
 
 
 def load_potential_atoms(file_path: str | Path) -> Any:
-    """Load a POT file and attach that exact parsed potential to its atoms.
-
-    ASE2SPRKKR reconstructs the atomic/site state while parsing a potential, but
-    ``Potential.from_file(...).atoms`` does not currently attach the parsed
-    ``Potential`` back to the returned ``SPRKKRAtoms``. Guy4ASE calculations
-    launch from atoms, so doing the attachment here makes atoms the single
-    physical authority instead of relying on a parallel filename.
-    """
+    """Load one stable POT file and return the atoms owned by that potential."""
     path = Path(file_path).resolve()
-    potential = Potential.from_file(str(path))
+    potential = Potential.from_file(str(path), check_file_unchanged=True)
     atoms = potential.atoms
     if atoms is None:
         raise ValueError(f"Potential file contains no structure: {path}")
-    atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
-    atoms._potential = potential
-    potential.atoms = atoms
     return atoms
 
 
 def load_result_file(file_path: str | Path) -> LoadedResult:
-    """Parse an external result and all usable referenced artifacts."""
+    """Parse an external result and all usable referenced result files."""
     path = Path(file_path).resolve()
     result = TaskResult.from_file(path)
     return load_result(
@@ -66,15 +60,14 @@ def load_result(
     *,
     fallback_directory: str | Path | None,
     output_fallback: str | Path | None = None,
+    persistent_ref: str | None = None,
 ) -> LoadedResult:
-    """Resolve artifacts for an already constructed calculation result."""
-    output, potential = _result_artifacts(result, fallback_directory)
+    """Resolve result files for an already constructed calculation result."""
+    output, potential = _result_files(result, fallback_directory)
     if output is None and output_fallback is not None:
         output = Path(output_fallback).resolve()
     atoms, potential_error = _load_potential(potential)
-    input_parameters, input_parameters_error = _load_input_parameters(
-        result
-    )
+    input_parameters, input_parameters_error = _load_input_parameters(result)
     directory = str(output.parent.resolve()) if output is not None else None
     return LoadedResult(
         result=result,
@@ -85,12 +78,11 @@ def load_result(
         directory=directory,
         input_parameters=input_parameters,
         input_parameters_error=input_parameters_error,
+        persistent_ref=persistent_ref,
     )
 
 
-def _load_input_parameters(
-    result: Any,
-) -> tuple[Any | None, Exception | None]:
+def _load_input_parameters(result: Any) -> tuple[Any | None, Exception | None]:
     try:
         return getattr(result, "input_parameters", None), None
     except Exception as exc:  # noqa: BLE001 - parser failures are data
@@ -120,7 +112,7 @@ def _resolve_path(
     return resolved.resolve()
 
 
-def _result_artifacts(
+def _result_files(
     result: Any,
     fallback_directory: str | Path | None,
 ) -> tuple[Path | None, Path | None]:
@@ -136,7 +128,6 @@ def _result_artifacts(
         try:
             potential = getattr(result, "potential_filename", None)
         except ValueError:
-            # TaskResult uses ValueError for an unspecified POTFIL.
             potential = None
     potential = _resolve_path(potential, result, fallback_directory)
     return output, potential

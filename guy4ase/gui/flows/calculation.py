@@ -100,6 +100,16 @@ def run_calculation(
     parent, interactive_profiles = _launch_parent_and_profile_policy(
         parent_or_runs, parent
     )
+
+    task = controller.current_task()
+    if task is not None and not controller.can_run_task(task):
+        QMessageBox.information(
+            parent,
+            "Task Not Available",
+            f"{task.upper()} cannot be run with the current workspace state.",
+        )
+        return None
+
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -237,10 +247,7 @@ def recompute_result(
     result never silently switches calculation lineage.
     """
     record = controller.result_store.result(result_id)
-    try:
-        task = str(record.result.task_name).strip().lower()
-    except (AttributeError, TypeError, ValueError):
-        return None
+    task = record.task_name
     if not task or record.input_parameters is None:
         return None
 

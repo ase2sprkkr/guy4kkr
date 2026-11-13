@@ -7,11 +7,17 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from ase2sprkkr.potentials.potentials import PotentialFileChanged
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
-from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.potential_version import PotentialFileVersion
+from guy4ase.gui.application.result_loading import LoadedResult, load_potential_atoms
+from guy4ase.gui.application.result_store import (
+    CalculationStateRecord,
+    ResultRecord,
+    ResultStore,
+)
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
 
 _KEEP_DIRECTORY = object()
@@ -42,6 +48,10 @@ class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
 
 
+class PotentialVersionChanged(RuntimeError):
+    """The potential file no longer matches the version approved by the user."""
+
+
 @dataclass(frozen=True)
 class CalculationRequest:
     """Immutable provenance captured when a calculation is launched.
@@ -51,13 +61,16 @@ class CalculationRequest:
     ``state_id``. An SCF output may advance the workspace only while that exact
     input state is still active.
 
-    ``atoms`` intentionally shares the workspace/result-store instance.  SPR-KKR
-    preparation may lazily promote or populate caches/site/potential bookkeeping
-    on that object; those mutations do not change the represented physical
-    structure and therefore do not constitute a provenance or generation change.
-    Structural edits must still go through controller transitions. ``atoms`` is
-    also the sole physical authority for the input potential; potential paths
-    are provenance/artifact metadata only.
+    ``atoms`` identifies the authoritative launch input and is the sole physical
+    authority for its potential; potential paths are provenance/artifact metadata
+    only. The request may still reference the workspace object, but the run worker
+    copies it at the GUI-thread execution boundary before ASE2SPRKKR sees it.
+    Lazy promotion, site initialization and backend bookkeeping therefore affect
+    only the execution copy. Structural edits remain controller transitions.
+
+    ``restart_scf`` snapshots the pending workspace execution intent. It asks
+    ASE2SPRKKR to serialize ``SCFSTATUS START`` for this run without mutating the
+    authoritative workspace potential.
     """
 
     atoms: Any
@@ -66,6 +79,7 @@ class CalculationRequest:
     generation: Generation
     structure_id: int
     state_id: int
+    restart_scf: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,8 +180,20 @@ class WorkspaceController(QObject):
     def structure_kind(self):
         return self._workspace.structure_kind()
 
+    def current_task(self) -> str | None:
+        """Return the normalized task of the active input parameters, if known."""
+        parameters = self.input_parameters
+        try:
+            task = str(parameters.task_name).strip().lower()
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return task or None
+
     def can_calculate(self) -> bool:
-        return self._workspace.can_calculate()
+        if not self._workspace.can_calculate():
+            return False
+        task = self.current_task()
+        return task is None or self.can_run_task(task)
 
     def can_run_task(self, task: str) -> bool:
         """Return whether the active workspace satisfies ``task`` prerequisites."""
@@ -225,6 +251,7 @@ class WorkspaceController(QObject):
             generation=self._generation,
             structure_id=structure_id,
             state_id=state_id,
+            restart_scf=self.restarted,
         )
 
     def _generation_is_current(self, expected: Generation | None) -> bool:
@@ -364,6 +391,7 @@ class WorkspaceController(QObject):
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             produces_state=produces_state,
+            persistent_ref=loaded.persistent_ref,
         )
         self.resultChanged.emit(loaded.result)
         if select_result:
@@ -392,6 +420,7 @@ class WorkspaceController(QObject):
                     output_path=loaded.output_path,
                     potential_path=loaded.potential_path,
                     produces_state=(loaded.atoms is not None and _result_is_scf(loaded.result)),
+                    persistent_ref=loaded.persistent_ref,
                 )
                 self.resultChanged.emit(loaded.result)
                 return self._result_adoption(loaded, record=record)
@@ -402,6 +431,7 @@ class WorkspaceController(QObject):
                 generation=self.generation,
                 structure_id=self.structure_id,
                 state_id=self.state_id,
+                restart_scf=self.restarted,
             )
 
         is_scf = _result_is_scf(loaded.result)
@@ -410,9 +440,10 @@ class WorkspaceController(QObject):
             loaded.result,
             structure_id=request.structure_id,
             input_state_id=request.state_id,
-            atoms=request.atoms,
             input_parameters=request.input_parameters,
             directory=request.directory,
+            persistent_ref=loaded.persistent_ref,
+            restart_scf=request.restart_scf,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             output_atoms=output_atoms,
@@ -426,19 +457,20 @@ class WorkspaceController(QObject):
         workspace_updated = False
         if (
             is_scf
+            and output_atoms is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
             and request.state_id == self._workspace.state_id
         ):
             state = self._results.state(record.output_state_id)
-            self._workspace.atoms = state.atoms
+            self._workspace.atoms = output_atoms
             self._workspace.potential_path = state.potential_path
             self._workspace.empty_spheres = state.empty_spheres
             self._workspace.state_id = state.id
             self._workspace.restarted = False
             self._changed()
             workspace_updated = True
-            self.structureChanged.emit(state.atoms)
+            self.structureChanged.emit(output_atoms)
 
         self.resultChanged.emit(loaded.result)
         return self._result_adoption(
@@ -447,23 +479,111 @@ class WorkspaceController(QObject):
             workspace_updated=workspace_updated,
         )
 
-    def use_result_state(self, result_id: int) -> None:
-        """Explicitly activate the structure/potential represented by a result."""
+    def _known_state_for_potential(
+        self,
+        version: PotentialFileVersion,
+        *,
+        structure_id: int,
+    ) -> CalculationStateRecord | None:
+        return self._results.state_for_potential_version(
+            version,
+            structure_id=structure_id,
+        )
+
+    @staticmethod
+    def _load_potential_version(version: PotentialFileVersion) -> Any:
+        current = version.current()
+        if not current.available or current != version:
+            raise PotentialVersionChanged(
+                f"Potential file changed after it was presented: {version.path}"
+            )
+        try:
+            atoms = load_potential_atoms(version.path)
+        except PotentialFileChanged as exc:
+            raise PotentialVersionChanged(
+                f"Potential file changed while it was being read: {version.path}"
+            ) from exc
+        after = version.current()
+        if not after.available or after != version:
+            raise PotentialVersionChanged(
+                f"Potential file changed while it was being read: {version.path}"
+            )
+        return atoms
+
+    def _restore_state_atoms(self, state: CalculationStateRecord) -> Any:
+        version = state.potential_version
+        if version is not None and version.available:
+            return self._load_potential_version(version)
+        if state.structure_snapshot is not None:
+            return state.structure_snapshot.to_atoms()
+        raise ValueError("The selected result no longer has a reusable calculation input.")
+
+    def use_result_state(
+        self,
+        result_id: int,
+        expected_potential: PotentialFileVersion | None = None,
+    ) -> None:
+        """Activate a reconstructable historical state or approved current POTFIL."""
         record = self._results.result(result_id)
         state_id = record.output_state_id or record.input_state_id
         if state_id is None:
             raise ValueError("The selected result has no reusable calculation input.")
         state = self._results.state(state_id)
-        self._workspace.atoms = state.atoms
-        self._workspace.potential_path = state.potential_path
-        self._workspace.structure_id = state.structure_id
-        self._workspace.state_id = state.id
-        self._workspace.empty_spheres = state.empty_spheres
+
+        target_state = state
+        if expected_potential is not None:
+            if state.potential_path is None:
+                raise ValueError("The selected result has no reusable potential.")
+            state_path = Path(state.potential_path).expanduser().absolute()
+            if expected_potential.path != state_path:
+                raise ValueError("The approved potential does not belong to this result.")
+
+            current = expected_potential.current()
+            if not current.available or current != expected_potential:
+                raise PotentialVersionChanged(
+                    f"Potential file changed after it was presented: {expected_potential.path}"
+                )
+
+            if self.state_id is not None:
+                active = self._results.state(self.state_id)
+                if (
+                    active.structure_id == state.structure_id
+                    and active.potential_version == expected_potential
+                ):
+                    return
+
+            atoms = None
+            if state.potential_version != expected_potential:
+                known_state = self._known_state_for_potential(
+                    expected_potential,
+                    structure_id=state.structure_id,
+                )
+                if known_state is not None:
+                    target_state = known_state
+                else:
+                    atoms = self._load_potential_version(expected_potential)
+                    target_state_id = self._results.new_child_state(
+                        state.id,
+                        potential_path=str(expected_potential.path),
+                        potential_version=expected_potential,
+                        empty_spheres=None,
+                    )
+                    target_state = self._results.state(target_state_id)
+            if atoms is None:
+                atoms = self._load_potential_version(expected_potential)
+        else:
+            atoms = self._restore_state_atoms(target_state)
+
+        self._workspace.atoms = atoms
+        self._workspace.potential_path = target_state.potential_path
+        self._workspace.structure_id = target_state.structure_id
+        self._workspace.state_id = target_state.id
+        self._workspace.empty_spheres = target_state.empty_spheres
         self._workspace.restarted = (
-            state.parent_id is not None and not _atoms_has_potential(state.atoms)
+            target_state.parent_id is not None and not _atoms_has_potential(atoms)
         )
         self._changed()
-        self.structureChanged.emit(state.atoms)
+        self.structureChanged.emit(atoms)
 
     def reset(self) -> None:
         """Clear the draft while deliberately preserving calculation history."""
@@ -524,7 +644,6 @@ class WorkspaceController(QObject):
             result,
             structure_id=structure_id,
             input_state_id=state_id,
-            atoms=source,
             input_parameters=empty_spheres.parameters,
             directory=self.directory,
             output_atoms=updated if structure_changed else None,
@@ -534,7 +653,8 @@ class WorkspaceController(QObject):
 
         assert record.output_state_id is not None
         state = self._results.state(record.output_state_id)
-        self._workspace.atoms = state.atoms
+        active_atoms = updated if structure_changed else source
+        self._workspace.atoms = active_atoms
         self._workspace.potential_path = state.potential_path
         self._workspace.empty_spheres = state.empty_spheres
         self._workspace.state_id = state.id
@@ -542,7 +662,7 @@ class WorkspaceController(QObject):
             self._workspace.restarted = True
         self._changed()
         if structure_changed:
-            self.structureChanged.emit(state.atoms)
+            self.structureChanged.emit(active_atoms)
 
         self.resultChanged.emit(result)
         return DocumentChange.APPLIED

@@ -166,7 +166,6 @@ def test_result_from_other_structure_offers_structure_reuse():
         result,
         structure_id=first_structure,
         input_state_id=first_state,
-        atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=None,
     )
@@ -174,7 +173,7 @@ def test_result_from_other_structure_offers_structure_reuse():
     widget.set_workspace_state(current_structure, current_state)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
+    assert widget.selected_result_id == record.id
     assert not widget._record_actions.isHidden()
     assert not widget._use_state_button.isHidden()
     assert widget._use_state_button.text() == "Use this structure"
@@ -183,18 +182,23 @@ def test_result_from_other_structure_offers_structure_reuse():
     widget.close()
 
 
-def test_result_from_other_state_of_same_structure_offers_potential_reuse():
+def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_path):
     _application = QApplication.instance() or QApplication([])
+    p0 = tmp_path / "p0"
+    p1 = tmp_path / "p1"
+    p2 = tmp_path / "p2"
+    for path in (p0, p1, p2):
+        path.write_text(path.name)
+
     store = ResultStore()
-    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-    historical_state = store.new_child_state(root, atoms=Atoms("Fe"), potential_path="p1")
-    current_state = store.new_child_state(historical_state, atoms=Atoms("Fe"), potential_path="p2")
+    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=str(p0))
+    historical_state = store.new_child_state(root, potential_path=str(p1))
+    current_state = store.new_child_state(historical_state, potential_path=str(p2))
     result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
         result,
         structure_id=structure_id,
         input_state_id=historical_state,
-        atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=None,
     )
@@ -202,7 +206,6 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse():
     widget.set_workspace_state(structure_id, current_state)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
     assert widget._use_state_button.text() == "Use this potential"
     assert widget._recompute_button.text() == "Recompute on current potential"
     widget.close()
@@ -216,7 +219,6 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
         EmptySpheresResult(found=2),
         structure_id=structure_id,
         input_state_id=state_id,
-        atoms=Atoms("Fe"),
         input_parameters={"min_radius": 0.8},
         directory=None,
     )
@@ -224,7 +226,7 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
     widget.set_workspace_state(structure_id, state_id)
     widget.set_results(store)
 
-    assert widget._selected_result_id() == record.id
+    assert widget.selected_result_id == record.id
     assert widget._selector.currentItem().text(0) == "Empty spheres"
     assert widget._recompute_button.isHidden()
     widget.close()

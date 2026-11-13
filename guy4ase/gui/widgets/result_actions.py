@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.file_version import FileState
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.misc.resources import icon_path
 
@@ -39,6 +41,9 @@ _STANDARD_ICONS = {
 _ACTION_LABELS = {
     "data": "View data",
     "open_directory": "Open containing directory",
+}
+_TASK_LABELS = {
+    "empty_spheres": "Empty spheres",
 }
 _RESULT_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 
@@ -86,9 +91,9 @@ class ElidedValueLabel(QLabel):
 
 
 class ResultActionsWidget(QWidget):
-    """Browse the calculation tree grouped by formula and branch."""
+    """Browse a flat projection of exact result provenance."""
 
-    useStateRequested = pyqtSignal(int)
+    useStateRequested = pyqtSignal(int, object)
     recomputeRequested = pyqtSignal(int)
 
     def __init__(
@@ -109,6 +114,7 @@ class ResultActionsWidget(QWidget):
         self._records: dict[int, ResultRecord] = {}
         self._current_structure_id: int | None = None
         self._current_state_id: int | None = None
+        self._use_state_potential_version: PotentialFileVersion | None = None
         self._history_dialog = None
 
         layout = QVBoxLayout(self)
@@ -141,6 +147,11 @@ class ResultActionsWidget(QWidget):
         self._record_actions.hide()
         layout.addWidget(self._record_actions)
 
+        self._result_file_warning = QLabel("", self)
+        self._result_file_warning.setWordWrap(True)
+        self._result_file_warning.hide()
+        layout.addWidget(self._result_file_warning)
+
         self._empty_label = QLabel(empty_text, self)
         self._empty_label.setWordWrap(True)
         layout.addWidget(self._empty_label)
@@ -161,6 +172,23 @@ class ResultActionsWidget(QWidget):
     @property
     def has_rows(self) -> bool:
         return self._row_count > 0
+
+    @property
+    def selected_result_id(self) -> int | None:
+        """Return the selected provenance result, if any."""
+        item = self._selector.currentItem()
+        if item is None:
+            return None
+        value = item.data(0, _RESULT_ID_ROLE)
+        return int(value) if value is not None else None
+
+    def select_result(self, result_id: int) -> bool:
+        """Select a result by provenance id if it is present in this projection."""
+        item = self._find_result_item(result_id)
+        if item is None:
+            return False
+        self._selector.setCurrentItem(item)
+        return True
 
     def _open_calculation_history(self) -> None:
         if self._history_dialog is not None:
@@ -189,14 +217,7 @@ class ResultActionsWidget(QWidget):
         self._refresh_record_actions(self._record_for_item(self._selector.currentItem()))
 
     def set_results(self, results: Any) -> None:
-        """Render only from the authoritative ResultStore.
-
-        Older window refresh methods still pass ``result_history``. Once this
-        widget has been wired to a ResultStore those calls deliberately reuse
-        that store instead of reconstructing lineage from a flat sequence.
-        During top-level window construction, before wiring, they simply leave
-        the result view empty.
-        """
+        """Project exact provenance: imports by directory, native results by POT source."""
         if isinstance(results, ResultStore):
             self._store = results
         elif self._store is None:
@@ -209,43 +230,65 @@ class ResultActionsWidget(QWidget):
         store = self._store
         assert store is not None
 
-        selected_id = self._selected_result_id()
-        records = store.results
-        self._records = {record.id: record for record in records}
+        selected_id = self.selected_result_id
+        result_items: dict[int, QTreeWidgetItem] = {}
+        records: dict[int, ResultRecord] = {}
 
         self._selector.blockSignals(True)
         try:
             self._selector.clear()
-            formula_counts: dict[str, int] = {}
+            directory_items: list[QTreeWidgetItem] = []
 
-            for structure in store.structures:
-                branch_ids = store.branch_ids(structure.id)
-                if not branch_ids:
+            # Imported results are grouped by their real source directory. Build
+            # their items first so a later native result can attach below an
+            # imported SCF whose potential it actually used.
+            for directory in store.import_directories:
+                imported = store.imported_results(directory)
+                if not imported:
                     continue
-                formula_counts[structure.formula] = formula_counts.get(structure.formula, 0) + 1
-                number = formula_counts[structure.formula]
-                title = structure.formula if number == 1 else f"{structure.formula} ({number})"
-                structure_item = QTreeWidgetItem([title])
+                directory_item = QTreeWidgetItem([directory or "(unknown directory)"])
+                directory_item.setFlags(
+                    directory_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
+                )
+                directory_items.append(directory_item)
+                for record in imported:
+                    records[record.id] = record
+                    item = self._result_item(record)
+                    directory_item.addChild(item)
+                    result_items[record.id] = item
+
+            formula_counts: dict[str, int] = {}
+            for structure in store.structures:
+                structure_records = store.structure_results(structure.id)
+                if not structure_records:
+                    continue
+
+                structure_item = QTreeWidgetItem([structure.formula])
                 structure_item.setFlags(
                     structure_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
                 )
-                self._selector.addTopLevelItem(structure_item)
+                for record in structure_records:
+                    records[record.id] = record
+                    item = self._result_item(record)
+                    result_items[record.id] = item
 
-                show_branches = len(branch_ids) > 1
-                for branch_id in branch_ids:
-                    parent = structure_item
-                    if show_branches:
-                        branch_number = store.branch_number(structure.id, branch_id)
-                        branch_item = QTreeWidgetItem([f"Branch {branch_number}"])
-                        branch_item.setFlags(
-                            branch_item.flags() & ~Qt.ItemFlag.ItemIsSelectable
-                        )
-                        structure_item.addChild(branch_item)
-                        parent = branch_item
-                    for record in store.results_in_branch(structure.id, branch_id):
-                        item = QTreeWidgetItem([self._result_label(record)])
-                        item.setData(0, _RESULT_ID_ROLE, record.id)
-                        parent.addChild(item)
+                    if record.task_name in {"scf", "empty_spheres"}:
+                        structure_item.addChild(item)
+                        continue
+
+                    source = store.potential_source_result(record.input_state_id)
+                    parent = result_items.get(source.id) if source is not None else None
+                    (parent or structure_item).addChild(item)
+
+                if structure_item.childCount():
+                    number = formula_counts.get(structure.formula, 0) + 1
+                    formula_counts[structure.formula] = number
+                    if number > 1:
+                        structure_item.setText(0, f"{structure.formula} ({number})")
+                    self._selector.addTopLevelItem(structure_item)
+
+            for directory_item in directory_items:
+                self._selector.addTopLevelItem(directory_item)
 
             if store.unstructured_results:
                 unknown_item = QTreeWidgetItem(["Unknown structure"])
@@ -254,10 +297,12 @@ class ResultActionsWidget(QWidget):
                 )
                 self._selector.addTopLevelItem(unknown_item)
                 for record in store.unstructured_results:
-                    item = QTreeWidgetItem([self._result_label(record)])
-                    item.setData(0, _RESULT_ID_ROLE, record.id)
+                    records[record.id] = record
+                    item = self._result_item(record)
                     unknown_item.addChild(item)
+                    result_items[record.id] = item
 
+            self._records = records
             self._selector.expandAll()
             target = self._find_result_item(selected_id)
             if target is None:
@@ -265,7 +310,7 @@ class ResultActionsWidget(QWidget):
                 if active is not None:
                     target = self._find_result_item(active.id)
             if target is None and records:
-                target = self._find_result_item(records[0].id)
+                target = self._find_result_item(max(records))
             if target is not None:
                 self._selector.setCurrentItem(target)
         finally:
@@ -273,15 +318,13 @@ class ResultActionsWidget(QWidget):
 
         self._selector.setVisible(bool(records))
         selected_record = self._record_for_item(self._selector.currentItem())
-        self.set_result(selected_record.result if selected_record is not None else None)
+        self.set_record(selected_record)
         self._refresh_record_actions(selected_record)
 
-    def _selected_result_id(self) -> int | None:
-        item = self._selector.currentItem()
-        if item is None:
-            return None
-        value = item.data(0, _RESULT_ID_ROLE)
-        return int(value) if value is not None else None
+    def _result_item(self, record: ResultRecord) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([self._result_label(record)])
+        item.setData(0, _RESULT_ID_ROLE, record.id)
+        return item
 
     def _find_result_item(self, result_id: int | None) -> QTreeWidgetItem | None:
         if result_id is None:
@@ -309,37 +352,84 @@ class ResultActionsWidget(QWidget):
         _previous: QTreeWidgetItem | None,
     ) -> None:
         record = self._record_for_item(current)
-        if record is not None:
-            self.set_result(record.result)
+        self.set_record(record)
         self._refresh_record_actions(record)
 
     def _refresh_record_actions(self, record: ResultRecord | None) -> None:
         store = self._store
         if record is None or store is None:
+            self._use_state_potential_version = None
             self._record_actions.hide()
             return
 
         state = store.state_for_result(record)
+        active_state = (
+            store.state(self._current_state_id)
+            if self._current_state_id is not None
+            else None
+        )
         different_state = state is not None and state.id != self._current_state_id
         different_structure = (
             record.structure_id is not None
             and record.structure_id != self._current_structure_id
         )
-        can_use = different_state
-        self._use_state_button.setVisible(can_use)
-        if can_use and state is not None:
-            self._use_state_button.setText(
-                "Use this structure"
-                if different_structure or state.potential_path is None
-                else "Use this potential"
-            )
 
-        try:
-            task = str(record.result.task_name).strip()
-        except (AttributeError, TypeError, ValueError):
-            task = ""
+        recorded_potential = state.potential_version if state is not None else None
+        recorded_potential_was_usable = bool(
+            recorded_potential is not None and recorded_potential.available
+        )
+        current_potential = (
+            recorded_potential.current()
+            if recorded_potential_was_usable
+            else None
+        )
+        exact_potential_available = bool(
+            current_potential is not None
+            and current_potential.available
+            and current_potential == recorded_potential
+        )
+        potential_changed = bool(
+            current_potential is not None
+            and current_potential.available
+            and current_potential != recorded_potential
+        )
+        snapshot_available = bool(
+            state is not None and state.structure_snapshot is not None
+        )
+        active_has_current_potential = (
+            potential_changed
+            and active_state is not None
+            and state is not None
+            and active_state.structure_id == state.structure_id
+            and active_state.potential_version == current_potential
+        )
+        can_restore = snapshot_available or exact_potential_available or potential_changed
+        can_use = (
+            state is not None
+            and can_restore
+            and not active_has_current_potential
+            and (different_state or potential_changed)
+        )
+        self._use_state_potential_version = (
+            current_potential
+            if can_use and potential_changed
+            else recorded_potential
+            if can_use and exact_potential_available
+            else None
+        )
+        self._use_state_button.setVisible(can_use)
+        if can_use:
+            if potential_changed:
+                text = "Continue with current version of this potential"
+            elif exact_potential_available and not different_structure:
+                text = "Use this potential"
+            else:
+                text = "Use this structure"
+            self._use_state_button.setText(text)
+
         can_recompute = (
-            bool(task)
+            bool(record.task_name)
+            and record.task_name != "empty_spheres"
             and record.input_parameters is not None
             and self._current_structure_id is not None
         )
@@ -354,22 +444,28 @@ class ResultActionsWidget(QWidget):
         self._record_actions.setVisible(can_use or can_recompute)
 
     def _use_selected_state(self) -> None:
-        result_id = self._selected_result_id()
-        if result_id is not None:
-            self.useStateRequested.emit(result_id)
+        result_id = self.selected_result_id
+        if result_id is None:
+            return
+        expected = self._use_state_potential_version
+        if expected is not None:
+            current = expected.current()
+            if not current.available or current != expected:
+                self._refresh_record_actions(
+                    self._record_for_item(self._selector.currentItem())
+                )
+                return
+        self.useStateRequested.emit(result_id, expected)
 
     def _recompute_selected(self) -> None:
-        result_id = self._selected_result_id()
+        result_id = self.selected_result_id
         if result_id is not None:
             self.recomputeRequested.emit(result_id)
 
     @staticmethod
     def _result_label(record: ResultRecord) -> str:
         result = record.result
-        try:
-            task = str(result.task_name).strip().upper()
-        except (AttributeError, TypeError, ValueError):
-            task = str(getattr(result, "display_name", type(result).__name__))
+        task = _TASK_LABELS.get(record.task_name, record.task_name.upper())
         try:
             output = getattr(result, "output_file", None)
             output_name = Path(str(output)).name if output else ""
@@ -377,8 +473,18 @@ class ResultActionsWidget(QWidget):
             output_name = ""
         return " — ".join(part for part in (task, output_name) if part)
 
+    def set_record(self, record: ResultRecord | None) -> None:
+        self._render_result(record.result if record is not None else None, record)
+
     def set_result(self, result: Any | None) -> None:
+        """Render a live result without historical result-file provenance."""
+        self._render_result(result, None)
+
+    def _render_result(
+        self, result: Any | None, record: ResultRecord | None
+    ) -> None:
         self._clear()
+        self._result_file_warning.hide()
         if result is None:
             self._show_empty(self._empty_text)
             return
@@ -391,13 +497,69 @@ class ResultActionsWidget(QWidget):
             self._add_error_row("Output values could not be loaded", exc)
             items = ()
 
+        has_replaced_result_file = False
+        has_unavailable_result_file = False
         for key, value in items:
             try:
                 name = str(key)
             except Exception:
                 logger.exception("Failed to read an output value name")
                 name = "<unknown output>"
-            self._add_value(name, value)
+
+            shown_value = value
+            warning = None
+            disable_actions = False
+            result_file = record.result_files.get(name) if record is not None else None
+            if result_file is not None:
+                state = result_file.state()
+                if state is FileState.OVERWRITTEN:
+                    has_replaced_result_file = True
+                    current_value = (
+                        self._store.current_value_for_result_file(result_file)
+                        if self._store is not None
+                        else None
+                    )
+                    if current_value is not None:
+                        shown_value = current_value
+                    warning = (
+                        "The historical result file was overwritten. Showing the current "
+                        f"contents of {result_file.path.name}; these are not the original "
+                        "data from the selected calculation."
+                    )
+                elif state is FileState.MISSING:
+                    has_unavailable_result_file = True
+                    disable_actions = True
+                    warning = (
+                        "The historical result file no longer exists, so its original "
+                        "contents are unavailable."
+                    )
+                elif state is FileState.UNAVAILABLE:
+                    has_unavailable_result_file = True
+                    disable_actions = True
+                    warning = (
+                        "The historical result file cannot currently be inspected, so "
+                        "its contents are unavailable."
+                    )
+
+            self._add_value(
+                name,
+                shown_value,
+                warning=warning,
+                disable_actions=disable_actions,
+            )
+
+        if has_replaced_result_file:
+            self._result_file_warning.setText(
+                "⚠ Historical result files were overwritten. Showing current contents "
+                "where available; these are not the original data from the selected "
+                "calculation."
+            )
+            self._result_file_warning.show()
+        elif has_unavailable_result_file:
+            self._result_file_warning.setText(
+                "⚠ Some historical result files are no longer available."
+            )
+            self._result_file_warning.show()
 
         if self._row_count:
             self._empty_label.hide()
@@ -405,7 +567,14 @@ class ResultActionsWidget(QWidget):
         else:
             self._show_empty("No actions available.")
 
-    def _add_value(self, key: str, value: Any) -> None:
+    def _add_value(
+        self,
+        key: str,
+        value: Any,
+        *,
+        warning: str | None = None,
+        disable_actions: bool = False,
+    ) -> None:
         try:
             fallback_name = getattr(value, "name", key)
             name = str(getattr(value, "display_name", fallback_name))
@@ -419,22 +588,34 @@ class ResultActionsWidget(QWidget):
             return
 
         try:
-            actions = tuple(str(action) for action in value.actions())
+            actions = () if disable_actions else tuple(str(action) for action in value.actions())
         except Exception as exc:
             logger.exception("Failed to load actions for output value %r", key)
+            action_warning = f"Actions could not be loaded: {exc}"
             self._add_row(
                 value,
                 (),
                 name=name,
                 info=info,
                 summary=summary,
-                warning=f"Actions could not be loaded: {exc}",
+                warning="\n\n".join(
+                    part for part in (warning, action_warning) if part
+                ),
             )
             return
 
         if not actions and not self._show_values_without_actions and not show_in_summary:
             return
-        self._add_row(value, actions, name=name, info=info, summary=summary)
+        if warning:
+            name = f"{name} ⚠"
+        self._add_row(
+            value,
+            actions,
+            name=name,
+            info=info,
+            summary=summary,
+            warning=warning,
+        )
 
     def _add_error_row(self, name: str, error: Exception | None = None) -> None:
         detail = f": {error}" if error else ""
@@ -475,7 +656,10 @@ class ResultActionsWidget(QWidget):
             button = QToolButton(buttons)
             button.setAutoRaise(True)
             button.setIcon(result_action_icon(self.style(), action))
-            button.setToolTip(_action_tooltip(action, info))
+            action_tooltip = _action_tooltip(action, info)
+            if warning:
+                action_tooltip = "\n\n".join((action_tooltip, warning))
+            button.setToolTip(action_tooltip)
             button.clicked.connect(
                 lambda _checked=False, v=value, a=action: self._action_handler(v, a)
             )
