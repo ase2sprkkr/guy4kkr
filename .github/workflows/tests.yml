@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ase2sprkkr/ase2sprkkr
-          ref: guy4ase
+          ref: workflow
           path: .ci/ase2sprkkr
 
       - name: Install package and test dependencies

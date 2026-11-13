@@ -31,6 +31,7 @@ def test_empty_sphere_search_state_allows_repeated_failed_search():
     assert controller.result_history[0].input_state_id == state_id
     assert controller.result_history[0].output_state_id is None
     assert controller.state_id == state_id
+    assert controller.generation == generation
 
 
 def test_empty_sphere_update_publishes_found_count_and_new_state():
@@ -65,7 +66,7 @@ def test_empty_sphere_update_publishes_found_count_and_new_state():
     assert record.output_state_id == controller.state_id
     assert published == [record.result]
     assert workspace.potential_path is None
-    assert controller.generation == generation.next_major()
+    assert controller.generation == generation.next()
 
 
 def test_empty_sphere_state_keeps_search_parameters_across_later_results():
@@ -162,7 +163,7 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
     assert workspace.potential_path == "Fe.pot"
     assert controller.state_id != previous_state_id
     assert controller.result_store.state(controller.state_id).parent_id == previous_state_id
-    assert controller.generation == generation.next_major()
+    assert controller.generation == generation.next()
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():

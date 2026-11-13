@@ -68,16 +68,27 @@ class GuiApplication(QObject):
         return self._main_window
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
-        """Connect result browsing to explicit draft-changing actions."""
+        """Connect explicit result actions and one authoritative result store."""
         widget = window._result_actions_widget
         if widget is None:
             return
 
         def refresh_result_context(*_args) -> None:
-            widget.set_current_structure_id(self.controller.structure_id)
+            widget.set_workspace_state(
+                self.controller.structure_id,
+                self.controller.state_id,
+            )
             widget.set_results(self.controller.result_store)
 
-        widget.useStructureRequested.connect(self.controller.use_result_structure)
+        def select_result(result_id: int) -> None:
+            # Selection is a presentation concern. ResultActionsWidget deliberately
+            # keeps normal refreshes sticky, so an explicit user import selects by
+            # id only after resultChanged has rebuilt the selector.
+            item = widget._find_result_item(result_id)
+            if item is not None:
+                widget._selector.setCurrentItem(item)
+
+        widget.useStateRequested.connect(self.controller.use_result_state)
         widget.recomputeRequested.connect(
             lambda result_id, target=window: calculation_flow.recompute_result(
                 self.controller,
@@ -89,6 +100,8 @@ class GuiApplication(QObject):
         )
         self.controller.structureChanged.connect(refresh_result_context)
         self.controller.resultChanged.connect(refresh_result_context)
+        self.controller.resultSelectionRequested.connect(select_result)
+        self.recent_files.changed.connect(refresh_result_context)
         refresh_result_context()
 
     def show_workflow_window(self) -> None:

@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from guy4ase.gui.application.workspace import EmptySpheresState
 from guy4ase.physics.composition import structure_formula
 
 _KEEP_POTENTIAL = object()
+_KEEP_EMPTY_SPHERES = object()
 
 
 @dataclass(frozen=True)
@@ -20,18 +22,23 @@ class StructureRecord:
 
 @dataclass(frozen=True)
 class CalculationStateRecord:
-    """One concrete input state used by SPR-KKR calculations.
+    """One concrete restorable state in a calculation lineage.
 
-    State identity is assigned, never inferred from the contents. SCF and
-    structure-preserving transformations such as Empty Spheres create child
-    states of the same :class:`StructureRecord`.
+    Identity is assigned, never inferred from contents. ``branch_id`` is stable
+    provenance: sequential state-producing operations normally keep it, while
+    an explicit restart or a sibling continuation starts another branch.
+
+    ``empty_spheres`` records metadata of the explicit empty-sphere search that
+    produced this state. The atoms remain authoritative for the actual structure.
     """
 
     id: int
     structure_id: int
     parent_id: int | None
+    branch_id: int
     atoms: Any
     potential_path: str | None
+    empty_spheres: EmptySpheresState | None = None
     produced_by_result_id: int | None = None
 
 
@@ -59,15 +66,20 @@ class ResultRecord:
 
 
 class ResultStore:
-    """Own completed results and the lineage of states they used/produced."""
+    """Own completed results as a structure -> branch -> state/result tree."""
 
     def __init__(self) -> None:
         self._next_structure_id = 1
         self._next_state_id = 1
         self._next_result_id = 1
+        self._next_branch_id = 1
         self._structures: dict[int, StructureRecord] = {}
         self._states: dict[int, CalculationStateRecord] = {}
-        self._results: list[ResultRecord] = []
+        self._results: dict[int, ResultRecord] = {}
+        self._state_children: dict[int, list[int]] = {}
+        self._result_ids_by_state: dict[int, list[int]] = {}
+        self._unstructured_result_ids: list[int] = []
+        self._structure_branches: dict[int, list[int]] = {}
 
     def __len__(self) -> int:
         return len(self._results)
@@ -83,11 +95,22 @@ class ResultStore:
 
     @property
     def results(self) -> tuple[ResultRecord, ...]:
-        return tuple(reversed(self._results))
+        """Return a newest-first compatibility view over the tree."""
+        return tuple(
+            self._results[result_id]
+            for result_id in sorted(self._results, reverse=True)
+        )
 
     @property
     def structures(self) -> tuple[StructureRecord, ...]:
         return tuple(self._structures.values())
+
+    @property
+    def unstructured_results(self) -> tuple[ResultRecord, ...]:
+        return tuple(
+            self._results[result_id]
+            for result_id in self._unstructured_result_ids
+        )
 
     def structure(self, structure_id: int) -> StructureRecord:
         return self._structures[structure_id]
@@ -96,27 +119,85 @@ class ResultStore:
         return self._states[state_id]
 
     def result(self, result_id: int) -> ResultRecord:
-        for record in self._results:
-            if record.id == result_id:
-                return record
-        raise KeyError(result_id)
+        return self._results[result_id]
+
+    def state_for_result(self, record: ResultRecord) -> CalculationStateRecord | None:
+        state_id = record.output_state_id or record.input_state_id
+        return self._states.get(state_id) if state_id is not None else None
+
+    def branch_id_for_result(self, record: ResultRecord) -> int | None:
+        state = self.state_for_result(record)
+        return state.branch_id if state is not None else None
+
+    def branch_ids(self, structure_id: int) -> tuple[int, ...]:
+        """Return branches which currently contain at least one result."""
+        used = {
+            branch_id
+            for record in self._results.values()
+            if record.structure_id == structure_id
+            for branch_id in (self.branch_id_for_result(record),)
+            if branch_id is not None
+        }
+        return tuple(
+            branch_id
+            for branch_id in self._structure_branches.get(structure_id, ())
+            if branch_id in used
+        )
+
+    def branch_number(self, structure_id: int, branch_id: int) -> int:
+        return self._structure_branches[structure_id].index(branch_id) + 1
+
+    def results_in_branch(
+        self, structure_id: int, branch_id: int
+    ) -> tuple[ResultRecord, ...]:
+        """Return one branch in calculation order."""
+        return tuple(
+            sorted(
+                (
+                    record
+                    for record in self._results.values()
+                    if record.structure_id == structure_id
+                    and self.branch_id_for_result(record) == branch_id
+                ),
+                key=lambda record: record.id,
+            )
+        )
+
+    def results_for_state(self, state_id: int) -> tuple[ResultRecord, ...]:
+        return tuple(
+            self._results[result_id]
+            for result_id in self._result_ids_by_state.get(state_id, ())
+        )
+
+    def latest_result_for_state(self, state_id: int | None) -> ResultRecord | None:
+        """Return the latest result attached to the active state, if any."""
+        if state_id is None:
+            return None
+        result_ids = self._result_ids_by_state.get(state_id, ())
+        if not result_ids:
+            return None
+        return self._results[result_ids[-1]]
 
     def new_structure_state(
         self,
         atoms: Any,
         *,
         potential_path: str | None,
+        empty_spheres: EmptySpheresState | None = None,
     ) -> tuple[int, int]:
-        """Create a new user-visible structure and its initial calculation state."""
+        """Create a new user-visible structure and its initial branch/state."""
         structure_id = self._next_structure_id
         self._next_structure_id += 1
         formula = structure_formula(atoms) or type(atoms).__name__
         self._structures[structure_id] = StructureRecord(structure_id, formula)
+        branch_id = self._allocate_branch(structure_id)
         state_id = self._new_state(
             structure_id,
             atoms,
             potential_path=potential_path,
+            empty_spheres=empty_spheres,
             parent_id=None,
+            branch_id=branch_id,
             produced_by_result_id=None,
         )
         return structure_id, state_id
@@ -127,14 +208,16 @@ class ResultStore:
         *,
         atoms: Any | None = None,
         potential_path: str | None | object = _KEEP_POTENTIAL,
+        empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
         produced_by_result_id: int | None = None,
+        new_branch: bool = False,
     ) -> int:
-        """Assign a new identity derived from an existing calculation state.
+        """Create a state below ``parent_id`` and assign its branch.
 
-        Omitting ``potential_path`` inherits the parent's potential. Passing
-        ``None`` explicitly clears it. This distinction is required because an
-        explicit new SCF sequence reuses its starting potential whereas a
-        structure-changing operation such as Empty Spheres invalidates it.
+        Sequential state changes keep the parent's branch. A second sibling
+        continuation is an alternative and therefore starts another branch.
+        Potential and empty-sphere provenance are inherited unless explicitly
+        replaced. ``new_branch=True`` is used by an explicit continuation.
         """
         parent = self.state(parent_id)
         resolved_potential = (
@@ -142,11 +225,27 @@ class ResultStore:
             if potential_path is _KEEP_POTENTIAL
             else potential_path
         )
+        resolved_empty_spheres = (
+            parent.empty_spheres
+            if empty_spheres is _KEEP_EMPTY_SPHERES
+            else empty_spheres
+        )
+        same_branch_child_exists = any(
+            self.state(child_id).branch_id == parent.branch_id
+            for child_id in self._state_children.get(parent_id, ())
+        )
+        branch_id = (
+            self._allocate_branch(parent.structure_id)
+            if new_branch or same_branch_child_exists
+            else parent.branch_id
+        )
         return self._new_state(
             parent.structure_id,
             parent.atoms if atoms is None else atoms,
             potential_path=resolved_potential,
+            empty_spheres=resolved_empty_spheres,
             parent_id=parent.id,
+            branch_id=branch_id,
             produced_by_result_id=produced_by_result_id,
         )
 
@@ -163,24 +262,48 @@ class ResultStore:
         potential_path: Path | None = None,
         output_atoms: Any | None = None,
         output_potential_path: str | None = None,
+        output_empty_spheres: EmptySpheresState | None | object = _KEEP_EMPTY_SPHERES,
     ) -> ResultRecord:
+        if input_state_id is not None:
+            input_state = self.state(input_state_id)
+            if input_state.structure_id != structure_id:
+                raise AssertionError(
+                    "Result provenance mismatch: input state "
+                    f"{input_state_id} belongs to structure "
+                    f"{input_state.structure_id}, not {structure_id}."
+                )
+
         result_id = self._next_result_id
         self._next_result_id += 1
 
         output_state_id = None
-        if output_atoms is not None:
+        produces_state = (
+            output_atoms is not None
+            or output_empty_spheres is not _KEEP_EMPTY_SPHERES
+        )
+        if produces_state:
             if structure_id is None:
+                root_empty_spheres = (
+                    None
+                    if output_empty_spheres is _KEEP_EMPTY_SPHERES
+                    else output_empty_spheres
+                )
+                if output_atoms is None:
+                    raise ValueError("A new structure state requires atoms.")
                 structure_id, output_state_id = self.new_structure_state(
                     output_atoms,
                     potential_path=output_potential_path,
+                    empty_spheres=root_empty_spheres,
                 )
                 root = self._states[output_state_id]
                 self._states[output_state_id] = CalculationStateRecord(
                     id=root.id,
                     structure_id=root.structure_id,
                     parent_id=None,
+                    branch_id=root.branch_id,
                     atoms=root.atoms,
                     potential_path=root.potential_path,
+                    empty_spheres=root.empty_spheres,
                     produced_by_result_id=result_id,
                 )
             else:
@@ -190,6 +313,7 @@ class ResultStore:
                     input_state_id,
                     atoms=output_atoms,
                     potential_path=output_potential_path,
+                    empty_spheres=output_empty_spheres,
                     produced_by_result_id=result_id,
                 )
 
@@ -205,7 +329,12 @@ class ResultStore:
             output_path=output_path,
             potential_path=potential_path,
         )
-        self._results.append(record)
+        self._results[result_id] = record
+        state_id = output_state_id or input_state_id
+        if state_id is None:
+            self._unstructured_result_ids.append(result_id)
+        else:
+            self._result_ids_by_state.setdefault(state_id, []).append(result_id)
         return record
 
     def add_external_result(
@@ -261,34 +390,20 @@ class ResultStore:
         )
 
     def branch_path(self, record: ResultRecord) -> tuple[int, ...]:
-        """Return branch numbers only where a state actually forks."""
-        state_id = record.output_state_id or record.input_state_id
-        if state_id is None:
+        """Compatibility presentation of the stable branch identity."""
+        if record.structure_id is None:
             return ()
-        children = self._children_by_parent(record.structure_id)
-        path: list[int] = []
-        current = state_id
-        while current in self._states:
-            state = self._states[current]
-            parent_id = state.parent_id
-            if parent_id is None:
-                break
-            siblings = children.get(parent_id, ())
-            if len(siblings) > 1:
-                path.append(siblings.index(current) + 1)
-            current = parent_id
-        path.reverse()
-        return tuple(path)
+        branch_id = self.branch_id_for_result(record)
+        branches = self.branch_ids(record.structure_id)
+        if branch_id is None or len(branches) <= 1:
+            return ()
+        return (self.branch_number(record.structure_id, branch_id),)
 
-    def _children_by_parent(
-        self, structure_id: int | None
-    ) -> dict[int, tuple[int, ...]]:
-        children: dict[int, list[int]] = {}
-        for state in self._states.values():
-            if state.structure_id != structure_id or state.parent_id is None:
-                continue
-            children.setdefault(state.parent_id, []).append(state.id)
-        return {parent: tuple(sorted(ids)) for parent, ids in children.items()}
+    def _allocate_branch(self, structure_id: int) -> int:
+        branch_id = self._next_branch_id
+        self._next_branch_id += 1
+        self._structure_branches.setdefault(structure_id, []).append(branch_id)
+        return branch_id
 
     def _new_state(
         self,
@@ -296,7 +411,9 @@ class ResultStore:
         atoms: Any,
         *,
         potential_path: str | None,
+        empty_spheres: EmptySpheresState | None,
         parent_id: int | None,
+        branch_id: int,
         produced_by_result_id: int | None,
     ) -> int:
         state_id = self._next_state_id
@@ -305,8 +422,12 @@ class ResultStore:
             id=state_id,
             structure_id=structure_id,
             parent_id=parent_id,
+            branch_id=branch_id,
             atoms=atoms,
             potential_path=potential_path,
+            empty_spheres=empty_spheres,
             produced_by_result_id=produced_by_result_id,
         )
+        if parent_id is not None:
+            self._state_children.setdefault(parent_id, []).append(state_id)
         return state_id

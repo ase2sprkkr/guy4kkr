@@ -942,7 +942,6 @@ def test_missing_referenced_potential_is_an_explicit_nonfatal_failure(
 
     adoption = controller.adopt_external_result(loaded)
 
-    assert adoption.adopted
     assert adoption.potential_path == missing.resolve()
     assert isinstance(adoption.potential_error, FileNotFoundError)
     assert controller.result_history[0].result is result
@@ -980,7 +979,6 @@ def test_successful_external_result_load_only_publishes_result_signal(tmp_path):
 
     adoption = controller.adopt_external_result(loaded)
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert structures == []
     assert results == [result]

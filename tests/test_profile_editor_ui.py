@@ -107,6 +107,8 @@ def test_mpi_editor_supports_all_modes():
     _application = _app()
     editor = profiles_module._MpiEditor()
 
+    assert not hasattr(editor, "setText")
+
     for mode, value in (
         ("auto", "auto"),
         ("enabled", True),
@@ -132,7 +134,7 @@ def test_mpi_editor_loads_existing_typed_values():
     editor = profiles_module._MpiEditor()
 
     for value, mode in (
-        (None, "disabled"),
+        (None, "auto"),
         ("auto", "auto"),
         (True, "enabled"),
         (False, "disabled"),
@@ -144,3 +146,40 @@ def test_mpi_editor_loads_existing_typed_values():
 
     assert editor.command.text() == "srun -n 4"
     editor.close()
+
+
+def test_mpi_warning_is_visible_only_for_autodetection_and_is_preserved():
+    _application = _app()
+    form = profiles_module._ProfileForm()
+
+    form.mpi.set_value("auto")
+    assert not form.mpi_warning.isHidden()
+    assert form.mpi_warning.isChecked()
+
+    form.mpi_warning.setChecked(False)
+    form.mpi.set_value(8)
+    assert form.mpi_warning.isHidden()
+    assert form.values()["mpi_warning"] is False
+
+    form.mpi.set_value("auto")
+    assert not form.mpi_warning.isHidden()
+    assert not form.mpi_warning.isChecked()
+    form.close()
+
+
+def test_profile_form_loads_mpi_warning_with_true_default():
+    _application = _app()
+    form = profiles_module._ProfileForm()
+
+    form.load(profiles_module._ProfileDraft("default", {"mpi": "auto"}))
+    assert form.mpi_warning.isChecked()
+
+    form.load(
+        profiles_module._ProfileDraft(
+            "quiet",
+            {"mpi": "auto", "mpi_warning": False},
+        )
+    )
+    assert not form.mpi_warning.isChecked()
+    assert form.values()["mpi_warning"] is False
+    form.close()

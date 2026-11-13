@@ -7,15 +7,17 @@ from typing import Any
 
 from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.potentials.potentials import Potential
+from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 
 @dataclass(frozen=True)
 class LoadedResult:
     """A result whose filesystem references have already been interpreted.
 
-    ``output_path`` is provenance and may name a file that no longer exists.
-    A missing referenced potential is different: reconstructing atoms depends
-    on it, so ``potential_error`` contains ``FileNotFoundError``.
+    ``output_path`` and ``potential_path`` are provenance/artifact locations.
+    The authoritative physical potential, when successfully loaded, is attached
+    to ``atoms``. A missing referenced potential is different: reconstructing
+    atoms depends on it, so ``potential_error`` contains ``FileNotFoundError``.
     """
 
     result: TaskResult
@@ -26,6 +28,26 @@ class LoadedResult:
     directory: str | None
     input_parameters: Any | None = None
     input_parameters_error: Exception | None = None
+
+
+def load_potential_atoms(file_path: str | Path) -> Any:
+    """Load a POT file and attach that exact parsed potential to its atoms.
+
+    ASE2SPRKKR reconstructs the atomic/site state while parsing a potential, but
+    ``Potential.from_file(...).atoms`` does not currently attach the parsed
+    ``Potential`` back to the returned ``SPRKKRAtoms``. Guy4ASE calculations
+    launch from atoms, so doing the attachment here makes atoms the single
+    physical authority instead of relying on a parallel filename.
+    """
+    path = Path(file_path).resolve()
+    potential = Potential.from_file(str(path))
+    atoms = potential.atoms
+    if atoms is None:
+        raise ValueError(f"Potential file contains no structure: {path}")
+    atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
+    atoms._potential = potential
+    potential.atoms = atoms
+    return atoms
 
 
 def load_result_file(file_path: str | Path) -> LoadedResult:
@@ -134,6 +156,6 @@ def _load_potential(
             f"Referenced potential is not a file: {potential}"
         )
     try:
-        return Potential.from_file(str(potential.resolve())).atoms, None
+        return load_potential_atoms(potential), None
     except Exception as exc:  # noqa: BLE001 - parser failures are data
         return None, exc

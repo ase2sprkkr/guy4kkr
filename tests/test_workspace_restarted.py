@@ -106,7 +106,6 @@ def test_active_scf_result_with_new_potential_clears_restart_override():
         request=request,
     )
 
-    assert adoption.adopted
     assert adoption.workspace_updated
     assert controller.atoms is new_atoms
     assert not controller.restarted
@@ -122,7 +121,6 @@ def test_scf_result_without_new_potential_keeps_restart_override():
         request=request,
     )
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.restarted
     assert not controller.is_scf_converged()
@@ -137,7 +135,6 @@ def test_non_scf_result_does_not_clear_restart_override():
         request=request,
     )
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.restarted
 
@@ -149,6 +146,5 @@ def test_external_result_does_not_clear_restart_override():
         _loaded_result("DOS", _scf_atoms()),
     )
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.restarted

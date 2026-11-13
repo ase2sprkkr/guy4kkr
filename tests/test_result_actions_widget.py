@@ -63,12 +63,7 @@ def _widget(*, show_values_without_actions=True):
 def test_result_actions_render_task_result():
     _application = QApplication.instance() or QApplication([])
     widget = _widget()
-    result = TaskResult(
-        None,
-        None,
-        None,
-        output_file="result.out",
-    )
+    result = TaskResult(None, None, None, output_file="result.out")
 
     widget.set_result(result)
 
@@ -100,10 +95,7 @@ def test_result_collection_failure_becomes_one_error_row(result, error, caplog):
 def test_broken_output_value_does_not_hide_other_rows(caplog):
     _application = QApplication.instance() or QApplication([])
     widget = _widget()
-    result = _Result({
-        "good": _Value(),
-        "bad": _Value(broken_label=True),
-    })
+    result = _Result({"good": _Value(), "bad": _Value(broken_label=True)})
 
     widget.set_result(result)
 
@@ -160,20 +152,16 @@ def test_empty_spheres_result_is_visible_without_actions():
     widget.close()
 
 
-def test_result_from_other_structure_offers_explicit_reuse_actions():
+def test_result_from_other_structure_offers_structure_reuse():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
     first_structure, first_state = store.new_structure_state(
         Atoms("Fe"), potential_path="Fe.pot"
     )
-    current_structure, _current_state = store.new_structure_state(
+    current_structure, current_state = store.new_structure_state(
         Atoms("Cu"), potential_path="Cu.pot"
     )
-    result = SimpleNamespace(
-        task_name="dos",
-        output_values={},
-        output_file="Fe_DOS.out",
-    )
+    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
     record = store.add_result(
         result,
         structure_id=first_structure,
@@ -183,23 +171,47 @@ def test_result_from_other_structure_offers_explicit_reuse_actions():
         directory=None,
     )
     widget = _widget()
-    widget.set_current_structure_id(current_structure)
+    widget.set_workspace_state(current_structure, current_state)
     widget.set_results(store)
 
     assert widget._selected_result_id() == record.id
     assert not widget._record_actions.isHidden()
-    assert not widget._use_structure_button.isHidden()
+    assert not widget._use_state_button.isHidden()
+    assert widget._use_state_button.text() == "Use this structure"
     assert not widget._recompute_button.isHidden()
     assert widget._recompute_button.text() == "Recompute on current structure"
+    widget.close()
+
+
+def test_result_from_other_state_of_same_structure_offers_potential_reuse():
+    _application = QApplication.instance() or QApplication([])
+    store = ResultStore()
+    structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path="p0")
+    historical_state = store.new_child_state(root, atoms=Atoms("Fe"), potential_path="p1")
+    current_state = store.new_child_state(historical_state, atoms=Atoms("Fe"), potential_path="p2")
+    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
+    record = store.add_result(
+        result,
+        structure_id=structure_id,
+        input_state_id=historical_state,
+        atoms=Atoms("Fe"),
+        input_parameters=object(),
+        directory=None,
+    )
+    widget = _widget()
+    widget.set_workspace_state(structure_id, current_state)
+    widget.set_results(store)
+
+    assert widget._selected_result_id() == record.id
+    assert widget._use_state_button.text() == "Use this potential"
+    assert widget._recompute_button.text() == "Recompute on current potential"
     widget.close()
 
 
 def test_empty_spheres_is_not_presented_as_recomputable_task():
     _application = QApplication.instance() or QApplication([])
     store = ResultStore()
-    structure_id, state_id = store.new_structure_state(
-        Atoms("Fe"), potential_path=None
-    )
+    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
     record = store.add_result(
         EmptySpheresResult(found=2),
         structure_id=structure_id,
@@ -209,7 +221,7 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
         directory=None,
     )
     widget = _widget(show_values_without_actions=False)
-    widget.set_current_structure_id(structure_id)
+    widget.set_workspace_state(structure_id, state_id)
     widget.set_results(store)
 
     assert widget._selected_result_id() == record.id

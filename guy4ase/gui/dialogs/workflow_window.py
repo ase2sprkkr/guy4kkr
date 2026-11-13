@@ -331,9 +331,12 @@ class WorkflowWindow(QMainWindow):
             )
 
     def _refresh_result_actions(self) -> None:
-        results = self.controller.result_history
-        self._result_actions_widget.set_results(results)
-        self._result_actions.setVisible(bool(results))
+        store = self.controller.result_store
+        self._result_actions_widget.set_workspace_state(
+            self.controller.structure_id,
+            self.controller.state_id,
+        )
+        self._result_actions_widget.set_results(store)
 
     def _add_action(
         self,
@@ -427,7 +430,7 @@ class WorkflowWindow(QMainWindow):
             )
             self._add_action(
                 "Load SPR-KKR Output",
-                "Open a completed calculation and its structure",
+                "Add a completed calculation to the result history",
                 self._load_output,
                 group=self._GROUP_LOAD,
                 category='load',
@@ -495,31 +498,33 @@ class WorkflowWindow(QMainWindow):
                     if structure_kind == "2d"
                     else "Prepare and run a self-consistent calculation"
                 )
-            self._add_action(
-                scf_label,
-                scf_description,
-                lambda: self._prepare_task("scf"),
-                group=self._GROUP_CALCULATE,
-                category='calculation',
-                icon='system-run.svg',
-            )
-
-        if converged:
-            for task, label, description in (
-                ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
-                ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
-                ("dos", "Calculate DOS", "Electronic density of states"),
-                ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
-                ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
-            ):
+            if self.controller.can_run_task("scf"):
                 self._add_action(
-                    label,
-                    description,
-                    lambda _checked=False, name=task: self._prepare_task(name),
+                    scf_label,
+                    scf_description,
+                    lambda: self._prepare_task("scf"),
                     group=self._GROUP_CALCULATE,
                     category='calculation',
                     icon='system-run.svg',
                 )
+
+        for task, label, description in (
+            ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
+            ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
+            ("dos", "Calculate DOS", "Electronic density of states"),
+            ("bsf", "Calculate BSF", "Bloch spectral function along an E–k path or on a k–k plane"),
+            ("jxc", "Calculate JXC", "Exchange coupling and Dzyaloshinskii–Moriya interactions"),
+        ):
+            if not self.controller.can_run_task(task):
+                continue
+            self._add_action(
+                label,
+                description,
+                lambda _checked=False, name=task: self._prepare_task(name),
+                group=self._GROUP_CALCULATE,
+                category='calculation',
+                icon='system-run.svg',
+            )
 
         if converged or (status is not None and status != "START"):
             self._add_action(
@@ -637,7 +642,8 @@ class WorkflowWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Start Over?",
-            "Really start over? The current structure, calculation settings, and results will be cleared.",
+            "Really start over? The current structure and calculation settings "
+            "will be cleared. Existing calculation results will be kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

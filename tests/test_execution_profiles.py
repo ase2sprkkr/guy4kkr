@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -58,7 +59,7 @@ def test_profile_form_parses_mpi_and_backend_specific_values():
     _application = _app()
     form = profiles_module._ProfileForm()
     form.kind.setCurrentIndex(form.kind.findData("ssh-psij"))
-    form.mpi.setText("8")
+    form.mpi.set_value(8)
     form.host.setText("user@cluster")
     form.ssh_options.setText("-p 2222")
     form.psij_backend.setText("slurm")
@@ -67,6 +68,7 @@ def test_profile_form_parses_mpi_and_backend_specific_values():
 
     assert values["executor"] == "ssh"
     assert values["mpi"] == 8
+    assert values["mpi_warning"] is True
     assert values["host"] == "user@cluster"
     assert values["ssh_options"] == ["-p", "2222"]
     assert values["psij_backend"] == "slurm"
@@ -129,11 +131,11 @@ def test_profile_editor_saves_only_mutable_profiles(monkeypatch):
         if item.data(profiles_module.Qt.ItemDataRole.UserRole) == "local":
             dialog.list.setCurrentRow(row)
             break
-    dialog.form.mpi.setText("12")
+    dialog.form.mpi.set_value(12)
     dialog.accept()
 
     assert config.profiles.saved == {
-        "local": {"executor": "local", "mpi": 12},
+        "local": {"executor": "local", "mpi": 12, "mpi_warning": True},
     }
     assert config.default_profile() is None
     assert config.saved
@@ -211,6 +213,114 @@ def test_worker_constructs_sprkkr_with_selected_profile(monkeypatch, tmp_path):
 
     assert captured == {"profile": "cluster"}
     assert finished == [loaded_result]
+
+
+def test_worker_launches_persistent_run(monkeypatch, tmp_path):
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    worker = run_module._SprkkrRunWorker(request)
+    captured = {}
+
+    class Runner:
+        reference = None
+
+        def submit(self):
+            return None
+
+        def cancel(self):
+            return None
+
+    runner = Runner()
+
+    def create_runner(_calculator, **kwargs):
+        captured.update(kwargs)
+        return runner
+
+    monkeypatch.setattr(worker, "_create_runner", create_runner)
+
+    assert worker._launch(object()) is runner
+    assert captured["persistent"] is True
+
+
+def test_worker_forwards_specific_mpi_warning():
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=".",
+        generation=object(),
+    )
+    worker = run_module._SprkkrRunWorker(request)
+    runner = object()
+
+    class Calculator:
+        def create_run(self, **_kwargs):
+            warnings.warn("No MPI runner", run_module.MpiNotFoundWarning)
+            return runner
+
+    seen = []
+    worker.warning.connect(seen.append)
+
+    assert worker._create_runner(Calculator()) is runner
+    assert seen == ["No MPI runner"]
+
+
+def test_run_window_shows_mpi_warning_message_box(monkeypatch, tmp_path):
+    _application = _app()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+    shown = []
+    monkeypatch.setattr(
+        run_module.QMessageBox,
+        "warning",
+        lambda parent, title, message: shown.append((parent, title, message)),
+    )
+
+    window = run_module.SprkkrRunWindow(request)
+    window._on_warning("MPI autodetection failed")
+
+    assert shown == [(window, "MPI Not Detected", "MPI autodetection failed")]
+    window.close()
+
+
+def test_run_window_close_hides_without_cancelling_running_job(monkeypatch, tmp_path):
+    app = _app()
+    request = CalculationRequest(
+        atoms=object(),
+        input_parameters=object(),
+        directory=str(tmp_path),
+        generation=object(),
+    )
+    monkeypatch.setattr(run_module.SprkkrRunWindow, "_start", lambda self, request: None)
+
+    class RunningThread:
+        @staticmethod
+        def isRunning():
+            return True
+
+    window = run_module.SprkkrRunWindow(request)
+    window._cancellation = run_module._RunCancellation()
+    window._thread = RunningThread()
+    window.show()
+    app.processEvents()
+
+    window.close()
+    app.processEvents()
+
+    assert window._close_requested
+    assert not window.isVisible()
+    assert not window._cancellation.requested
+
+    window._thread = None
+    window.close()
 
 
 def test_run_window_refreshes_state_without_gui_thread_io(monkeypatch, tmp_path):

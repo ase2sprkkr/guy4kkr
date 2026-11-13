@@ -13,7 +13,7 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
-def test_scf_fast_forwards_across_restart_marker_when_potential_is_unchanged():
+def test_scf_does_not_fast_forward_across_use_for_new_calculation():
     controller = WorkspaceController(
         WorkspaceState(atoms=Atoms("Fe"), potential_path="P0.pot")
     )
@@ -43,8 +43,8 @@ def test_scf_fast_forwards_across_restart_marker_when_potential_is_unchanged():
     )
     adoption = controller.adopt_calculation_result(loaded, request=request)
 
-    assert adoption.workspace_updated
-    assert controller.state_id == adoption.record.output_state_id
-    assert controller.state_id != restart_state
-    assert controller.potential_path == "P1.pot"
-    assert not controller.restarted
+    assert not adoption.workspace_updated
+    assert controller.state_id == restart_state
+    assert controller.potential_path == "P0.pot"
+    assert controller.restarted
+    assert adoption.record.output_state_id != restart_state

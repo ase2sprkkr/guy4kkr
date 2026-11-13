@@ -57,7 +57,7 @@ def test_confirmed_structure_edit_is_copy_on_write():
     assert controller.atoms.get_chemical_symbols() == ["Cu"]
     assert controller.result is None
     assert controller.potential_path is None
-    assert controller.generation == generation.next_major()
+    assert controller.generation == generation.next()
     assert structures == [controller.atoms]
     assert results == []
 
@@ -151,7 +151,7 @@ def test_calculation_preparation_does_not_block_new_workspace_version(
     generation = controller.generation
     assert controller.replace_structure(replacement) is DocumentChange.APPLIED
     assert controller.atoms is replacement
-    assert controller.generation == generation.next_major()
+    assert controller.generation == generation.next()
 
     release_preparation.set()
     assert process_entered.wait(5)
@@ -216,7 +216,6 @@ def test_old_result_is_recorded_but_does_not_replace_new_structure(tmp_path):
     result = SimpleNamespace(files={}, directory=str(tmp_path), task_name="DOS")
     loaded = load_result(result, fallback_directory=tmp_path)
     adoption = controller.adopt_calculation_result(loaded, request=request)
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.atoms is replacement
     assert controller.result_history[0].result is result
@@ -237,7 +236,7 @@ def test_reset_advances_instead_of_resetting_generation():
 
     controller.reset()
 
-    assert controller.generation == before_reset.next_major()
+    assert controller.generation == before_reset.next()
 
 
 def test_structure_file_load_rejects_intervening_draft_change(monkeypatch, tmp_path):
@@ -277,16 +276,11 @@ def test_external_result_load_survives_intervening_draft_change(monkeypatch, tmp
     )
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
     original_structure = controller.atoms
-    generation = controller.generation
     loaded_result = load_result_file(tmp_path / "Fe.out")
 
     controller.replace_input_parameters(object())
-    adoption = controller.adopt_external_result(
-        loaded_result,
-        expected_generation=generation,
-    )
+    adoption = controller.adopt_external_result(loaded_result)
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.atoms is original_structure
     assert controller.result_history[0].result is result
@@ -311,7 +305,6 @@ def test_directory_change_does_not_discard_completed_calculation_result(tmp_path
     controller.change_directory(str(next_directory))
     adoption = controller.adopt_calculation_result(loaded, request=request)
 
-    assert adoption.adopted
     assert not adoption.workspace_updated
     assert controller.result_history[0].result is result
     assert controller.directory == str(next_directory)
