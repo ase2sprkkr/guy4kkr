@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.viewers import viewer_unavailability
 from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.misc.modal_task import run_modal_task
+from guy4ase.gui.viewers.ase_gui import launch_ase_gui
 
 
 def _visualization_atoms(atoms: Any) -> Atoms | None:
@@ -21,6 +23,26 @@ def _visualization_atoms(atoms: Any) -> Atoms | None:
         positions=atoms.get_positions(),
         cell=atoms.get_cell(),
         pbc=atoms.get_pbc(),
+    )
+
+
+def _open_viewer(atoms: Atoms, viewer: str) -> None:
+    """Open the viewer, waiting for ASE Tk's window mapping when applicable."""
+    if viewer.lower() == "ase":
+        # Tk must own its main thread, independently of Qt.  The subprocess
+        # reports the first real window map event via a single stdout message.
+        launch_ase_gui(atoms)
+    else:
+        # External viewers don't offer a common readiness notification.
+        ase_view(atoms, viewer=viewer)
+
+
+def _start_viewer(atoms: Atoms, viewer: str, parent: QWidget) -> None:
+    run_modal_task(
+        parent,
+        lambda: _open_viewer(atoms, viewer),
+        title="Visualizing Structure",
+        label="Opening structure viewer…",
     )
 
 
@@ -43,7 +65,7 @@ def visualize_structure(
     reason = viewer_unavailability(selected)
     if reason is None:
         try:
-            ase_view(atoms, viewer=selected)
+            _start_viewer(atoms, selected, parent)
         except Exception as exc:  # noqa: BLE001 - external viewer boundary
             reason = f"{type(exc).__name__}: {exc}"
         else:
@@ -74,7 +96,7 @@ def visualize_structure(
         return False
 
     try:
-        ase_view(atoms, viewer="ase")
+        _start_viewer(atoms, "ase", parent)
     except Exception as exc:  # noqa: BLE001 - ASE viewer boundary
         QMessageBox.critical(
             parent,
