@@ -1,4 +1,4 @@
-"""Project selection in execution setup is per run, not a workspace mutation."""
+"""Project selection and directory handling in the execution setup dialog."""
 from __future__ import annotations
 
 import os
