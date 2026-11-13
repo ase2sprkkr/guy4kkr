@@ -137,6 +137,7 @@ def run_calculation(
         ):
             return None
         directory_generation = controller.directory_generation
+        project_generation = controller.active_project_generation
         accepted, profile_name, identification, directory, project_id = _select_profile(
             parent,
             input_parameters=controller.input_parameters,
@@ -147,10 +148,15 @@ def run_calculation(
         )
         if not accepted or not directory:
             return None
+        # Selecting a project for a run also makes it the active project.
+        # An explicit "Unassigned" selection clears the active project.
         if not document_change_applied(
             parent,
-            controller.change_directory(
-                directory, expected_directory_generation=directory_generation
+            controller.set_calculation_context(
+                directory,
+                project_id,
+                expected_directory_generation=directory_generation,
+                expected_active_project_generation=project_generation,
             ),
         ):
             return None
