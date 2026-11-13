@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
+from ase2sprkkr import InputParameters
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,

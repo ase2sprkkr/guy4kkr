@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Union
+from typing import Literal, Union
 
 from guy4ase.gui.presentation import ActionCategory
-from guy4ase.gui.recent_presentation import RecentLaunch
 
 
 class CreateStructureKind(Enum):
@@ -48,6 +47,9 @@ class ActionIcon(Enum):
     RESET = auto()
 
 
+ContinueRecentKind = Literal["structure", "output"]
+
+
 @dataclass(frozen=True)
 class RunTask:
     """Run a task using the opaque key accepted by the backend task API."""
@@ -81,7 +83,14 @@ class Load:
 
 @dataclass(frozen=True)
 class ContinueRecent:
-    launch: RecentLaunch
+    """Continue from a recent structure or output without presentation coupling."""
+
+    kind: ContinueRecentKind
+    path: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"structure", "output"}:
+            raise ValueError("Recent continuation kind must be 'structure' or 'output'.")
 
 
 @dataclass(frozen=True)

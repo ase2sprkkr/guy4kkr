@@ -7,7 +7,7 @@ from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 
 def test_deferred_history_navigation_dies_with_dialog():
     """A closed dialog must not leave a callback for a deleted Qt wrapper."""
-    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsf"))
+    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsfek"))
     calls = []
     dialog._reveal_history_field = lambda *args: calls.append(args)
 

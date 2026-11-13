@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr import InputParameters
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
@@ -86,6 +86,7 @@ class GuidedInputParametersDialog(QDialog):
         self.task = task.lower()
         self.atoms = atoms
         definition = guided_task_definition(self.task)
+        self._compatible_backend_tasks = definition.backend_tasks
         self.spec: TaskDialogSpec = definition.build_spec(
             is_2d=detect_structure_kind(atoms) == "2d",
         )
@@ -95,10 +96,14 @@ class GuidedInputParametersDialog(QDialog):
         actual_task = InputParameters.is_it_an_input_parameters_name(
             parameters.task_name
         )
-        if not expected_task or actual_task != expected_task:
+        if (
+            not expected_task
+            or not actual_task
+            or not definition.accepts_backend_task(actual_task)
+        ):
+            expected = "/".join(task.upper() for task in definition.backend_tasks)
             raise ValueError(
-                f"Expected {expected_task or str(definition.backend_task).upper()} "
-                f"input parameters, got "
+                f"Expected {expected} input parameters, got "
                 f"{actual_task or str(parameters.task_name).upper()}."
             )
         self.session = create_input_parameters_session(parameters, self)
@@ -387,7 +392,11 @@ class GuidedInputParametersDialog(QDialog):
         )
 
     def _load_input(self) -> None:
-        choose_and_load_input_parameters(self.session, self)
+        choose_and_load_input_parameters(
+            self.session,
+            self,
+            compatible_tasks=self._compatible_backend_tasks,
+        )
 
     def _edit_input_file(self) -> None:
         if not self._commit_pending():
@@ -407,9 +416,13 @@ def select_guided_input_parameters(
     dataset_default_mode: str,
 ) -> InputParameters | None:
     definition = guided_task_definition(task)
+    if not InputParameters.is_it_an_input_parameters_name(definition.backend_task):
+        raise GuidedTaskUnavailable(
+            f"The {task.upper()} backend task is not available."
+        )
     try:
         parameters = InputParameters.create(definition.backend_task)
-    except (ImportError, KeyError) as exc:
+    except ImportError as exc:
         raise GuidedTaskUnavailable(
             f"The {task.upper()} backend task could not be loaded: {exc}"
         ) from exc

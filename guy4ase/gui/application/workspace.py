@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
+from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.physics.lattice import StructureKind, detect_structure_kind
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, MutableMapping
 
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr import InputParameters
 
 from guy4ase.gui.input_parameters.bindings import InputParameterPath, resolve_option
 

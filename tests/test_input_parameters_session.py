@@ -27,9 +27,13 @@ def _first(value):
     return value.flat[0] if isinstance(value, np.ndarray) else value
 
 
+def _backend_task(task):
+    return "bsfkk" if task == "bsf" else task
+
+
 def _contour_session(task):
     return InputParametersSession(
-        InputParameters.create(task),
+        InputParameters.create(_backend_task(task)),
         plugins=(SingleSiteContourPlugin(),),
     )
 
@@ -437,7 +441,7 @@ def test_expert_history_finds_changed_array_component():
 @pytest.mark.parametrize("switch", [("ENERGY", "SPLITSS"), ("CONTROL", "SPLITSS"), ("CONTROL", "FSOHFF")])
 def test_single_site_toggle_restores_clean_input_and_remembers_values(task, switch, tmp_path):
     application = QApplication.instance() or QApplication([])
-    parameters = InputParameters.create(task)
+    parameters = InputParameters.create(_backend_task(task))
     if task == "bsf":
         parameters.ENERGY.NE.set([200])
         parameters.TASK.KPATH.set(1)
@@ -526,10 +530,7 @@ def test_forced_single_site_contour_stays_active_until_last_flag_is_off(task):
     application.processEvents()
 
 
-def test_compton_keeps_the_single_site_contour_without_a_switch(monkeypatch):
-    # ase2sprkkr does not yet ship a standalone COMPTON definition. Reuse an
-    # equivalent energy-bearing document and expose the task identity that the
-    # domain predicate is intentionally designed to support.
+def test_requested_task_provenance_does_not_force_single_site_contour(monkeypatch):
     parameters = InputParameters.create("scf")
     parameters.ENERGY.SPLITSS.set(True)
     parameters.ENERGY.GRID.set([5, 3])
@@ -546,9 +547,9 @@ def test_compton_keeps_the_single_site_contour_without_a_switch(monkeypatch):
 
     session.set_value(("ENERGY", "SPLITSS"), False)
 
-    assert session.working_parameters.uses_separate_single_site_contour()
-    assert list(session.value(("ENERGY", "GRID"))) == ["5", "3"]
-    assert list(session.value(("ENERGY", "NE"))) == [32, 87]
+    assert not session.working_parameters.uses_separate_single_site_contour()
+    assert list(session.value(("ENERGY", "GRID"))) == ["5"]
+    assert list(session.value(("ENERGY", "NE"))) == [32]
 
 
 def test_unrelated_edit_does_not_repair_incomplete_imported_split_contour():
@@ -570,7 +571,7 @@ def test_unrelated_edit_does_not_repair_incomplete_imported_split_contour():
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 def test_energy_grids_are_aligned_side_by_side(task):
     application = QApplication.instance() or QApplication([])
-    dialog = GuidedInputParametersDialog(task, InputParameters.create(task))
+    dialog = GuidedInputParametersDialog(task, InputParameters.create(_backend_task(task)))
     dialog.select_page("energy")
     dialog.show()
     application.processEvents()
@@ -589,7 +590,7 @@ def test_energy_grids_are_aligned_side_by_side(task):
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 def test_cluster_disabled_explanation_tracks_partial_and_full_activation(task):
     application = QApplication.instance() or QApplication([])
-    dialog = GuidedInputParametersDialog(task, InputParameters.create(task))
+    dialog = GuidedInputParametersDialog(task, InputParameters.create(_backend_task(task)))
     note = dialog.group_note("cluster_extent")
     radius = dialog.editors_for(("TAU", "CLURAD"))[0]
     centre = dialog.editors_for(("TAU", "IQCNTR"))[0]

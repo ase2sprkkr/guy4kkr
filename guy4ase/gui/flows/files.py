@@ -7,7 +7,7 @@ from pathlib import Path
 from ase.io import read as ase_read
 from ase.io import write as ase_write
 from ase.io.formats import ioformats
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr import InputParameters
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind

@@ -94,6 +94,45 @@ def test_execution_requests_persistent_backend_run(monkeypatch, tmp_path):
     assert captured["empty_spheres"] is False
 
 
+def test_execution_binds_persistent_manager_to_launch_project(monkeypatch, tmp_path):
+    captured = {}
+    bound_manager = object()
+
+    class Manager:
+        def for_project(self, project_id):
+            captured["project_id"] = project_id
+            return bound_manager
+
+    class Runner:
+        reference = None
+        id = "run-1"
+
+        def submit(self):
+            pass
+
+        def wait(self):
+            return object()
+
+    class Calculator:
+        def create_run(self, **kwargs):
+            captured.update(kwargs)
+            return Runner()
+
+    execution = SprkkrExecution(
+        _request(tmp_path),
+        _Cancellation(),
+        execution_manager=Manager(),
+        project_id="project-17",
+    )
+    monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
+    monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
+
+    execution.run()
+
+    assert captured["project_id"] == "project-17"
+    assert captured["persistent"] is bound_manager
+
+
 def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
     cancellation = _Cancellation(requested=True)
     events = []
@@ -122,7 +161,7 @@ def test_cancel_before_registration_never_submits(monkeypatch, tmp_path):
     assert events == ["cancel"]
 
 
-def test_cancel_racing_with_submit_is_latched(monkeypatch, tmp_path):
+def test_cancel_racing_with_submit_is_not_cancelled_twice(monkeypatch, tmp_path):
     cancellation = _Cancellation()
     events = []
 
@@ -130,6 +169,7 @@ def test_cancel_racing_with_submit_is_latched(monkeypatch, tmp_path):
         def submit(self):
             events.append("submit")
             cancellation.requested = True
+            self.cancel()
 
         def cancel(self):
             events.append("cancel")

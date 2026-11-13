@@ -21,7 +21,8 @@ def application():
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 @pytest.mark.parametrize("name", ["C", "SOC"])
 def test_scaling_default_and_type_rows_undo_redo(application, task, name):
-    parameters = InputParameters.create(task)
+    backend_task = "bsfkk" if task == "bsf" else task
+    parameters = InputParameters.create(backend_task)
     parameters.MODE[name].set({"def": 0.8, 2: 0.4})
     dialog = GuidedInputParametersDialog(task, parameters)
     control = dialog.editors_for(("MODE", name))[0].control
@@ -79,7 +80,7 @@ def test_array_scaling_uses_orbital_columns_without_expanding_on_open(applicatio
 
 
 def test_single_row_tables_fit_contents_without_empty_viewport(application):
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfkk")
     parameters.TASK.set({"K1": [1., 0., 0.], "K2": [0., 1., 0.], "NK1": 60, "NK2": 60})
     dialog = GuidedInputParametersDialog("bsf", parameters)
     dialog.show()

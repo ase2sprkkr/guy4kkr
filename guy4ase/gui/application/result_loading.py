@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ase2sprkkr.outputs.task_result import TaskResult
-from ase2sprkkr.potentials.potentials import Potential, PotentialFileChanged
+from ase2sprkkr import Potential, PotentialFileChanged, TaskResult
 
 from guy4ase.gui.application.potential_version import PotentialFileVersion
 

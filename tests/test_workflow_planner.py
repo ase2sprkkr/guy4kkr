@@ -13,7 +13,6 @@ from guy4ase.gui.input_parameters.tasks import (
     guided_task_definition,
     workflow_tasks,
 )
-from guy4ase.gui.recent_presentation import RecentLaunch
 from guy4ase.gui.workflow.model import (
     ActionIcon,
     AvailableAction,
@@ -122,7 +121,7 @@ def test_initial_plan_uses_typed_commands_and_planned_recent_menu():
         Load(LoadKind.ONLINE_STRUCTURE),
         Load(LoadKind.STRUCTURE),
         Load(LoadKind.OUTPUT),
-        ContinueRecent(RecentLaunch("output", "/tmp/scf.out")),
+        ContinueRecent("output", "/tmp/scf.out"),
     )
 
     load = plan.group(WorkflowSection.LOAD)
@@ -139,14 +138,15 @@ def test_initial_plan_uses_typed_commands_and_planned_recent_menu():
         "Structures",
         "Outputs",
     )
-    assert tuple(
-        item.command.launch.path for item in continue_action.menu[0].items
-    ) == ("/tmp/Fe.cif",)
-    assert tuple(
-        item.command.launch.path for item in continue_action.menu[1].items
-    ) == ("/tmp/scf.out", "/tmp/older.out")
+    assert tuple(item.command.path for item in continue_action.menu[0].items) == (
+        "/tmp/Fe.cif",
+    )
+    assert tuple(item.command.path for item in continue_action.menu[1].items) == (
+        "/tmp/scf.out",
+        "/tmp/older.out",
+    )
     assert all(
-        item.tooltip == item.command.launch.path
+        item.tooltip == item.command.path
         for group in continue_action.menu
         for item in group.items
     )
@@ -235,6 +235,14 @@ def test_run_task_keeps_backend_lookup_key_opaque_and_unmodified():
     assert RunTask("scf").backend_task == "scf"
     with pytest.raises(ValueError, match="non-empty string"):
         RunTask("   ")
+
+
+def test_continue_recent_is_semantic_and_validates_kind():
+    command = ContinueRecent("structure", "/tmp/Fe.cif")
+    assert command.kind == "structure"
+    assert command.path == "/tmp/Fe.cif"
+    with pytest.raises(ValueError, match="continuation kind"):
+        ContinueRecent("input", "/tmp/input.inp")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

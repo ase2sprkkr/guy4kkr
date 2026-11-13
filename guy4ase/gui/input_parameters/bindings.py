@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
-from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr import InputParameters
 
 InputParameterPath = tuple[str, ...]
 

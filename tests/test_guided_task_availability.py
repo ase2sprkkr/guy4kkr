@@ -20,10 +20,36 @@ def _controller(tmp_path) -> WorkspaceController:
     )
 
 
-@pytest.mark.parametrize("error", (KeyError("SCF"), ImportError("missing backend module")))
-def test_backend_task_materialization_errors_become_unavailable(
-    monkeypatch, error
-):
+def test_missing_backend_task_becomes_unavailable_before_materialization(monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        guided_input_module.InputParameters,
+        "is_it_an_input_parameters_name",
+        lambda _task: False,
+    )
+    monkeypatch.setattr(
+        guided_input_module.InputParameters,
+        "create",
+        lambda task: created.append(task),
+    )
+
+    with pytest.raises(GuidedTaskUnavailable, match="SCF backend task is not available"):
+        guided_input_module.select_guided_input_parameters(
+            "scf",
+            dataset_default_mode="auto",
+        )
+
+    assert created == []
+
+
+def test_backend_task_import_error_becomes_unavailable(monkeypatch):
+    error = ImportError("missing backend module")
+    monkeypatch.setattr(
+        guided_input_module.InputParameters,
+        "is_it_an_input_parameters_name",
+        lambda _task: "SCF",
+    )
+
     def fail_create(_task):
         raise error
 
@@ -38,17 +64,29 @@ def test_backend_task_materialization_errors_become_unavailable(
     assert raised.value.__cause__ is error
 
 
-def test_backend_task_programming_error_propagates(monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    (KeyError("broken definition"), RuntimeError("broken task definition")),
+)
+def test_backend_task_programming_errors_propagate(monkeypatch, error):
+    monkeypatch.setattr(
+        guided_input_module.InputParameters,
+        "is_it_an_input_parameters_name",
+        lambda _task: "SCF",
+    )
+
     def fail_create(_task):
-        raise RuntimeError("broken task definition")
+        raise error
 
     monkeypatch.setattr(guided_input_module.InputParameters, "create", fail_create)
 
-    with pytest.raises(RuntimeError, match="broken task definition"):
+    with pytest.raises(type(error)) as raised:
         guided_input_module.select_guided_input_parameters(
             "scf",
             dataset_default_mode="auto",
         )
+
+    assert raised.value is error
 
 
 def test_expected_guided_task_unavailability_is_reported(monkeypatch, tmp_path):

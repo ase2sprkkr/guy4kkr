@@ -28,12 +28,16 @@ class _SprkkrRunWorker(RunMonitorWorker):
         cancellation: RunCancellation,
         *,
         profile_name: str | None = None,
+        execution_manager=None,
+        project_id: str | None = None,
     ) -> None:
         super().__init__()
         self._execution = SprkkrExecution(
             request,
             cancellation,
             profile_name=profile_name,
+            execution_manager=execution_manager,
+            project_id=project_id,
             output=self.output.emit,
             status=self.status.emit,
             warning=self.warning.emit,
@@ -73,16 +77,22 @@ class SprkkrRunWindow(RunMonitorWindow):
         if profile_description:
             header = f"{header}\n{profile_description}"
 
+        self._request = request
+        self._execution_manager = None
+        self._project_id: str | None = None
+
         def worker_factory(cancellation: RunCancellation) -> _SprkkrRunWorker:
             worker = _SprkkrRunWorker(
-                request,
+                self._request,
                 cancellation,
                 profile_name=profile_name,
+                execution_manager=self._execution_manager,
+                project_id=self._project_id,
             )
             worker.persistentJobChanged.connect(self._persistent_job_changed_received)
             return worker
 
-        # Ownership and persistent-id observation are established by the caller
+        # Ownership and execution/project context are established by the caller
         # before ``start()``. This prevents a fast local submit from publishing a
         # run id before the application owns this top-level window.
         super().__init__(
@@ -94,6 +104,13 @@ class SprkkrRunWindow(RunMonitorWindow):
             on_finished=on_finished,
             autostart=False,
         )
+
+    def set_execution_context(self, manager, *, project_id: str | None = None) -> None:
+        """Capture persistent execution context before this monitor is started."""
+        if self._thread is not None:
+            raise RuntimeError("execution context cannot change after the run has started")
+        self._execution_manager = manager
+        self._project_id = project_id
 
     @pyqtSlot(str)
     def _persistent_job_changed_received(self, job_id: str) -> None:

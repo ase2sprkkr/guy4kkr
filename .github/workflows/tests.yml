@@ -4,8 +4,11 @@ on:
   push:
     branches-ignore:
       - 'chatgpt-**'
-      - 'tmp-**'
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -14,8 +17,7 @@ jobs:
   tests:
     if: >-
       github.event_name != 'pull_request' ||
-      (!startsWith(github.head_ref, 'chatgpt-') &&
-       !startsWith(github.head_ref, 'tmp-'))
+      !startsWith(github.head_ref, 'chatgpt-')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

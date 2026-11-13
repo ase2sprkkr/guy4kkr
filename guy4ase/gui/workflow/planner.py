@@ -14,7 +14,6 @@ from guy4ase.gui.presentation import (
 )
 from guy4ase.gui.recent_presentation import (
     RecentHistorySnapshot,
-    RecentLaunch,
     RecentLaunchPresentation,
     recent_launch_presentation,
 )
@@ -46,6 +45,7 @@ from guy4ase.gui.workflow.scf_status import (
     scf_progress_label,
 )
 from guy4ase.gui.workspace_semantics import EmptySpheresAction as _EmptySpheresAction
+from guy4ase.physics.composition import structure_formula
 from guy4ase.physics.lattice import StructureKind
 
 
@@ -92,7 +92,7 @@ def _recent_menu(
             group.title,
             tuple(
                 ActionMenuItem(
-                    ContinueRecent(RecentLaunch(group.kind, item.path)),
+                    ContinueRecent(group.kind, item.path),
                     item.label,
                     item.tooltip,
                 )
@@ -175,7 +175,7 @@ class WorkflowPlanner:
         if launch is not None:
             load_actions.append(
                 _action(
-                    ContinueRecent(launch),
+                    ContinueRecent(launch.kind, launch.path),
                     launch.title,
                     "",
                     "load",
@@ -328,7 +328,7 @@ class WorkflowPlanner:
             )
         )
 
-        formula = atoms.get_chemical_formula()
+        formula = structure_formula(atoms)
         return WorkflowPlan(
             (
                 f"Current structure: {formula}  •  "

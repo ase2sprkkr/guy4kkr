@@ -13,7 +13,7 @@ from guy4ase.gui.input_parameters.tooltips import parameter_tooltip
 
 
 def _dialog(task):
-    parameter_task = task
+    parameter_task = "bsfek" if task == "bsf" else task
     atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     return GuidedInputParametersDialog(
         task,

@@ -21,7 +21,7 @@ def application():
 
 
 def ek_parameters():
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfek")
     parameters.set({"ENERGY": {"NE": [200], "EMIN": -.2, "EMAX": 1.}, "TASK": {
         "NK": 250, "KA": [[0., 0., 0.], [.5, 0., 0.]],
         "KE": [[.5, 0., 0.], [.5, .5, 0.]],
@@ -30,7 +30,7 @@ def ek_parameters():
 
 
 def kk_parameters():
-    parameters = InputParameters.create("bsf")
+    parameters = InputParameters.create("bsfkk")
     parameters.set({"ENERGY": {"EMINEV": 0.}, "TASK": {
         "KA": [[.1, .2, .3]], "K1": [1., 0., 0.], "K2": [0., 1., 0.],
         "NK1": 45, "NK2": 55,
@@ -201,7 +201,7 @@ def test_bsf_serializes_and_reloads_without_wrong_mode_keywords(application, fac
 
 
 def test_relative_fixed_energy_and_missing_geometry_validation(application):
-    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsf"))
+    dialog = GuidedInputParametersDialog("bsf", InputParameters.create("bsfkk"))
     assert not dialog._commit_pending()
     assert ("TASK", "K1") in dialog.form.errors
     dialog.session.replace_parameters(kk_parameters())
