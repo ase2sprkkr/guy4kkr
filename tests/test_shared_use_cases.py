@@ -37,18 +37,18 @@ class _RunWindow:
         self.shown = True
 
 
-def test_workspace_can_calculate_requires_all_inputs():
+def test_workspace_calculation_input_completeness_requires_all_inputs():
     workspace = WorkspaceState()
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.atoms = Atoms("Fe")
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.input_parameters = _Parameters("scf")
-    assert not workspace.can_calculate()
+    assert not workspace.is_calculation_input_complete()
 
     workspace.directory = "calculation"
-    assert workspace.can_calculate()
+    assert workspace.is_calculation_input_complete()
 
 
 def test_create_calculation_request_reports_missing_preconditions():

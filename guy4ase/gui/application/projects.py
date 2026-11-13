@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterator
+from threading import RLock
+from typing import Callable, Iterator
 from uuid import UUID, uuid4
 
 import platformdirs
@@ -22,8 +24,11 @@ try:  # Windows
 except ImportError:  # pragma: no cover - POSIX
     msvcrt = None
 
+logger = logging.getLogger(__name__)
+
 _PROJECT_SCHEMA_VERSION = 1
 _HIERARCHY_LOCK = ".hierarchy.lock"
+ProjectChangedListener = Callable[[str], None]
 
 
 class ProjectRepositoryError(RuntimeError):
@@ -177,29 +182,78 @@ def validate_hierarchy(projects: tuple[Project, ...]) -> None:
 
 
 class ProjectRepository:
-    """Persist independent generation-checked project JSON documents."""
+    """Persist and publish generation-checked project JSON documents.
+
+    Files remain authoritative. The in-memory snapshot exists only to report
+    changes discovered by :meth:`refresh`; every save still performs its
+    generation check against the current on-disk document while holding the
+    corresponding stable sidecar lock.
+    """
 
     def __init__(self, directory: str | Path | None = None) -> None:
         self.directory = (
             Path(directory) if directory is not None else default_projects_directory()
         )
+        self._state_lock = RLock()
+        self._listeners: set[ProjectChangedListener] = set()
+        self._known: dict[str, Project] = {}
+
+    def subscribe(self, listener: ProjectChangedListener) -> Callable[[], None]:
+        """Subscribe to local or refreshed project changes."""
+        with self._state_lock:
+            self._listeners.add(listener)
+
+        def unsubscribe() -> None:
+            with self._state_lock:
+                self._listeners.discard(listener)
+
+        return unsubscribe
+
+    def _notify(self, project_id: str) -> None:
+        with self._state_lock:
+            listeners = tuple(self._listeners)
+        for listener in listeners:
+            try:
+                listener(project_id)
+            except Exception:  # noqa: BLE001 - subscriber isolation boundary
+                logger.exception("Project listener failed for %s", project_id)
+
+    def _remember(self, projects: tuple[Project, ...]) -> None:
+        with self._state_lock:
+            self._known = {project.id: project for project in projects}
+
+    def _remember_one(self, project: Project) -> None:
+        with self._state_lock:
+            self._known[project.id] = project
 
     def projects(self) -> tuple[Project, ...]:
-        """Load and validate the complete project forest."""
-        try:
-            paths = sorted(self.directory.glob("*.json"))
-        except OSError as exc:
-            raise ProjectRepositoryError(
-                f"Cannot list project directory {self.directory}: {exc}"
-            ) from exc
-        projects = tuple(self._read_path(path) for path in paths)
-        validate_hierarchy(projects)
+        """Load and remember the complete project forest."""
+        projects = self._read_projects()
+        self._remember(projects)
         return projects
 
     def project(self, project_id: str) -> Project:
-        """Load one project by UUID."""
+        """Load and remember one project by UUID."""
         canonical = _project_id(project_id)
-        return self._read_path(self._json_path(canonical))
+        project = self._read_path(self._json_path(canonical))
+        self._remember_one(project)
+        return project
+
+    def refresh(self) -> tuple[Project, ...]:
+        """Reload project files and publish ids whose snapshots changed."""
+        projects = self._read_projects()
+        current = {project.id: project for project in projects}
+        with self._state_lock:
+            previous = self._known
+            self._known = current
+        changed = tuple(
+            project_id
+            for project_id in set(previous) | set(current)
+            if previous.get(project_id) != current.get(project_id)
+        )
+        for project_id in changed:
+            self._notify(project_id)
+        return projects
 
     def create(self, name: str, *, parent_id: str | None = None) -> Project:
         """Create a root or child project at generation one."""
@@ -211,7 +265,7 @@ class ProjectRepository:
             parent_id=parent,
         )
         with self._hierarchy_lock():
-            projects = self.projects()
+            projects = self._read_projects()
             if parent is not None and all(item.id != parent for item in projects):
                 raise KeyError(parent)
             with self._project_lock(project.id):
@@ -221,6 +275,8 @@ class ProjectRepository:
                         f"Generated project id already exists: {project.id}"
                     )
                 self._write(project)
+        self._remember_one(project)
+        self._notify(project.id)
         return project
 
     def save(
@@ -241,37 +297,44 @@ class ProjectRepository:
 
         canonical = _project_id(project.id)
         with self._project_lock(canonical):
-            current = self.project(canonical)
+            current = self._read_path(self._json_path(canonical))
             self._check_generation(
                 current,
                 expected_generation=expected_generation,
                 overwrite=overwrite,
             )
             if project.parent_id == current.parent_id:
-                return self._save_locked(project, current)
+                saved = self._save_locked(project, current)
+            else:
+                saved = None
 
-        # Parent changes affect a cross-project invariant. Re-enter with the
-        # hierarchy lock first so create/delete/move all use one lock order.
-        with self._hierarchy_lock(), self._project_lock(canonical):
-            current = self.project(canonical)
-            self._check_generation(
-                current,
-                expected_generation=expected_generation,
-                overwrite=overwrite,
-            )
-            projects = self.projects()
-            candidate = replace(project, generation=current.generation)
-            snapshot = tuple(
-                candidate if item.id == canonical else item for item in projects
-            )
-            validate_hierarchy(snapshot)
-            return self._save_locked(project, current)
+        if saved is None:
+            # Parent changes affect a cross-project invariant. Re-enter with the
+            # hierarchy lock first so create/delete/move all use one lock order.
+            with self._hierarchy_lock(), self._project_lock(canonical):
+                current = self._read_path(self._json_path(canonical))
+                self._check_generation(
+                    current,
+                    expected_generation=expected_generation,
+                    overwrite=overwrite,
+                )
+                projects = self._read_projects()
+                candidate = replace(project, generation=current.generation)
+                snapshot = tuple(
+                    candidate if item.id == canonical else item for item in projects
+                )
+                validate_hierarchy(snapshot)
+                saved = self._save_locked(project, current)
+
+        self._remember_one(saved)
+        self._notify(saved.id)
+        return saved
 
     def delete(self, project_id: str, *, expected_generation: int) -> None:
         """Delete a non-root leaf project without touching referenced runs."""
         canonical = _project_id(project_id)
         with self._hierarchy_lock(), self._project_lock(canonical):
-            current = self.project(canonical)
+            current = self._read_path(self._json_path(canonical))
             self._check_generation(
                 current,
                 expected_generation=expected_generation,
@@ -279,7 +342,7 @@ class ProjectRepository:
             )
             if current.parent_id is None:
                 raise ProjectDeleteError("Root projects cannot be deleted")
-            projects = self.projects()
+            projects = self._read_projects()
             if any(item.parent_id == canonical for item in projects):
                 raise ProjectDeleteError("Projects with child projects cannot be deleted")
             try:
@@ -288,6 +351,21 @@ class ProjectRepository:
                 raise ProjectRepositoryError(
                     f"Cannot delete project {canonical!r}: {exc}"
                 ) from exc
+
+        with self._state_lock:
+            self._known.pop(canonical, None)
+        self._notify(canonical)
+
+    def _read_projects(self) -> tuple[Project, ...]:
+        try:
+            paths = sorted(self.directory.glob("*.json"))
+        except OSError as exc:
+            raise ProjectRepositoryError(
+                f"Cannot list project directory {self.directory}: {exc}"
+            ) from exc
+        projects = tuple(self._read_path(path) for path in paths)
+        validate_hierarchy(projects)
+        return projects
 
     def _save_locked(self, project: Project, current: Project) -> Project:
         updated = replace(project, generation=current.generation + 1)

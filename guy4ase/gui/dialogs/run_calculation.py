@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from threading import Thread
-from typing import Any
+from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -23,6 +23,7 @@ class _SprkkrRunWorker(QObject):
     output = pyqtSignal(str, str)  # (text, kind)
     status = pyqtSignal(str)
     warning = pyqtSignal(str)
+    persistentJobChanged = pyqtSignal(str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)
     cancelled = pyqtSignal()
@@ -43,6 +44,7 @@ class _SprkkrRunWorker(QObject):
             output=self.output.emit,
             status=self.status.emit,
             warning=self.warning.emit,
+            persistent_job_changed=self.persistentJobChanged.emit,
         )
 
     def _emit_cancelled(self) -> None:
@@ -63,6 +65,8 @@ class _SprkkrRunWorker(QObject):
 class SprkkrRunWindow(RunMonitorWindow):
     """Create an SPR-KKR runner and display it in the generic run monitor."""
 
+    persistentJobChanged = pyqtSignal(str)
+
     def __init__(
         self,
         request: CalculationRequest,
@@ -71,20 +75,34 @@ class SprkkrRunWindow(RunMonitorWindow):
         profile_name: str | None = None,
         profile_description: str | None = None,
         on_finished=None,
+        on_persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
         header = f"Directory: {request.directory}"
         if profile_description:
             header = f"{header}\n{profile_description}"
-        super().__init__(
-            lambda cancellation: _SprkkrRunWorker(
+
+        def worker_factory(cancellation: RunCancellation) -> _SprkkrRunWorker:
+            worker = _SprkkrRunWorker(
                 request,
                 cancellation,
                 profile_name=profile_name,
-            ),
+            )
+            worker.persistentJobChanged.connect(self.persistentJobChanged)
+            return worker
+
+        # Delay worker startup until the GUI-thread observer is connected. This
+        # guarantees that a very fast local submit cannot emit the first job-id
+        # change before the application source is listening.
+        super().__init__(
+            worker_factory,
             parent,
             title="SPRKKR Run",
             header=header,
             warning_title="MPI Not Detected",
             background_thread_factory=lambda **kwargs: Thread(**kwargs),
             on_finished=on_finished,
+            autostart=False,
         )
+        if on_persistent_job_changed is not None:
+            self.persistentJobChanged.connect(on_persistent_job_changed)
+        self._start_worker()

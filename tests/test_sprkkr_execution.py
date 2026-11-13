@@ -185,3 +185,66 @@ def test_persistent_reference_is_forwarded_to_result_loader(monkeypatch, tmp_pat
 
     assert execution.run() is loaded_result
     assert calls == [(backend_result, str(tmp_path), "persistent-run-42")]
+
+
+def test_execution_notifies_persistent_job_id_after_submit_and_completion(
+    monkeypatch, tmp_path
+):
+    changes = []
+
+    class Runner:
+        reference = None
+        id = "persistent-run-17"
+
+        def submit(self):
+            pass
+
+        def wait(self):
+            return object()
+
+    class Calculator:
+        def create_run(self, **_kwargs):
+            return Runner()
+
+    execution = SprkkrExecution(
+        _request(tmp_path),
+        _Cancellation(),
+        persistent_job_changed=changes.append,
+    )
+    monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
+    monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
+
+    execution.run()
+
+    assert changes == ["persistent-run-17", "persistent-run-17"]
+
+
+def test_persistent_job_observer_failure_does_not_fail_calculation(
+    monkeypatch, tmp_path
+):
+    class Runner:
+        reference = None
+        id = "persistent-run-17"
+
+        def submit(self):
+            pass
+
+        def wait(self):
+            return object()
+
+    class Calculator:
+        def create_run(self, **_kwargs):
+            return Runner()
+
+    def broken_observer(_job_id):
+        raise RuntimeError("observer failure")
+
+    execution = SprkkrExecution(
+        _request(tmp_path),
+        _Cancellation(),
+        persistent_job_changed=broken_observer,
+    )
+    monkeypatch.setattr(execution, "_calculator", lambda: Calculator())
+    monkeypatch.setattr(execution_module, "load_result", lambda *_args, **_kwargs: object())
+
+    assert execution.run() is not None

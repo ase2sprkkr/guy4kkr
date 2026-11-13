@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import warnings
 from dataclasses import replace
 from typing import Any, Callable, Protocol
@@ -12,6 +13,8 @@ from ase2sprkkr.sprkkr.calculator import SPRKKR
 from guy4ase.gui.application.result_loading import LoadedResult, load_result
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
+
+logger = logging.getLogger(__name__)
 
 
 class Cancellation(Protocol):
@@ -39,6 +42,7 @@ class SprkkrExecution:
         output: Callable[[str, str], None] | None = None,
         status: Callable[[str], None] | None = None,
         warning: Callable[[str], None] | None = None,
+        persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.request = replace(request, atoms=request.atoms.copy())
         self.cancellation = cancellation
@@ -46,6 +50,7 @@ class SprkkrExecution:
         self._output = output or (lambda _text, _kind: None)
         self._status = status or (lambda _text: None)
         self._warning = warning or (lambda _text: None)
+        self._persistent_job_changed = persistent_job_changed
 
     def file_names(self) -> tuple[str, str, str]:
         """Return input, potential and output filename templates for the request."""
@@ -97,15 +102,31 @@ class SprkkrExecution:
             )
         )
 
+    def _notify_persistent_job_changed(self, runner: Any) -> None:
+        callback = self._persistent_job_changed
+        if callback is None:
+            return
+        try:
+            callback(str(runner.id))
+        except Exception:  # noqa: BLE001 - observer must never fail execution
+            logger.exception("Persistent-job change observer failed for %s", runner.id)
+
     def _submit(self, calculator: SPRKKR):
         runner = self._create_runner(calculator)
         if not self.cancellation.register(runner):
             runner.cancel()
             raise ExecutionCancelled
 
-        self._with_mpi_warnings(runner.submit)
+        try:
+            self._with_mpi_warnings(runner.submit)
+        finally:
+            # Submission is the first point at which ASE2SPRKKR may have written
+            # the persistent RunRecord. The observer receives only its stable id
+            # and must reload authoritative metadata from the store.
+            self._notify_persistent_job_changed(runner)
         if self.cancellation.requested:
             runner.cancel()
+            self._notify_persistent_job_changed(runner)
             raise ExecutionCancelled
         return runner
 
@@ -129,6 +150,9 @@ class SprkkrExecution:
             if self.cancellation.requested:
                 raise ExecutionCancelled from exc
             raise
+        finally:
+            # PersistentRunner.wait() finalizes its RunRecord in a finally block.
+            self._notify_persistent_job_changed(runner)
 
         if self.cancellation.requested:
             raise ExecutionCancelled

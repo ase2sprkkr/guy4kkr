@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
@@ -38,7 +38,8 @@ def test_explicit_import_selects_new_result_but_background_update_does_not(tmp_p
         lambda _value, _action: None,
         show_values_without_actions=True,
     )
-    window = SimpleNamespace(result_actions_widget=widget)
+    window = QWidget()
+    window.result_actions_widget = widget
     gui._wire_result_actions(window)
 
     first = gui.controller.adopt_external_result(_loaded("first"), select_result=True)
@@ -53,4 +54,5 @@ def test_explicit_import_selects_new_result_but_background_update_does_not(tmp_p
     assert explicit.record is not None
     assert widget.selected_result_id == explicit.record.id
 
+    window.close()
     widget.close()

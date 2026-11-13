@@ -4,6 +4,8 @@ from __future__ import annotations
 from enum import Enum
 from types import SimpleNamespace
 
+import pytest
+
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
 
@@ -278,9 +280,33 @@ def test_source_recovery_handles_synchronous_completion_without_stale_runner():
     assert source.job(record.id).state == "finished"
 
 
-def test_incomplete_manager_becomes_empty_source():
-    source = PersistentJobSource(SimpleNamespace())
+def test_recovery_completion_does_not_propagate_metadata_refresh_failure():
+    record = _finishing_record()
+    callbacks = {}
 
-    assert not source.available
-    assert source.jobs() == ()
-    assert source.unavailable_reason is not None
+    class Store(_Store):
+        def get(self, job_id):
+            raise OSError("metadata temporarily unavailable")
+
+    store = Store((record,))
+
+    class Manager:
+        def __init__(self):
+            self.store = store
+
+        @staticmethod
+        def attach(job_id, *, callback=None, output_listener=None):
+            callbacks[job_id] = callback
+            return object()
+
+    source = PersistentJobSource(Manager())
+
+    callbacks[record.id](object())
+
+    assert source.active_recovery_ids == ()
+    assert source.job(record.id).state == "finishing"
+
+
+def test_explicit_manager_must_satisfy_run_store_contract():
+    with pytest.raises(TypeError, match="run store"):
+        PersistentJobSource(SimpleNamespace())
