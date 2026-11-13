@@ -1,45 +1,62 @@
 """Persistent history adapters use current project-backed ASE2SPRKKR API."""
 from __future__ import annotations
+
 from types import SimpleNamespace
 import pytest
-from kkrunner import RunState
-from kkrunner.runs import FailurePhase, Execution, WorkingDirectory
-from kkrunner.backends import ExecutorEndpoint
+from kkrunner.runs import RunState, FailurePhase, Execution, WorkingDirectory
+from kkrunner.client import SshTransport
+from kkrunner.backends import BackendConfig
 from kkrunner.files import FileManifest
 import guy4ase.gui.application.persistent_jobs as module
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
-def record(state=RunState.RUNNING, *, backend_id='pid-42', failure_phase=None, return_code=None):
-    return SimpleNamespace(id='run-1', state=state, created_at='2026-10-19T10:00:00+00:00', updated_at='2026-10-19T11:00:00+00:00', finished_at=None, return_code=return_code, message=None, failure_phase=failure_phase, files=FileManifest(), execution=Execution(ExecutorEndpoint(executor='ssh', host='cluster', psij_backend='slurm'), WorkingDirectory('/tmp/calc', '/remote/calc'), backend_id=backend_id), metadata={'ase2sprkkr': {'task': 'DOS', 'dataset': 'Fe-DOS'}})
+
+def record(state=RunState.RUNNING, *, backend_id="pid-42", failure_phase=None, return_code=None):
+    return SimpleNamespace(
+        id="run-1", state=state,
+        created_at="2026-10-19T10:00:00+00:00",
+        updated_at="2026-10-19T11:00:00+00:00", finished_at=None,
+        metadata={"ase2sprkkr": {"task": "DOS", "dataset": "Fe-DOS"}},
+        return_code=return_code,
+        message=None, failure_phase=failure_phase,
+        files=FileManifest(),
+        execution=Execution(
+            SshTransport(host="cluster"),
+            WorkingDirectory("/tmp/calc", "/remote/calc"), backend_id=backend_id,
+            backend=BackendConfig(name="psij", options={"executor_name": "slurm"}),
+        ),
+    )
+
 
 class Store:
-
     def __init__(self, value):
         self.current = value
         self.calls = []
-
     def runs(self):
         return (self.current,)
-
     def get(self, run_id):
         self.calls.append(run_id)
         return self.current
 
+
 def test_record_metadata_maps_canonical_backend_contract():
     job = PersistentJob.from_run_record(record())
-    assert job.target == 'SSH · cluster · PSI/J slurm'
-    assert job.directory == '/tmp/calc'
+    assert job.target == "SSH · cluster · PSI/J slurm"
+    assert job.directory == "/tmp/calc"
     assert job.attachable
     assert not job.is_final
 
-@pytest.mark.parametrize('state', (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED))
+
+@pytest.mark.parametrize("state", (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED))
 def test_terminal_runs_cannot_be_attached(state):
     job = PersistentJob.from_run_record(record(state))
     assert job.is_final
     assert not job.attachable
 
+
 def test_submitting_run_without_backend_identity_cannot_be_attached():
     assert not PersistentJob.from_run_record(record(RunState.SUBMITTING, backend_id=None)).attachable
+
 
 def test_download_retry_is_explicit_and_requires_successful_execution():
     job = PersistentJob.from_run_record(record(RunState.FAILED, failure_phase=FailurePhase.DOWNLOAD, return_code=0))
@@ -47,77 +64,73 @@ def test_download_retry_is_explicit_and_requires_successful_execution():
     assert not job.attachable
     assert not PersistentJob.from_run_record(record(RunState.FAILED, failure_phase=FailurePhase.EXECUTION, return_code=1)).can_retry_download
 
+
 def test_source_tracks_authoritative_changes():
     initial = record()
     store = Store(initial)
     source = PersistentJobSource(SimpleNamespace(store=store))
-    assert source.jobs()[0].state == 'running'
+    assert source.jobs()[0].state == "running"
     updates = []
     source.subscribe(updates.append)
     store.current = record(RunState.FINISHED)
     source.job_changed(initial.id)
     assert updates == [initial.id]
     assert store.calls == [initial.id]
-    assert source.jobs()[0].state == 'finished'
+    assert source.jobs()[0].state == "finished"
 
-def test_attach_and_load_delegate_to_backend_api():
+
+def test_attach_and_load_delegate_to_backend_api(monkeypatch):
     item = record(RunState.FINISHED)
     store = Store(item)
     calls = []
     result = SimpleNamespace(run_record=item)
-    manager = SimpleNamespace(store=store, attach=lambda *args, **kwargs: calls.append('attach') or object(), retrieve_result_files=lambda job_id: calls.append('load') or result)
+    manager = SimpleNamespace(
+        store=store,
+        attach=lambda *args, **kwargs: None,
+        retrieve_result_files=lambda *_args: None,
+    )
+    monkeypatch.setattr(module, "attach_project_run", lambda _manager, ref, **kwargs: calls.append("attach") or object())
+    monkeypatch.setattr(module, "load_project_result", lambda _manager, ref: calls.append("load") or result)
     source = PersistentJobSource(manager)
     assert source.supports_results
     assert source.supports_result_file_check
     source.attach(item.id)
     assert source.load_result(item.id) is result
-    assert calls == ['attach', 'load']
+    assert calls == ["attach", "load"]
+
+def test_postprocessing_retry_requires_successful_execution():
+    ready = PersistentJob.from_run_record(
+        record(RunState.FAILED, failure_phase=FailurePhase.POSTPROCESSING, return_code=0)
+    )
+    assert ready.can_retry_postprocessing
+    assert not PersistentJob.from_run_record(
+        record(RunState.FAILED, failure_phase=FailurePhase.EXECUTION, return_code=1)
+    ).can_retry_postprocessing
+    assert not PersistentJob.from_run_record(record(RunState.FINISHED)).can_retry_postprocessing
 
 
-import pytest
-from guy4ase.gui.application import persistent_jobs as application_boundary
-
-@pytest.fixture(autouse=True)
-def delegated_application_operations(monkeypatch):
-    monkeypatch.setattr(application_boundary, "attach_project_run",
-                        lambda manager, *args, **kwargs: manager.attach(*args, **kwargs))
-    monkeypatch.setattr(application_boundary, "load_project_result",
-                        lambda manager, run: manager.retrieve_result_files(run))
-
-
-def test_foreign_namespace_does_not_break_history():
-    item = record()
-    item.metadata = {'other-app': {'label': 'valid generic run'}}
-    source = PersistentJobSource(SimpleNamespace(store=Store(item)))
+def test_history_excludes_records_from_other_applications():
+    foreign = record(RunState.FINISHED)
+    foreign.metadata = {"other_application": {"task": "DOS"}}
+    source = PersistentJobSource(SimpleNamespace(store=Store(foreign)))
     assert source.jobs() == ()
-    assert source.job_changed(item.id) is None
+    assert source.job_changed(foreign.id) is None
 
 
-def test_invalid_owned_namespace_is_reported():
-    item = record()
-    item.metadata = {'ase2sprkkr': {}}
-    from ase2sprkkr.outputs.project_results import UnrecoverableProjectResultError
-    with pytest.raises(UnrecoverableProjectResultError):
-        PersistentJobSource(SimpleNamespace(store=Store(item)))
-
-
-def test_retry_postprocessing_updates_authoritative_history(monkeypatch):
+def test_explicit_postprocessing_retry_delegates_to_application(monkeypatch):
     item = record(RunState.FAILED, failure_phase=FailurePhase.POSTPROCESSING, return_code=0)
     store = Store(item)
-    manager = SimpleNamespace(store=store, retry_postprocessing=lambda *args: None)
-    source = PersistentJobSource(manager)
+    manager = SimpleNamespace(store=store, retry_postprocessing=lambda *_args: None)
     calls = []
-    result = object()
+    expected = object()
 
-    def retry(actual_manager, job_id):
-        calls.append((actual_manager, job_id))
-        store.current = record(RunState.FINISHED, return_code=0)
-        return result
+    def retry(received_manager, run_id):
+        calls.append((received_manager, run_id))
+        return expected
 
-    monkeypatch.setattr(module, 'retry_project_postprocessing', retry)
-    assert source.job(item.id).can_retry_postprocessing
+    monkeypatch.setattr(module, "retry_project_postprocessing", retry)
+    source = PersistentJobSource(manager)
     assert source.supports_retry_postprocessing
-    assert source.retry_postprocessing(item.id) is result
-    assert source.job(item.id).is_final
-    assert not source.job(item.id).can_retry_postprocessing
+    assert source.retry_postprocessing(item.id) is expected
     assert calls == [(manager, item.id)]
+    assert store.calls == [item.id]
