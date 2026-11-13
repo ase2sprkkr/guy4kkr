@@ -1,15 +1,22 @@
 """Execution-profile dialogs for SPR-KKR calculations."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from dataclasses import dataclass
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QRegularExpression
+from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -26,7 +33,16 @@ from guy4ase.gui.application.execution_profiles import (
     kind_label,
 )
 from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.input_parameters.dataset import dataset_value, filename_component
 from guy4ase.gui.widgets.execution_profiles import ProfileForm
+
+
+@dataclass(frozen=True)
+class RunIdentification:
+    """Output identifiers for a single calculation, independent of its profile."""
+
+    dataset: str | None
+    adsi: str
 
 
 class ProfilesDialog(QDialog):
@@ -201,11 +217,15 @@ class ProfileSelectionDialog(QDialog):
         parent: QWidget | None = None,
         *,
         store: ExecutionProfileStore | None = None,
+        input_parameters=None,
+        directory: str | None = None,
+        require_directory: bool = True,
     ) -> None:
         super().__init__(parent)
+        self._require_directory = require_directory
         self._store = store or ExecutionProfileStore()
         self.setWindowTitle("Run SPR-KKR Calculation")
-        self.resize(650, 330)
+        self.resize(650, 480)
         self.setMinimumWidth(560)
 
         layout = QVBoxLayout(self)
@@ -225,6 +245,46 @@ class ProfileSelectionDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        self.dataset_edit: QLineEdit | None = None
+        self.adsi_edit: QLineEdit | None = None
+        if input_parameters is not None and hasattr(input_parameters, "CONTROL"):
+            identifiers = QGroupBox("Calculation identification", self)
+            identifier_form = QFormLayout(identifiers)
+
+            self.dataset_edit = QLineEdit(identifiers)
+            self.dataset_edit.setText(dataset_value(input_parameters) or "")
+            self.dataset_edit.setPlaceholderText("Automatic naming")
+            self.dataset_edit.setValidator(
+                QRegularExpressionValidator(
+                    QRegularExpression(r"[A-Za-z0-9_.-]*"), self.dataset_edit
+                )
+            )
+            self.dataset_edit.setToolTip(
+                "SPR-KKR CONTROL.DATASET. Base name for output files. "
+                "Use a different name for simultaneous runs in the same directory."
+            )
+            identifier_form.addRow("Output file prefix:", self.dataset_edit)
+            dataset_hint = QLabel(
+                "Used to name output files (CONTROL.DATASET); leave empty for "
+                "automatic naming.", identifiers
+            )
+            dataset_hint.setWordWrap(True)
+            identifier_form.addRow("", dataset_hint)
+
+            self.adsi_edit = QLineEdit(identifiers)
+            adsi = input_parameters.CONTROL.ADSI()
+            self.adsi_edit.setText("" if adsi is None else str(adsi))
+            self.adsi_edit.setToolTip(
+                "SPR-KKR CONTROL.ADSI. An additional identifier for the calculation."
+            )
+            identifier_form.addRow("Calculation label:", self.adsi_edit)
+            adsi_hint = QLabel(
+                "Additional calculation identifier (CONTROL.ADSI).", identifiers
+            )
+            adsi_hint.setWordWrap(True)
+            identifier_form.addRow("", adsi_hint)
+            layout.addWidget(identifiers)
+
         profile_box = QGroupBox("Run configuration", self)
         profile_layout = QVBoxLayout(profile_box)
         select_row = QHBoxLayout()
@@ -241,6 +301,18 @@ class ProfileSelectionDialog(QDialog):
         self.description.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         profile_layout.addWidget(self.description)
         layout.addWidget(profile_box)
+
+        directory_box = QGroupBox("Working directory", self)
+        directory_row = QHBoxLayout(directory_box)
+        self.directory_edit = QLineEdit(directory_box)
+        self.directory_edit.setText(directory or "")
+        self.directory_edit.setPlaceholderText("Select the calculation directory")
+        directory_row.addWidget(self.directory_edit, 1)
+        browse = QPushButton("Browse…", directory_box)
+        browse.clicked.connect(self._browse_directory)
+        directory_row.addWidget(browse)
+        layout.addWidget(directory_box)
+        directory_box.setVisible(require_directory)
         layout.addStretch(1)
 
         buttons = QDialogButtonBox(
@@ -281,6 +353,60 @@ class ProfileSelectionDialog(QDialog):
         if ProfilesDialog(self, store=self._store).exec() == QDialog.DialogCode.Accepted:
             self._reload_profiles(selected)
 
+    def directory_name(self) -> str | None:
+        """Return the directory selected for this calculation."""
+        value = self.directory_edit.text().strip()
+        return str(Path(value).expanduser().resolve()) if value else None
+
+    def _browse_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select Calculation Directory",
+            self.directory_name() or str(Path.home()),
+        )
+        if selected:
+            self.directory_edit.setText(selected)
+
+    def accept(self) -> None:  # type: ignore[override]
+        if self._require_directory and not self.directory_name():
+            QMessageBox.warning(
+                self,
+                "Calculation Directory Required",
+                "Choose a working directory before starting the calculation.",
+            )
+            self.directory_edit.setFocus()
+            return
+        if self.dataset_edit is not None and not self.dataset_edit.hasAcceptableInput():
+            QMessageBox.warning(
+                self, "Invalid output prefix",
+                "Use only letters, digits, periods, underscores and hyphens.",
+            )
+            return
+        if self.dataset_edit is not None:
+            dataset = self.dataset_edit.text().strip()
+            if dataset and filename_component(dataset) != dataset:
+                QMessageBox.warning(
+                    self, "Invalid output prefix",
+                    "The output prefix must be a valid single filename component.",
+                )
+                return
+        if self.adsi_edit is not None and not self.adsi_edit.text().strip():
+            QMessageBox.warning(
+                self, "Missing calculation label",
+                "Enter a calculation label (SPR-KKR CONTROL.ADSI).",
+            )
+            return
+        super().accept()
+
+    def identification(self) -> RunIdentification | None:
+        """Return accepted run identifiers without changing input parameters."""
+        if self.dataset_edit is None or self.adsi_edit is None:
+            return None
+        return RunIdentification(
+            dataset=self.dataset_edit.text().strip() or None,
+            adsi=self.adsi_edit.text().strip(),
+        )
+
     def profile_name(self) -> str | None:
         value = self.profiles.currentData()
         return None if value is None else str(value)
@@ -288,7 +414,7 @@ class ProfileSelectionDialog(QDialog):
 
 def select_execution_profile(parent: QWidget | None = None) -> str | None:
     """Return the selected profile name, or ``None`` if cancelled/automatic."""
-    dialog = ProfileSelectionDialog(parent)
+    dialog = ProfileSelectionDialog(parent, require_directory=False)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.profile_name()
