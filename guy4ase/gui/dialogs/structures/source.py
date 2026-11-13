@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -21,6 +22,7 @@ from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.flows import structure_candidates
 from guy4ase.gui.flows.structure_candidates import StructureCandidate
 from guy4ase.gui.presentation import ActionCategory
+from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -73,7 +75,7 @@ class StructureSourceDialog(QDialog):
             "Build a periodic bulk crystal",
             self._create,
             category="structure",
-            icon=QStyle.StandardPixmap.SP_FileIcon,
+            icon=QIcon(str(icon_path("bulk_crystal.png"))),
         )
         self._add_action(
             create_layout,
@@ -81,7 +83,7 @@ class StructureSourceDialog(QDialog):
             "Start from a crystallographic structure prototype",
             self._create_from_database,
             category="structure",
-            icon=QStyle.StandardPixmap.SP_DirIcon,
+            icon=QIcon(str(icon_path("database.svg"))),
         )
 
         self._add_action(
@@ -135,14 +137,14 @@ class StructureSourceDialog(QDialog):
         callback,
         *,
         category: ActionCategory,
-        icon: QStyle.StandardPixmap,
+        icon: QStyle.StandardPixmap | QIcon,
     ) -> None:
         button = QPushButton(self)
         configure_action_card(
             button,
             title,
             description,
-            self.style().standardIcon(icon),
+            icon if isinstance(icon, QIcon) else self.style().standardIcon(icon),
             category=category,
         )
         button.clicked.connect(callback)

@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Optional
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor
+from PyQt6.QtGui import QAction, QColor, QIcon
 from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.physics.composition import site_composition, structure_formula
 
@@ -165,8 +166,12 @@ class StructureOverviewWidget(QWidget):
             layout.addSpacing(15)
             return button
 
-        add_button("Create New Structure", create_structure)
-        add_button("Create Structure from Prototype Database", create_from_database)
+        add_button("Create New Structure", create_structure).setIcon(
+            QIcon(str(icon_path("bulk_crystal.png")))
+        )
+        add_button("Create Structure from Prototype Database", create_from_database).setIcon(
+            QIcon(str(icon_path("database.svg")))
+        )
         add_button("Download Structure from Online Database", download_structure)
         add_button("Load from File...", load_structure)
         output_button = add_button("Load SPRKKR Output File...", load_output)

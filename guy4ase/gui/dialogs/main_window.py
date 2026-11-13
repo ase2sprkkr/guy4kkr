@@ -29,6 +29,7 @@ from guy4ase.gui.dialogs.structures.transforms import (
     rotate_atoms,
     scale_atoms,
 )
+from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import input_editing as input_editing_flow
@@ -262,7 +263,7 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         structure_menu = menubar.addMenu("&Structure")
 
-        create_action = QAction("&Create New...", self)
+        create_action = QAction(QIcon(str(icon_path("bulk_crystal.png"))), "&Create New...", self)
         create_action.setShortcut("Ctrl+N")
         create_action.triggered.connect(self.create_structure)
         structure_menu.addAction(create_action)
@@ -276,7 +277,7 @@ class MainWindow(QMainWindow):
         )
         self.create_shell_action.triggered.connect(self.create_structure_by_shell)
         structure_menu.addAction(self.create_shell_action)
-        create_database_action = QAction("Create from &Prototype Database...", self)
+        create_database_action = QAction(QIcon(str(icon_path("database.svg"))), "Create from &Prototype Database...", self)
         create_database_action.triggered.connect(self.create_structure_from_database)
         structure_menu.addAction(create_database_action)
 
@@ -354,7 +355,7 @@ class MainWindow(QMainWindow):
         self.rotate_structure_action.triggered.connect(self._on_rotate_structure)
         structure_menu.addAction(self.rotate_structure_action)
 
-        self.build_2d_structure_action = QAction("Build &2D Structure...", self)
+        self.build_2d_structure_action = QAction(QIcon(str(icon_path("structure_interface.png"))), "Build &2D Structure...", self)
         self.build_2d_structure_action.triggered.connect(self.build_2d_structure)
         structure_menu.addAction(self.build_2d_structure_action)
         structure_menu.addSeparator()

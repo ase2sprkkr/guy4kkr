@@ -143,6 +143,10 @@ class WorkflowActionsWidget(QWidget):
             ActionIcon.RUN: "system-run.svg",
             ActionIcon.EMPTY_SPHERES: "run-build-clean.svg",
             ActionIcon.NEW_CALCULATION: "run-build-clean.svg",
+            ActionIcon.BULK_CRYSTAL: "bulk_crystal.png",
+            ActionIcon.DATABASE: "database.svg",
+            ActionIcon.SURFACE: "surface_2d.svg",
+            ActionIcon.INTERFACE: "structure_interface.png",
         }
         if icon is ActionIcon.SHELL:
             return QIcon.fromTheme(
