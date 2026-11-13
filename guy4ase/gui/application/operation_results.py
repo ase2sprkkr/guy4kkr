@@ -31,6 +31,7 @@ class EmptySpheresResult:
     found: int
 
     task_name: ClassVar[str] = "empty_spheres"
+    produces_potential: ClassVar[bool] = False
 
     @property
     def output_values(self) -> dict[str, EmptySpheresCount]:

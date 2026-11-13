@@ -6,22 +6,27 @@ from typing import Callable
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from guy4ase.gui.application.execution_profiles import profile_description
+from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import PotentialVersionChanged
 from guy4ase.gui.application.window_geometry import window_placement
 from guy4ase.gui.application.workspace_controller import (
     CalculationNotReady,
     WorkspaceController,
 )
+from guy4ase.gui.dialogs.expert_input import edit_input_parameters
 from guy4ase.gui.dialogs.guided_input import (
     GuidedInputParametersDialog,
+    GuidedTaskUnavailable,
     select_guided_input_parameters,
 )
-from guy4ase.gui.dialogs.profiles import (
-    ProfileSelectionDialog,
-    profile_description,
-)
+from guy4ase.gui.dialogs.profiles import ProfileSelectionDialog
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
+from guy4ase.gui.input_parameters.tasks import is_guided_task
 from guy4ase.gui.misc.structure_wait import document_change_applied
+
+LaunchMonitorTracker = Callable[[SprkkrRunWindow], None]
 
 
 def choose_working_directory(
@@ -76,24 +81,16 @@ def run_calculation(
     select_profile: bool = True,
     profile_name: str | None = None,
     position_like_window: str | None = None,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Choose execution, run a task and record its immutable provenance.
 
-    ``position_like_window`` optionally reuses another managed window's
-    top-left corner for the profile picker and the run window. Their own sizes
-    stay independent. ``persistent_job_changed`` is an application observer of
-    stable persistent run ids; it never receives a parallel lifecycle snapshot.
+    ``position_like_window`` optionally reuses another managed window's top-left
+    corner for the profile picker and run window. ``track_launch_monitor``
+    transfers ownership of an application-level top-level monitor before its
+    worker starts; standalone callers that omit it retain ordinary parent
+    ownership.
     """
-    task = controller.current_task()
-    if task is not None and not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            f"{task.upper()} cannot be run with the current workspace state.",
-        )
-        return None
-
     try:
         request = controller.create_calculation_request()
     except CalculationNotReady:
@@ -134,12 +131,21 @@ def run_calculation(
         request=request,
         profile_name=profile_name,
         profile_description=description,
-        parent=parent,
+        parent=None if track_launch_monitor is not None else parent,
         on_finished=finished,
-        on_persistent_job_changed=persistent_job_changed,
     )
-    _position_like_window(window, position_like_window)
-    window.show()
+    try:
+        if track_launch_monitor is not None:
+            track_launch_monitor(window)
+        _position_like_window(window, position_like_window)
+        window.show()
+        window.start()
+    except BaseException:
+        # Any failure after construction must retire the window through its
+        # normal Qt lifetime path. This also covers a failed ownership transfer,
+        # which may have partially installed application/controller references.
+        window.close()
+        raise
     return window
 
 
@@ -150,68 +156,108 @@ def configure_and_run_task(
     task: str,
     *,
     dataset_default_mode: str,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Configure one Guided task, commit it, choose execution, and run it."""
+    if (
+        not controller.directory
+        and not choose_working_directory(
+            controller,
+            parent,
+            title="Choose the directory for this calculation",
+        )
+    ):
+        return None
+
+    generation = controller.generation
+    atoms = controller.atoms
+    if atoms is None:
+        QMessageBox.information(
+            parent,
+            "No Structure",
+            "Load or create a structure first.",
+        )
+        return None
+
     try:
-        if not controller.can_run_task(task):
-            QMessageBox.information(
-                parent,
-                "Task Not Available",
-                f"{str(task).upper()} cannot be run with the current workspace state.",
-            )
-            return None
-
-        if (
-            not controller.directory
-            and not choose_working_directory(
-                controller,
-                parent,
-                title="Choose the directory for this calculation",
-            )
-        ):
-            return None
-
-        generation = controller.generation
-        atoms = controller.atoms
-        if atoms is None:
-            QMessageBox.information(
-                parent,
-                "No Structure",
-                "Load or create a structure first.",
-            )
-            return None
-
         parameters = select_guided_input_parameters(
             task,
             parent=parent,
             atoms=atoms,
             dataset_default_mode=dataset_default_mode,
         )
-        if parameters is None:
-            return None
-        if not document_change_applied(
-            parent,
-            controller.replace_input_parameters(
-                parameters,
-                expected_generation=generation,
-            ),
-        ):
-            return None
-        return run_calculation(
-            controller,
-            recent_files,
-            parent,
-            position_like_window="guided-input",
-            persistent_job_changed=persistent_job_changed,
-        )
-    except (ImportError, ModuleNotFoundError) as exc:
+    except GuidedTaskUnavailable as exc:
         QMessageBox.critical(
             parent,
             "Task Unavailable",
-            f"The {task.upper()} task is not available:\n{exc}",
+            str(exc),
         )
         return None
+
+    if parameters is None:
+        return None
+    if not document_change_applied(
+        parent,
+        controller.replace_input_parameters(
+            parameters,
+            expected_generation=generation,
+        ),
+    ):
+        return None
+    return run_calculation(
+        controller,
+        recent_files,
+        parent,
+        position_like_window="guided-input",
+        track_launch_monitor=track_launch_monitor,
+    )
+
+
+def show_new_calculation_source_required(parent: QWidget) -> None:
+    """Explain why a structure with multiple provenance branches needs selection."""
+    QMessageBox.information(
+        parent,
+        "Select Calculation State",
+        "This structure has multiple calculation branches. Select the result state "
+        "you want to reuse first, then choose Use for New Calculation.",
+    )
+
+
+def use_for_new_calculation(
+    controller: WorkspaceController,
+    parent: QWidget,
+    *,
+    result_id: int | None = None,
+    expected_potential: PotentialFileVersion | None = None,
+) -> bool:
+    """Confirm and atomically branch from the active or historical structure."""
+    generation = controller.generation
+    answer = QMessageBox.question(
+        parent,
+        "Use for New Calculation?",
+        "Keep the selected structure and reusable potential as starting density, "
+        "reset the SCF stage, and use it for a new calculation?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    if answer != QMessageBox.StandardButton.Yes:
+        return False
+
+    try:
+        change = controller.use_for_new_calculation(
+            result_id=result_id,
+            expected_potential=expected_potential,
+            expected_generation=generation,
+        )
+    except PotentialVersionChanged as exc:
+        QMessageBox.warning(
+            parent,
+            "Potential Changed",
+            "The potential changed while the operation was being confirmed. "
+            f"Please try again.\n{exc}",
+        )
+        return False
+    return document_change_applied(parent, change)
 
 
 def recompute_result(
@@ -220,7 +266,7 @@ def recompute_result(
     parent: QWidget,
     result_id: int,
     *,
-    persistent_job_changed: Callable[[str], None] | None = None,
+    track_launch_monitor: LaunchMonitorTracker | None = None,
 ) -> SprkkrRunWindow | None:
     """Re-run historical settings on the state active in the workspace.
 
@@ -231,17 +277,6 @@ def recompute_result(
     record = controller.result_store.result(result_id)
     task = record.task_name
     if not task or record.input_parameters is None:
-        return None
-
-    if not controller.can_run_task(task):
-        QMessageBox.information(
-            parent,
-            "Task Not Available",
-            (
-                f"{task.upper()} cannot be run with the potential currently active "
-                "in the workspace."
-            ),
-        )
         return None
 
     if not controller.directory and not choose_working_directory(
@@ -260,19 +295,30 @@ def recompute_result(
         parameters = record.input_parameters.copy(copy_values=True)
     except AttributeError:
         return None
-    dialog = GuidedInputParametersDialog(
-        task,
-        parameters,
-        parent=parent,
-        atoms=atoms,
-    )
-    if dialog.exec() != dialog.DialogCode.Accepted:
-        return None
+
+    position_like_window: str
+    if is_guided_task(task):
+        dialog = GuidedInputParametersDialog(
+            task,
+            parameters,
+            parent=parent,
+            atoms=atoms,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+        parameters = dialog.parameters()
+        position_like_window = "guided-input"
+    else:
+        edited = edit_input_parameters(parameters, parent=parent, atoms=atoms)
+        if edited is None:
+            return None
+        parameters = edited
+        position_like_window = "expert-input"
 
     if not document_change_applied(
         parent,
         controller.replace_input_parameters(
-            dialog.parameters(),
+            parameters,
             expected_generation=generation,
         ),
     ):
@@ -281,6 +327,6 @@ def recompute_result(
         controller,
         recent_files,
         parent,
-        position_like_window="guided-input",
-        persistent_job_changed=persistent_job_changed,
+        position_like_window=position_like_window,
+        track_launch_monitor=track_launch_monitor,
     )

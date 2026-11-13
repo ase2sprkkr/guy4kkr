@@ -29,9 +29,12 @@ class _Value:
         return ()
 
 
-def _result(task: str, name: str):
+def _result(task: str, name: str, *, produces_potential: bool | None = None):
+    if produces_potential is None:
+        produces_potential = task.lower() == "scf"
     return SimpleNamespace(
         task_name=task,
+        produces_potential=produces_potential,
         output_file=f"{name}.out",
         output_values={"value": _Value(name)},
     )
@@ -146,7 +149,6 @@ def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path)
         directory=directory,
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
-        produces_state=True,
     )
     state_id = imported_scf.output_state_id
     assert state_id is not None
@@ -190,7 +192,6 @@ def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
         directory=directory,
         output_path=Path(directory) / "scf.out",
         potential_path=potential,
-        produces_state=True,
     )
     imported_state = imported_scf.output_state_id
     assert imported_state is not None

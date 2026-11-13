@@ -269,7 +269,7 @@ def test_workspace_file_loads_still_report_backend_errors(
     assert messages == [
         "Failed to load structure:\nstructure parse",
         "Failed to load input parameters:\ninput parse",
-        "Failed to load SPRKKR output:\noutput parse",
+        "Failed to load SPR-KKR output:\noutput parse",
     ]
 
 

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QTreeWidgetItem
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.application.projects import ProjectRepository
+from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.project_browser import ProjectBrowserDialog
 
 
@@ -65,6 +66,10 @@ class _JobSource:
         return self.job(job_id)
 
 
+def _dialog(repository, source):
+    return ProjectBrowserDialog(repository, PersistentJobsController(source))
+
+
 def _find_project_item(dialog: ProjectBrowserDialog, label: str) -> QTreeWidgetItem:
     pending = [
         dialog.project_tree.topLevelItem(index)
@@ -96,7 +101,7 @@ def test_project_browser_uses_parent_hierarchy_and_direct_run_membership(tmp_pat
         )
     )
 
-    dialog = ProjectBrowserDialog(repository, source)
+    dialog = _dialog(repository, source)
 
     root_item = _find_project_item(dialog, "Root")
     assert root_item.child(0).text(0) == "Child"
@@ -122,7 +127,7 @@ def test_unassigned_and_missing_references_are_explicit(tmp_path):
             _job("free", dataset="Free"),
         )
     )
-    dialog = ProjectBrowserDialog(repository, source)
+    dialog = _dialog(repository, source)
 
     project_item = _find_project_item(dialog, "Project")
     assert project_item.text(1) == "1/2"
@@ -141,7 +146,7 @@ def test_job_source_change_recomputes_project_projection(tmp_path):
     repository = ProjectRepository(tmp_path / "projects")
     repository.create("Project")
     source = _JobSource((_job("free-1", dataset="First"),))
-    dialog = ProjectBrowserDialog(repository, source)
+    dialog = _dialog(repository, source)
 
     assert _find_project_item(dialog, "Unassigned").text(1) == "1"
 
@@ -164,7 +169,7 @@ def test_repository_refresh_updates_open_project_browser(tmp_path):
     repository = ProjectRepository(directory)
     project = repository.create("Original")
     source = _JobSource(())
-    dialog = ProjectBrowserDialog(repository, source)
+    dialog = _dialog(repository, source)
 
     second = ProjectRepository(directory)
     snapshot = second.project(project.id)

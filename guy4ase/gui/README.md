@@ -13,13 +13,43 @@ alternate APIs.
 - `widgets`: reusable Qt controls. `widgets.input_parameters` contains the
   concrete value editors shared by guided and expert parameter editing;
   structure-specific controls live in `widgets.structures`.
+- `controllers`: application-owned Qt workflow coordinators for reusable views.
+  They may bridge GUI intents to application services and own GUI-wide window
+  identity/lifecycle, but they do not become a second source of domain state.
 - `input_parameters`: parameter-editing state and Qt-independent model helpers.
   It contains the editing session, field bindings, task semantics, validation,
   DATASET naming, tooltips, and declarative task specifications. It does not own
   finished application windows.
+- `input_parameters.tasks`: Guy4ASE's closed mapping from opaque task keys
+  accepted by the current ASE2SPRKKR input-parameter API to Guided editor/layout
+  and workflow presentation metadata. It controls Guided UX only; it is not a
+  backend task identity registry and is not a whitelist of tasks that Expert mode
+  may execute. Backend task existence and execution/result semantics remain owned
+  by ASE2SPRKKR. Guy4ASE must not anticipate the representation of a future
+  backend task-definition API.
 - `input_parameters.specs`: declarative guided-layout definitions. `schema`
-  defines fields/groups/pages, individual task modules build their layouts, and
-  `registry.task_dialog_spec` selects a task specification.
+  defines fields/groups/pages and individual task modules build their layouts.
+  Specs describe layout and presentation only; selection of a layout for a
+  backend task belongs to `input_parameters.tasks` as Guy4ASE presentation
+  policy, keyed by the opaque backend lookup value accepted today.
+- `workflow`: Qt-independent Guided workflow planning. It consumes application
+  read contracts and Guided task metadata and produces an ordered typed
+  presentation plan. Commands carry opaque backend task lookup keys rather than
+  owning Guy4ASE task-definition objects or asserting backend identity semantics.
+  The workflow layer owns Guided recommendation/grouping policy but no Qt
+  rendering or execution permission. Backend-specific SCF status strings are
+  translated at the workflow boundary before the planner consumes them.
+- `presentation.py`: the small Qt-independent action-presentation vocabulary
+  shared by planners and renderers, such as action categories and labels for
+  semantic workspace actions.
+- `recent_presentation.py`: Qt-independent presentation policy for recent files.
+  It consumes immutable read snapshots and owns recent-launch selection, menu
+  grouping, display labels, and empty-state copy; it never reads mutable
+  application state directly.
+- `workspace_semantics.py`: a Qt-free leaf module for immutable semantic value
+  types shared across otherwise independent GUI layers. It owns no state,
+  workflow policy, or user-facing presentation copy and imports no other
+  `guy4ase.gui` module.
 - `application`: application/document state, calculation execution, and
   provenance. `WorkspaceState` represents the mutable draft prepared for the
   next calculation; `ResultStore` owns calculation history independently of
@@ -39,17 +69,43 @@ alternate APIs.
   component that owns their meaning.
 
 `guy4ase.main.GuiApplication` is the composition root. It owns one
-`WorkspaceController`, one `RecentFiles`, and one `ApplicationSettings`, and
-injects the same shared objects into the workflow and expert top-level windows.
-The windows do not construct another application state or another top-level
-window. Result selection is presentation state; the composition root wires
-explicit result-selection intent separately from result history updates.
+`WorkspaceController`, one `PersistentJobSource`, one shared
+`PersistentJobsController`, one `RecentFiles`, and one `ApplicationSettings`,
+and injects the same shared objects into the relevant top-level windows. The
+windows do not construct another application state or another top-level window.
+Result selection is presentation state; the composition root wires explicit
+result-selection intent separately from result history updates.
+
+`PersistentJobSource` is authoritative for persistent run metadata, backend
+operations, and persisted-run recovery. `PersistentJobsController` subscribes
+to that source once and coordinates any number of `PersistentJobsWidget` views.
+It also owns GUI-wide monitor-window identity and lifetime. A launch flow creates
+`SprkkrRunWindow` without starting its worker, transfers it to
+`PersistentJobsController.track_launch_window()`, and only then shows and starts
+it. The controller therefore holds a strong pending reference before execution
+can publish a persistent id. Because a runner is registered before persistent
+submission, a browser request can match a newly visible persistent record to the
+pending launch by `runner.id` even if the queued lifecycle signal has not yet
+arrived. The pending launch is then promoted into the single
+`job_id -> monitor_window` registry instead of creating a second attached
+monitor. Any two distinct monitor windows claiming the same persistent id are a
+programming/invariant error, not a recoverable UI policy.
+
+Later launch lifecycle notifications refresh authoritative metadata. A launch is
+announced to the composition root after a successful authoritative reload, so a
+transient store error can be recovered by a later lifecycle notification without
+losing project assignment. History views create an attached monitor only when no
+active or matching pending launch monitor exists. Attached monitors are likewise
+registered before their worker starts. Persistent job views never own backend
+recovery or monitor-window lifecycle.
 
 Calculation execution is deliberately not owned by a GUI run registry. A
 `CalculationRequest` captures exact launch provenance, `SprkkrExecution` owns
 runner creation/submission/cancellation/result loading, and `RunMonitorWindow`
-is only the generic Qt monitor. Persistent execution identity and collision
-policy belong to ASE2SPRKKR's runner/persistence layer.
+is only the generic Qt monitor. `PersistentJobsController` owns GUI window
+lifetime and identity, including pending launch windows, but not runner execution
+or persistent state. Persistent execution identity and collision policy remain
+in ASE2SPRKKR's runner/persistence layer.
 
 Package `__init__.py` files should stay lightweight and should not become
 alternate import APIs for dialog/widget internals. Canonical imports use the
@@ -70,11 +126,17 @@ artifact/provenance metadata only; calculation launch must not silently use it
 as a second physical source of truth.
 
 `ResultStore` owns result history and calculation-state provenance independently
-of the mutable workspace. A result may refer to an input state and, for tasks
-such as SCF, to an output state. Historical states retain enough provenance to
-reconstruct a reusable calculation input from the recorded POTFIL version or a
-structure snapshot when necessary. Activating historical state is always an
-explicit transition.
+of the mutable workspace. A result may refer to an input state and, when the
+backend result declares that it produces a new potential, to an output state.
+Historical states retain enough provenance to reconstruct a reusable calculation
+input from the recorded POTFIL version or a structure snapshot when necessary.
+Activating historical state is always an explicit transition.
+
+Potential production is a result capability defined by ASE2SPRKKR result types,
+not inferred in Guy4ASE from a task-name string or from the input-parameter
+definition. GUI-internal operation results implement the same small capability
+contract explicitly. `ResultStore` derives potential provenance from the result
+it records rather than accepting duplicate caller-supplied policy booleans.
 
 Windows and flows mutate the draft through named `WorkspaceController`
 operations rather than assigning workspace facets independently. The important
@@ -87,10 +149,11 @@ result-adoption semantics are:
   only explicit presentation intent to select that result in the UI.
 - `adopt_calculation_result()` records a result produced from its mandatory
   captured `CalculationRequest`. It never reconstructs launch provenance from
-  whatever happens to be active when the result finishes. Only an SCF result
-  finishing from the exact currently active input state may fast-forward the
-  workspace to its produced state. A result from an older branch is recorded in
-  that branch and cannot silently overwrite a newer user choice.
+  whatever happens to be active when the result finishes. Only a
+  potential-producing result finishing from the exact currently active input
+  state may fast-forward the workspace to its produced state. A result from an
+  older branch is recorded in that branch and cannot silently overwrite a newer
+  user choice.
 - `use_result_state()` is the explicit operation for activating a reusable
   historical state (or an explicitly approved current version of its POTFIL).
 - `use_for_new_calculation()` creates a new calculation branch from the active
@@ -186,7 +249,23 @@ an explicit stored value.
 
 - `guy4ase.main.GuiApplication` is the composition root for shared application
   state and top-level windows.
-- `application` does not import dialogs, widgets, or flows.
+- `application` does not import dialogs, widgets, controllers, flows, `workflow`,
+  `presentation.py`, or `recent_presentation.py`; application state must not
+  depend on Guided or recent-file presentation policy.
+- `workspace_semantics.py` is a leaf: it imports no other `guy4ase.gui` module
+  and contains no state ownership, workflow policy, or presentation text.
+- `presentation.py` and `recent_presentation.py` are Qt-independent and may
+  depend on leaf semantic values, but not on application state, input-parameter
+  implementation, workflow, dialogs, widgets, controllers, or flows.
+- `workflow` is Qt-independent and may consume application read contracts,
+  `input_parameters.tasks`, pure presentation values, and physics helpers, but
+  does not import dialogs, widgets, controllers, or flows. Its command model is
+  independent of `input_parameters.tasks`; task commands carry only an opaque
+  backend lookup key accepted by the current backend API. Planner code may
+  consult Guided task metadata to construct the presentation plan.
+- `controllers` coordinate reusable Qt workflows and may depend on application
+  services, reusable widgets, and leaf dialogs, but reusable widgets do not
+  depend back on controllers.
 - Windows render controller state and invoke flows/controller transitions; they
   do not assign workspace fields directly.
 - `flows` may compose application state and leaf dialogs, but must not import
@@ -195,18 +274,22 @@ an explicit stored value.
   concrete application dialogs. Use signals/callbacks for actions owned by a
   higher layer.
 - `input_parameters` must not depend on concrete dialogs or widgets.
+- `input_parameters.tasks` may depend on declarative specs but not on concrete
+  dialogs/widgets; workflow metadata here is presentation policy, not backend
+  task identity or execution permission.
 - `input_parameters.specs` must remain independent of Qt session/widget
-  implementations.
+  implementations and of workflow/task identity policy.
 - `misc` and `plots` must not become dependencies on top-level dialogs or
   parameter editors.
 - Domain logic that can be expressed without Qt belongs outside the GUI package
   where practical.
 
 The checks in `tests/test_gui_architecture.py` protect the broad layer
-directions, acyclic GUI imports, and lightweight import boundaries. Tests should
-protect invariants and public contracts, not freeze incidental implementation
-layout. Backend execution behavior is tested through `SprkkrExecution`; only Qt
-signal/thread adaptation belongs in worker-level tests.
+directions, acyclic GUI imports, lightweight import boundaries, and the leaf
+contracts above. Tests should protect invariants and public contracts, not freeze
+incidental implementation layout. Backend execution behavior is tested through
+`SprkkrExecution`; only Qt signal/thread adaptation belongs in worker-level
+tests.
 
 ## Common canonical imports
 
@@ -215,12 +298,17 @@ from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
+from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.dataset import filename_component
 from guy4ase.gui.input_parameters.field_binding import SessionFieldBinding
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
+from guy4ase.gui.presentation import ActionCategory
+from guy4ase.gui.recent_presentation import RecentLaunch
+from guy4ase.gui.workflow.planner import WorkflowPlanner
+from guy4ase.gui.workspace_semantics import EmptySpheresAction
 from guy4ase.gui.widgets.input_parameters.value_editor import ParameterValueEditor
 ```

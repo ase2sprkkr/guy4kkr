@@ -54,6 +54,15 @@ class _Value:
         return ()
 
 
+def _record_result(task_name: str):
+    return SimpleNamespace(
+        task_name=task_name,
+        produces_potential=False,
+        output_values={},
+        output_file=f"Fe_{task_name.upper()}.out",
+    )
+
+
 def _widget(*, show_values_without_actions=True):
     return ResultActionsWidget(
         lambda _value, _action: None,
@@ -180,7 +189,7 @@ def test_result_from_other_structure_offers_structure_reuse():
     current_structure, current_state = store.new_structure_state(
         Atoms("Cu"), potential_path="Cu.pot"
     )
-    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
+    result = _record_result("dos")
     record = store.add_result(
         result,
         structure_id=first_structure,
@@ -218,7 +227,7 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_pa
     structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=str(p0))
     historical_state = store.new_child_state(root, potential_path=str(p1))
     current_state = store.new_child_state(historical_state, potential_path=str(p2))
-    result = SimpleNamespace(task_name="dos", output_values={}, output_file="Fe_DOS.out")
+    result = _record_result("dos")
     record = store.add_result(
         result,
         structure_id=structure_id,

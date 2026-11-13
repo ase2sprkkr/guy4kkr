@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from ase import Atoms
+from ase2sprkkr import SPRKKRAtoms
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
@@ -8,9 +9,9 @@ from guy4ase.gui.application.workspace import EmptySpheresState, WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     DocumentChange,
-    EmptySpheresAction,
     WorkspaceController,
 )
+from guy4ase.gui.workspace_semantics import EmptySpheresAction
 
 
 def test_empty_sphere_search_state_allows_repeated_failed_search():
@@ -128,7 +129,7 @@ def test_empty_sphere_state_keeps_search_parameters_across_later_results():
     controller.replace_input_parameters(object())
     assert workspace.empty_spheres is state
 
-    result = SimpleNamespace(task_name="dos")
+    result = SimpleNamespace(task_name="dos", produces_potential=False)
     controller.adopt_calculation_result(
         LoadedResult(
             result=result,
@@ -172,12 +173,15 @@ def test_empty_sphere_flow_prefills_parameters_from_workspace_state(monkeypatch)
 
 
 def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
-    atoms = SimpleNamespace(
-        potential=SimpleNamespace(
-            SCF_INFO=SimpleNamespace(SCFSTATUS="CONVERGED")
-        ),
-        sprkkr_is_scf_converged=lambda: True,
+    atoms = SPRKKRAtoms.promote_ase_atoms(
+        Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True),
+        symmetry=False,
     )
+    atoms._potential = SimpleNamespace(
+        atoms=atoms,
+        SCF_INFO=SimpleNamespace(SCFSTATUS=lambda: "CONVERGED"),
+    )
+    atoms.sprkkr_is_scf_converged = lambda: True
     empty_spheres = EmptySpheresState(
         3, {"min_radius": 0.8, "mesh": (20, 20, 20)}
     )
@@ -196,7 +200,7 @@ def test_use_for_new_calculation_keeps_density_and_assigns_new_state():
 
     assert change is DocumentChange.APPLIED
     assert workspace.atoms is atoms
-    assert atoms.potential.SCF_INFO.SCFSTATUS == "CONVERGED"
+    assert atoms.potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
     assert workspace.restarted
     assert not workspace.is_scf_converged()
     assert workspace.empty_spheres is empty_spheres

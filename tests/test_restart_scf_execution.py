@@ -40,7 +40,7 @@ def test_workspace_restart_is_snapshotted_into_request_and_result(tmp_path):
 
     adoption = controller.adopt_calculation_result(
         LoadedResult(
-            result=SimpleNamespace(task_name="DOS"),
+            result=SimpleNamespace(task_name="DOS", produces_potential=False),
             output_path=None,
             potential_path=None,
             atoms=None,

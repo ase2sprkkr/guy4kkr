@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.flows import structure_candidates
 from guy4ase.gui.flows.structure_candidates import StructureCandidate
+from guy4ase.gui.presentation import ActionCategory
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -28,7 +29,7 @@ from guy4ase.gui.style import (
     heading_font,
     secondary_text_stylesheet,
 )
-from guy4ase.gui.widgets.action_card import ActionCategory, configure_action_card
+from guy4ase.gui.widgets.action_card import configure_action_card
 from guy4ase.gui.widgets.recent_launcher import populate_recent_menu
 
 
@@ -139,7 +140,8 @@ class StructureSourceDialog(QDialog):
         layout.addWidget(button)
 
     def _add_recent_action(self, layout: QVBoxLayout) -> None:
-        recent = self._recent_files.paths("structure")
+        snapshot = self._recent_files.read_snapshot()
+        recent = snapshot.paths("structure")
         if not recent:
             return
 
@@ -164,7 +166,7 @@ class StructureSourceDialog(QDialog):
         menu = QMenu(button)
         populate_recent_menu(
             menu,
-            self._recent_files,
+            snapshot,
             "structure",
             self._load_recent_path,
         )

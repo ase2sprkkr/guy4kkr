@@ -14,7 +14,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     emin_dos = energy_bound("EMIN", "Minimum energy:")
     emax_dos = energy_bound("EMAX", "Maximum energy:")
     ne_dos = main_energy_mesh_field("NE", "Energy points:", "integer", minimum=1, maximum=10000)
-    dos = TaskDialogSpec("dos", "dos", "DOS Calculation Setup", (
+    dos = TaskDialogSpec("DOS Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common DOS settings", (
             mirror(emin_dos), mirror(emax_dos), mirror(ne_dos), mirror(nktab),
         )),), QUICK_COLOR, quick=True),

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from threading import Lock, Thread
+from threading import Thread
 from typing import Any
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.execution_cancellation import RunCancellation
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,68 +30,34 @@ def state_label(state: Any) -> str:
     return str(value).replace("_", " ").capitalize()
 
 
-class RunCancellation:
-    """Bridge a GUI stop request to a runner that may not exist yet."""
+class RunMonitorWorker(QObject):
+    """Formal Qt adapter contract consumed by :class:`RunMonitorWindow`."""
 
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._requested = False
-        self._runner: Any | None = None
+    output = pyqtSignal(str, str)
+    status = pyqtSignal(str)
+    warning = pyqtSignal(str)
+    error = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    cancelled = pyqtSignal()
 
-    @property
-    def requested(self) -> bool:
-        with self._lock:
-            return self._requested
-
-    @property
-    def runner(self) -> Any | None:
-        with self._lock:
-            return self._runner
-
-    def register(self, runner: Any) -> bool:
-        with self._lock:
-            if self._requested:
-                return False
-            self._runner = runner
-            return True
-
-    @staticmethod
-    def _cancel_runner(runner: Any) -> None:
-        try:
-            runner.cancel()
-        except Exception:  # noqa: BLE001 - backend cancellation boundary
-            logger.exception("Failed to cancel calculation")
-
-    def request(self) -> None:
-        with self._lock:
-            if self._requested:
-                return
-            self._requested = True
-            runner = self._runner
-
-        if runner is not None:
-            Thread(
-                target=self._cancel_runner,
-                args=(runner,),
-                name="run-cancel",
-                daemon=True,
-            ).start()
+    @pyqtSlot()
+    def run(self) -> None:
+        raise NotImplementedError
 
 
 class RunMonitorWindow(QDialog):
     """Display one calculation worker without knowing how its runner was created.
 
-    The caller owns launch/attach/persistence semantics. ``worker_factory`` only
-    has to return a QObject exposing ``run`` and the usual output/status/error/
-    finished/cancelled signals. The worker registers its concrete runner in the
-    supplied :class:`RunCancellation`.
+    The caller owns launch/attach/persistence semantics. ``worker_factory``
+    returns a :class:`RunMonitorWorker`; the worker registers its concrete
+    runner in the supplied :class:`RunCancellation`.
     """
 
     refreshed = pyqtSignal(str)
 
     def __init__(
         self,
-        worker_factory: Callable[[RunCancellation], QObject],
+        worker_factory: Callable[[RunCancellation], RunMonitorWorker],
         parent: QWidget | None = None,
         *,
         title: str = "Calculation Run",
@@ -111,7 +79,7 @@ class RunMonitorWindow(QDialog):
         self._background_thread_factory = background_thread_factory
         self._cancellation = RunCancellation()
         self._thread: QThread | None = None
-        self._worker: QObject | None = None
+        self._worker: RunMonitorWorker | None = None
         self._close_requested = False
         self.refreshed.connect(self._set_status)
 
@@ -147,7 +115,7 @@ class RunMonitorWindow(QDialog):
         layout.addLayout(buttons)
 
         if autostart:
-            self._start_worker()
+            self.start()
 
     @property
     def runner(self) -> Any | None:
@@ -161,6 +129,12 @@ class RunMonitorWindow(QDialog):
             return
         super().closeEvent(event)
 
+    def start(self) -> None:
+        """Start the worker exactly once after the caller has established ownership."""
+        if self._thread is not None:
+            raise RuntimeError("run monitor worker has already been started")
+        self._start_worker()
+
     def _start_worker(self) -> None:
         thread = QThread(self)
         worker = self._worker_factory(self._cancellation)
@@ -169,8 +143,7 @@ class RunMonitorWindow(QDialog):
         thread.started.connect(worker.run)
         worker.output.connect(self._append_output)
         worker.status.connect(self._set_status)
-        if hasattr(worker, "warning"):
-            worker.warning.connect(self._on_warning)
+        worker.warning.connect(self._on_warning)
         worker.error.connect(self._on_error)
         worker.finished.connect(self._on_finished)
         worker.cancelled.connect(self._on_cancelled)

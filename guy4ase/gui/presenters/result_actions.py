@@ -4,7 +4,9 @@ from __future__ import annotations
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.result_action_policy import (
+    NewCalculationSource,
     ResultActionAvailability,
+    new_calculation_source,
     result_action_availability,
 )
 from guy4ase.gui.application.result_presentation import present_result_tree
@@ -17,6 +19,8 @@ class ResultActionsPresenter(QObject):
 
     useStateRequested = pyqtSignal(int, object)
     recomputeRequested = pyqtSignal(int)
+    newCalculationRequested = pyqtSignal(object)
+    newCalculationUnavailable = pyqtSignal()
 
     def __init__(
         self,
@@ -36,6 +40,7 @@ class ResultActionsPresenter(QObject):
         widget.selectionRequested.connect(self.select_result)
         widget.useStateRequested.connect(self._request_use_state)
         widget.recomputeRequested.connect(self._request_recompute)
+        widget.newCalculationRequested.connect(self._request_new_calculation)
 
         self.refresh()
 
@@ -84,3 +89,15 @@ class ResultActionsPresenter(QObject):
             self.refresh()
             return
         self.recomputeRequested.emit(result_id)
+
+    def _request_new_calculation(self, structure_id: int) -> None:
+        source: NewCalculationSource | None = new_calculation_source(
+            self._controller.result_store,
+            structure_id,
+            current_structure_id=self._controller.structure_id,
+            current_state_id=self._controller.state_id,
+        )
+        if source is None:
+            self.newCalculationUnavailable.emit()
+            return
+        self.newCalculationRequested.emit(source)

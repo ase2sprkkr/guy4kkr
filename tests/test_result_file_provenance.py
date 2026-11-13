@@ -53,6 +53,7 @@ def _add_result(store: ResultStore, path: Path, context: str):
     value = _FileValue(path, context)
     result = SimpleNamespace(
         task_name="dos",
+        produces_potential=False,
         output_file=f"{context}.out",
         output_values={"dos": value},
     )

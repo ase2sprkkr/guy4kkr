@@ -29,6 +29,7 @@ class _Value:
 def _ui_result(task, name):
     return SimpleNamespace(
         task_name=task,
+        produces_potential=task.lower() == "scf",
         output_file=f"{name}.out",
         output_values={"value": _Value(name)},
     )

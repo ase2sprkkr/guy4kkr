@@ -16,6 +16,10 @@ class _Parameters:
         return _Parameters()
 
 
+def _result(task_name):
+    return SimpleNamespace(task_name=task_name, produces_potential=False)
+
+
 def _controller(tmp_path):
     return WorkspaceController(
         WorkspaceState(
@@ -61,7 +65,7 @@ def test_result_publication_does_not_advance_workspace_generation(tmp_path):
     controller = _controller(tmp_path)
     generation = controller.generation
     request = controller.create_calculation_request()
-    result = SimpleNamespace(task_name="DOS")
+    result = _result("DOS")
 
     adoption = controller.adopt_calculation_result(
         _loaded(result, directory=str(tmp_path)),
@@ -78,8 +82,8 @@ def test_parallel_non_scf_results_are_both_recorded_without_touching_draft(tmp_p
     generation = controller.generation
     request_a = controller.create_calculation_request()
     request_b = controller.create_calculation_request()
-    first = SimpleNamespace(task_name="DOS")
-    second = SimpleNamespace(task_name="BSF")
+    first = _result("DOS")
+    second = _result("BSF")
 
     controller.adopt_calculation_result(_loaded(first), request=request_a)
     controller.adopt_calculation_result(_loaded(second), request=request_b)
@@ -96,7 +100,7 @@ def test_result_completion_does_not_stale_pending_draft_operation(tmp_path):
     generation = controller.generation
     request = controller.create_calculation_request()
     controller.adopt_calculation_result(
-        _loaded(SimpleNamespace(task_name="DOS")),
+        _loaded(_result("DOS")),
         request=request,
     )
 
@@ -126,7 +130,7 @@ def test_structure_change_does_not_reject_completed_job_from_history(tmp_path):
     request = controller.create_calculation_request()
     old_structure_id = request.structure_id
     controller.replace_structure(Atoms("Cu"))
-    result = SimpleNamespace(task_name="DOS")
+    result = _result("DOS")
 
     adoption = controller.adopt_calculation_result(_loaded(result), request=request)
 

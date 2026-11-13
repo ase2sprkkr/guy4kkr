@@ -17,6 +17,10 @@ class _Parameters:
         return _Parameters()
 
 
+def _result(task_name: str):
+    return SimpleNamespace(task_name=task_name, produces_potential=False)
+
+
 def _loaded(result, *, persistent_ref=None):
     return LoadedResult(
         result=result,
@@ -41,7 +45,7 @@ def test_calculation_result_records_persistent_reference(tmp_path):
     request = controller.create_calculation_request()
 
     adoption = controller.adopt_calculation_result(
-        _loaded(SimpleNamespace(task_name="dos"), persistent_ref="ase-run-123"),
+        _loaded(_result("dos"), persistent_ref="ase-run-123"),
         request=request,
     )
 
@@ -53,7 +57,7 @@ def test_external_persistent_result_keeps_reference():
     controller = WorkspaceController()
 
     adoption = controller.adopt_external_result(
-        _loaded(SimpleNamespace(task_name="dos"), persistent_ref="ase-run-456")
+        _loaded(_result("dos"), persistent_ref="ase-run-456")
     )
 
     assert adoption.record is not None

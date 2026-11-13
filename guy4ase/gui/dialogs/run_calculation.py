@@ -1,45 +1,38 @@
 from __future__ import annotations
 
 import logging
-from threading import Thread
-from typing import Any, Callable
+from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
 
-from guy4ase.gui.application.sprkkr_execution import (
+from guy4ase.gui.application.execution_cancellation import (
     ExecutionCancelled,
-    SprkkrExecution,
+    RunCancellation,
 )
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace_controller import CalculationRequest
-from guy4ase.gui.dialogs.run_monitor import RunCancellation, RunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, RunMonitorWorker
 
 
 logger = logging.getLogger(__name__)
 
 
-class _SprkkrRunWorker(QObject):
+class _SprkkrRunWorker(RunMonitorWorker):
     """Qt signal adapter around the backend-only :class:`SprkkrExecution`."""
 
-    output = pyqtSignal(str, str)  # (text, kind)
-    status = pyqtSignal(str)
-    warning = pyqtSignal(str)
     persistentJobChanged = pyqtSignal(str)
-    error = pyqtSignal(str)
-    finished = pyqtSignal(object)
-    cancelled = pyqtSignal()
 
     def __init__(
         self,
         request: CalculationRequest,
-        cancellation: RunCancellation | None = None,
+        cancellation: RunCancellation,
         *,
         profile_name: str | None = None,
     ) -> None:
         super().__init__()
-        self._cancellation = cancellation or RunCancellation()
         self._execution = SprkkrExecution(
             request,
-            self._cancellation,
+            cancellation,
             profile_name=profile_name,
             output=self.output.emit,
             status=self.status.emit,
@@ -75,7 +68,6 @@ class SprkkrRunWindow(RunMonitorWindow):
         profile_name: str | None = None,
         profile_description: str | None = None,
         on_finished=None,
-        on_persistent_job_changed: Callable[[str], None] | None = None,
     ) -> None:
         header = f"Directory: {request.directory}"
         if profile_description:
@@ -87,22 +79,22 @@ class SprkkrRunWindow(RunMonitorWindow):
                 cancellation,
                 profile_name=profile_name,
             )
-            worker.persistentJobChanged.connect(self.persistentJobChanged)
+            worker.persistentJobChanged.connect(self._persistent_job_changed_received)
             return worker
 
-        # Delay worker startup until the GUI-thread observer is connected. This
-        # guarantees that a very fast local submit cannot emit the first job-id
-        # change before the application source is listening.
+        # Ownership and persistent-id observation are established by the caller
+        # before ``start()``. This prevents a fast local submit from publishing a
+        # run id before the application owns this top-level window.
         super().__init__(
             worker_factory,
             parent,
             title="SPRKKR Run",
             header=header,
             warning_title="MPI Not Detected",
-            background_thread_factory=lambda **kwargs: Thread(**kwargs),
             on_finished=on_finished,
             autostart=False,
         )
-        if on_persistent_job_changed is not None:
-            self.persistentJobChanged.connect(on_persistent_job_changed)
-        self._start_worker()
+
+    @pyqtSlot(str)
+    def _persistent_job_changed_received(self, job_id: str) -> None:
+        self.persistentJobChanged.emit(job_id)

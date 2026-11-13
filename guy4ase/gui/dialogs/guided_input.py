@@ -30,11 +30,11 @@ from guy4ase.gui.flows.input_parameters import (
 )
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
 from guy4ase.gui.input_parameters.validation import (
     InputParametersValidationError,
     validate_setup,
@@ -67,6 +67,10 @@ class NavigationView:
     accent: QColor
 
 
+class GuidedTaskUnavailable(RuntimeError):
+    """The selected backend task could not be materialized for Guided editing."""
+
+
 class GuidedInputParametersDialog(QDialog):
     """A single guided dialog whose contents are supplied by a task spec."""
 
@@ -81,15 +85,21 @@ class GuidedInputParametersDialog(QDialog):
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.spec: TaskDialogSpec = task_dialog_spec(
-            self.task,
+        definition = guided_task_definition(self.task)
+        self.spec: TaskDialogSpec = definition.build_spec(
             is_2d=detect_structure_kind(atoms) == "2d",
         )
-        expected_task = self.spec.parameter_task.lower()
-        if parameters.task_name.lower() != expected_task:
+        expected_task = InputParameters.is_it_an_input_parameters_name(
+            definition.backend_task
+        )
+        actual_task = InputParameters.is_it_an_input_parameters_name(
+            parameters.task_name
+        )
+        if not expected_task or actual_task != expected_task:
             raise ValueError(
-                f"Expected {expected_task.upper()} input parameters, "
-                f"got {parameters.task_name.upper()}."
+                f"Expected {expected_task or str(definition.backend_task).upper()} "
+                f"input parameters, got "
+                f"{actual_task or str(parameters.task_name).upper()}."
             )
         self.session = create_input_parameters_session(parameters, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
@@ -396,12 +406,13 @@ def select_guided_input_parameters(
     atoms: Any = None,
     dataset_default_mode: str,
 ) -> InputParameters | None:
-    task = task.lower()
-    spec = task_dialog_spec(
-        task,
-        is_2d=detect_structure_kind(atoms) == "2d",
-    )
-    parameters = InputParameters.create(spec.parameter_task)
+    definition = guided_task_definition(task)
+    try:
+        parameters = InputParameters.create(definition.backend_task)
+    except (ImportError, KeyError) as exc:
+        raise GuidedTaskUnavailable(
+            f"The {task.upper()} backend task could not be loaded: {exc}"
+        ) from exc
     apply_default_dataset(parameters, dataset_default_mode, atoms)
     dialog = GuidedInputParametersDialog(
         task,

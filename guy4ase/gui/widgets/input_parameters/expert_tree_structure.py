@@ -18,9 +18,11 @@ class ValueShape:
     with the same ``ValueShape`` can therefore be refreshed in-place; a shape
     change means that the corresponding tree branch has to be rebuilt.
 
-    ``contains_draft`` records presentation-only fixed-array drafts. They are
-    intentionally rebuilt on an external refresh even while their structural
-    shape is otherwise unchanged.
+    ``contains_draft`` records drafts that are part of the represented model
+    value. They are intentionally rebuilt on an external refresh even while
+    their structural shape is otherwise unchanged. Append-only draft rows are
+    not part of the current model value: they commit by changing the shape, so
+    they must not force unrelated existing editors to be rebuilt.
     """
 
     kind: str
@@ -111,8 +113,9 @@ def describe_repeated(
     Repeated arrays are special in the Qt renderer: existing occurrences are
     expanded into child rows even when the occurrence also has an explicit
     whole-value editor. Their shape therefore has to be inspected as ``auto``.
-    Dict-style repeated arrays additionally render the append occurrence's
-    fixed-size child draft before it has any model value.
+    Append rows are intentionally excluded from ``contains_draft`` because
+    their draft is not yet model state; once committed, the repeated shape
+    changes and the row is rebuilt naturally.
     """
     repeated_editor = "auto" if _array_children(grammar) else editor
 
@@ -139,8 +142,6 @@ def describe_repeated(
             for key, item in entries
         )
         contains_draft = _children_contain_draft(shape for _, shape in shapes)
-        if _fixed_array(grammar):
-            contains_draft = True  # append row is a presentation-only draft
         return ValueShape("repeated-dict", shapes, contains_draft)
 
     shapes = tuple(
@@ -205,13 +206,6 @@ def _describe_table(grammar: Table, value: Any) -> ValueShape:
 
 def _array_children(grammar: Any) -> bool:
     return isinstance(grammar, (Array, SetOf)) and getattr(grammar, "array_access", False)
-
-
-def _fixed_array(grammar: Any) -> bool:
-    if not _array_children(grammar):
-        return False
-    minimum = getattr(grammar, "min_length", None)
-    return minimum is not None and minimum == getattr(grammar, "max_length", None)
 
 
 def _children_contain_draft(children) -> bool:

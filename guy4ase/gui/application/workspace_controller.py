@@ -20,16 +20,9 @@ from guy4ase.gui.application.potential_version import PotentialFileVersion
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.result_store import ResultRecord, ResultStore
 from guy4ase.gui.application.workspace import EmptySpheresState, Generation, WorkspaceState
+from guy4ase.gui.workspace_semantics import EmptySpheresAction as _EmptySpheresAction
 
 _KEEP_DIRECTORY = object()
-_POST_SCF_TASKS = frozenset({"xas", "arpes", "dos", "bsf", "jxc"})
-
-
-def _result_is_scf(result: Any) -> bool:
-    try:
-        return str(result.task_name).strip().lower() == "scf"
-    except (AttributeError, TypeError, ValueError):
-        return False
 
 
 def _atoms_has_potential(atoms: Any) -> bool:
@@ -45,13 +38,6 @@ class DocumentChange(Enum):
     STALE = auto()
 
 
-class EmptySpheresAction(Enum):
-    """Recommended empty-sphere action for the current workspace draft."""
-
-    ADD = auto()
-    RECALCULATE = auto()
-
-
 class CalculationNotReady(RuntimeError):
     """The workspace does not contain all inputs required for calculation."""
 
@@ -62,8 +48,8 @@ class CalculationRequest:
 
     ``generation`` protects preparation against delayed draft callbacks.
     Completed calculations are always recorded against ``structure_id`` and
-    ``state_id``. An SCF output may advance the workspace only while that exact
-    input state is still active.
+    ``state_id``. A potential-producing output may advance the workspace only
+    while that exact input state is still active.
 
     ``atoms`` identifies the authoritative launch input and is the sole physical
     authority for its potential; potential paths are provenance/artifact metadata
@@ -179,31 +165,9 @@ class WorkspaceController(QObject):
     def structure_kind(self):
         return self._workspace.structure_kind()
 
-    def current_task(self) -> str | None:
-        """Return the normalized task of the active input parameters, if known."""
-        parameters = self.input_parameters
-        try:
-            task = str(parameters.task_name).strip().lower()
-        except (AttributeError, TypeError, ValueError):
-            return None
-        return task or None
-
     def can_calculate(self) -> bool:
-        if not self._workspace.is_calculation_input_complete():
-            return False
-        task = self.current_task()
-        return task is None or self.can_run_task(task)
-
-    def can_run_task(self, task: str) -> bool:
-        """Return whether the active workspace satisfies ``task`` prerequisites."""
-        if self.atoms is None:
-            return False
-        task = str(task).strip().lower()
-        if task == "scf":
-            return True
-        if task in _POST_SCF_TASKS:
-            return self.is_scf_converged()
-        return False
+        """Return generic launch readiness, independent of Guided workflow policy."""
+        return self._workspace.is_calculation_input_complete()
 
     def can_build_2d(self) -> bool:
         return self.structure_kind() == "3d"
@@ -217,15 +181,15 @@ class WorkspaceController(QObject):
     def has_vacuum_sites(self) -> bool:
         return self._workspace.has_vacuum_sites()
 
-    def empty_spheres_action(self) -> EmptySpheresAction | None:
+    def empty_spheres_action(self) -> _EmptySpheresAction | None:
         """Return the empty-sphere workflow action recommended for the draft."""
         if self.atoms is None:
             return None
         if self.empty_spheres is not None:
-            return EmptySpheresAction.RECALCULATE
+            return _EmptySpheresAction.RECALCULATE
         if self.has_vacuum_sites():
             return None
-        return EmptySpheresAction.ADD
+        return _EmptySpheresAction.ADD
 
     def structure_change_requires_scf_restart(self) -> bool:
         if self.atoms is None or self.restarted:
@@ -284,11 +248,14 @@ class WorkspaceController(QObject):
     ) -> DocumentChange:
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        structure_id, state_id = self._results.new_structure_state(
-            atoms,
-            potential_path=potential_path,
-            empty_spheres=None,
-        )
+        if atoms is None:
+            structure_id = state_id = None
+        else:
+            structure_id, state_id = self._results.new_structure_state(
+                atoms,
+                potential_path=potential_path,
+                empty_spheres=None,
+            )
         self._workspace.atoms = atoms
         self._workspace.potential_path = potential_path
         self._workspace.structure_id = structure_id
@@ -386,7 +353,6 @@ class WorkspaceController(QObject):
         import. Background/programmatic imports leave the current result selection
         untouched.
         """
-        produces_state = loaded.atoms is not None and _result_is_scf(loaded.result)
         record = self._results.add_external_result(
             loaded.result,
             atoms=loaded.atoms,
@@ -394,7 +360,6 @@ class WorkspaceController(QObject):
             directory=loaded.directory,
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
-            produces_state=produces_state,
             persistent_ref=loaded.persistent_ref,
         )
         self.resultChanged.emit(loaded.result)
@@ -414,8 +379,17 @@ class WorkspaceController(QObject):
         a write barrier. Results finishing from an older state remain in their
         original branch and can become active only through an explicit action.
         """
-        is_scf = _result_is_scf(loaded.result)
-        output_atoms = loaded.atoms if is_scf and loaded.atoms is not None else None
+        produces_potential = loaded.result.produces_potential
+        output_atoms = (
+            loaded.atoms
+            if produces_potential and loaded.atoms is not None
+            else None
+        )
+        output_potential_path = (
+            str(loaded.potential_path)
+            if produces_potential and loaded.potential_path is not None
+            else None
+        )
         record = self._results.add_result(
             loaded.result,
             structure_id=request.structure_id,
@@ -427,16 +401,12 @@ class WorkspaceController(QObject):
             output_path=loaded.output_path,
             potential_path=loaded.potential_path,
             output_atoms=output_atoms,
-            output_potential_path=(
-                str(loaded.potential_path)
-                if loaded.potential_path is not None
-                else None
-            ),
+            output_potential_path=output_potential_path,
         )
 
         workspace_updated = False
         if (
-            is_scf
+            produces_potential
             and output_atoms is not None
             and record.output_state_id is not None
             and request.structure_id == self._workspace.structure_id
@@ -513,20 +483,68 @@ class WorkspaceController(QObject):
         self.directoryChanged.emit(None)
 
     def use_for_new_calculation(
-        self, *, expected_generation: Generation | None = None
+        self,
+        *,
+        result_id: int | None = None,
+        expected_potential: PotentialFileVersion | None = None,
+        expected_generation: Generation | None = None,
     ) -> DocumentChange:
+        """Create one new calculation branch from active or historical state.
+
+        Historical restoration and branch creation are one observable workspace
+        transition: all filesystem-dependent reconstruction is completed before
+        provenance or workspace state is mutated, then exactly one branch state is
+        committed and published.
+        """
         if not self._generation_is_current(expected_generation):
             return DocumentChange.STALE
-        state_id = self._workspace.state_id
-        if state_id is None:
-            raise ValueError("No calculation state is active.")
-        self._workspace.state_id = self._results.new_child_state(
-            state_id,
+
+        child_kwargs: dict[str, Any] = {}
+        if result_id is None:
+            atoms = self.atoms
+            parent_state_id = self.state_id
+        else:
+            resolution = resolve_historical_state(
+                self._results,
+                result_id,
+                active_state_id=self.state_id,
+                expected_potential=expected_potential,
+            )
+            if not self._generation_is_current(expected_generation):
+                return DocumentChange.STALE
+
+            if isinstance(resolution, HistoricalStateAlreadyActive):
+                atoms = self.atoms
+                parent_state_id = self.state_id
+            elif isinstance(resolution, NewHistoricalPotential):
+                atoms = resolution.atoms
+                parent_state_id = resolution.parent_state.id
+                child_kwargs = {
+                    "potential_path": str(resolution.potential_version.path),
+                    "potential_version": resolution.potential_version,
+                    "empty_spheres": None,
+                }
+            else:
+                atoms = resolution.atoms
+                parent_state_id = resolution.state.id
+
+        if atoms is None or parent_state_id is None:
+            raise ValueError("No calculation state is available for a new branch.")
+
+        state_id = self._results.new_child_state(
+            parent_state_id,
             new_branch=True,
+            **child_kwargs,
         )
+        state = self._results.state(state_id)
+        self._workspace.atoms = atoms
+        self._workspace.potential_path = state.potential_path
+        self._workspace.structure_id = state.structure_id
+        self._workspace.state_id = state.id
+        self._workspace.empty_spheres = state.empty_spheres
         self._workspace.restarted = True
         self._changed()
-        self.structureChanged.emit(self.atoms)
+        self.structureChanged.emit(atoms)
         return DocumentChange.APPLIED
 
     def update_empty_spheres(

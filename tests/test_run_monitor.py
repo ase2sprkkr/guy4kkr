@@ -8,9 +8,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.execution_cancellation import RunCancellation
 from guy4ase.gui.application.persistent_jobs import PersistentJob
 from guy4ase.gui.dialogs.attached_run import AttachedRunWorker
-from guy4ase.gui.dialogs.run_monitor import RunCancellation, RunMonitorWindow
+from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow
 
 
 class _Source:

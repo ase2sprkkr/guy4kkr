@@ -1,10 +1,14 @@
-"""Restore and recompute policy for historical calculation results."""
+"""Restore, recompute and continuation policy for historical calculation results."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from guy4ase.gui.application.potential_version import PotentialFileVersion
-from guy4ase.gui.application.result_store import ResultRecord, ResultStore
+from guy4ase.gui.application.result_store import (
+    CalculationStateRecord,
+    ResultRecord,
+    ResultStore,
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,13 @@ class ResultActionAvailability:
 
     use_state: ResultAction | None = None
     recompute: ResultAction | None = None
+
+
+@dataclass(frozen=True)
+class NewCalculationSource:
+    """Result whose exact provenance state should source a new branch."""
+
+    result_id: int | None = None
 
 
 def result_action_availability(
@@ -103,3 +114,52 @@ def result_action_availability(
         recompute = ResultAction(label)
 
     return ResultActionAvailability(use_state=use_state, recompute=recompute)
+
+
+def _state_depth(store: ResultStore, state: CalculationStateRecord) -> int:
+    depth = 0
+    while state.parent_id is not None:
+        state = store.state(state.parent_id)
+        depth += 1
+    return depth
+
+
+def new_calculation_source(
+    store: ResultStore,
+    structure_id: int,
+    *,
+    current_structure_id: int | None,
+    current_state_id: int | None,
+) -> NewCalculationSource | None:
+    """Resolve a structure node without treating result completion order as authority.
+
+    The active structure always means its active state. For a historical
+    structure, continuation is automatic only when all represented results belong
+    to one lineage branch. The deepest represented state in that branch is then
+    unambiguous; any result attached to that state is an equivalent resolver key.
+    Multiple branches require explicit state activation first.
+    """
+    if structure_id == current_structure_id and current_state_id is not None:
+        return NewCalculationSource()
+
+    records = store.structure_results(structure_id)
+    states: dict[int, CalculationStateRecord] = {}
+    branches: set[int] = set()
+    for record in records:
+        state = store.state_for_result(record)
+        if state is None:
+            continue
+        states[state.id] = state
+        branches.add(state.branch_id)
+
+    if not states or len(branches) != 1:
+        return None
+
+    target = max(states.values(), key=lambda item: _state_depth(store, item))
+    source = next(
+        record
+        for record in records
+        if (state := store.state_for_result(record)) is not None
+        and state.id == target.id
+    )
+    return NewCalculationSource(source.id)

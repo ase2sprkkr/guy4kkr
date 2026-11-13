@@ -102,8 +102,8 @@ class PageSpec:
 
 @dataclass(frozen=True)
 class TaskDialogSpec:
-    task: str
-    parameter_task: str
+    """Declarative layout and presentation metadata for one Guided dialog."""
+
     title: str
     pages: tuple[PageSpec, ...]
     intro: str | None = None

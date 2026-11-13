@@ -75,7 +75,11 @@ def test_historical_snapshot_can_restore_structure_without_retaining_live_atoms(
     assert state_id is not None
 
     record = controller.result_store.add_result(
-        SimpleNamespace(task_name="dos", output_values={}),
+        SimpleNamespace(
+            task_name="dos",
+            produces_potential=False,
+            output_values={},
+        ),
         structure_id=structure_id,
         input_state_id=state_id,
         input_parameters={},

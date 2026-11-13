@@ -183,8 +183,8 @@ class GuidedFormRenderer(QObject):
                 self.session.option(path)
             except (AttributeError, KeyError) as exc:
                 raise ValueError(
-                    f"The {self.spec.task.upper()} guided-dialog specification refers "
-                    f"to missing parameter {'.'.join(path)}."
+                    "The guided-dialog specification refers to missing parameter "
+                    f"{'.'.join(path)}."
                 ) from exc
 
     def _add_page(self, spec: PageSpec) -> None:

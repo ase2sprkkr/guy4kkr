@@ -18,7 +18,7 @@ def build_spec(is_2d: bool = False) -> TaskDialogSpec:
     xas_cl = field("TASK", "CL", "Core level:", "text")
     xas_emax = field("ENERGY", "EMAX", "Maximum energy:", "energy")
     xas_ne = main_energy_mesh_field("NE", "Energy points:", "integer", minimum=1, maximum=10000)
-    xas = TaskDialogSpec("xas", "xas", "XAS Calculation Setup", (
+    xas = TaskDialogSpec("XAS Calculation Setup", (
         PageSpec("quick", "Quick setup", (GroupSpec("Common XAS settings", (
             mirror(xas_it), mirror(xas_cl), mirror(xas_emax), mirror(xas_ne),
         )),), QUICK_COLOR, quick=True),

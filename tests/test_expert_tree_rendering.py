@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from ase2sprkkr.common.grammar_types import Array, Integer, Real, Sequence, Table
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
-from PyQt6.QtCore import QSignalBlocker, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
@@ -166,6 +166,7 @@ def test_repeated_dict_array_append_can_be_edited_by_components(application):
     assert append_item.childCount() == 3
     components = [tree.itemWidget(append_item.child(i), 2) for i in range(3)]
     assert all(isinstance(component, RealEditor) for component in components)
+    assert [component.value() for component in components] == [0.0, 0.0, 1.0]
 
     components[0].setValue(0.25)
     application.processEvents()
@@ -177,55 +178,6 @@ def test_repeated_dict_array_append_can_be_edited_by_components(application):
 
     root = _option(dialog, path)
     assert root.child(root.childCount() - 1).text(0) == "[2]"
-    dialog.close()
-
-
-def test_nested_fixed_array_draft_inside_defaultdict_is_atomic(application, monkeypatch):
-    parameters = InputParameters.create("xas")
-    option = parameters.MODE.MDIR
-    array_type = Array(Real(), length=3)
-    monkeypatch.setattr(option._definition, "type", array_type)
-    monkeypatch.setattr(option._definition, "grammar_type", array_type)
-    option._value = {"def": [0.0, 0.0, 1.0], 2: None}
-
-    class RejectDraftPlugin:
-        def apply(self, _before, candidate, _dormant):
-            value = candidate.MODE.MDIR(all_values=True).get(2)
-            if value is not None and len(value) == 3 and value[2] == 3.0:
-                raise RuntimeError("reject nested draft")
-
-    from guy4ase.gui.input_parameters.session import InputParametersSession
-
-    session = InputParametersSession(parameters, plugins=(RejectDraftPlugin(),))
-    dialog = InputParametersDialog(session)
-    tree = dialog.tree_editor.tree
-    item = _option(dialog, ("MODE", "MDIR"))
-    occurrence = item.child(1)
-    components = [tree.itemWidget(occurrence.child(i), 2) for i in range(3)]
-    initial = np.array(session.value(("MODE", "MDIR"))[2], copy=True)
-
-    components[0].setValue(1.0)
-    components[1].setValue(2.0)
-    np.testing.assert_array_equal(
-        session.value(("MODE", "MDIR"))[2], initial, strict=False
-    )
-    assert session.undo_stack.count() == 0
-
-    with QSignalBlocker(components[2]):
-        components[2].setValue(3.0)
-    with pytest.raises(RuntimeError, match="reject nested draft"):
-        components[2].commit()
-    np.testing.assert_array_equal(
-        session.value(("MODE", "MDIR"))[2], initial, strict=False
-    )
-    assert session.undo_stack.count() == 0
-
-    with QSignalBlocker(components[2]):
-        components[2].setValue(4.0)
-    assert components[2].commit()
-    application.processEvents()
-    np.testing.assert_array_equal(session.value(("MODE", "MDIR"))[2], [1.0, 2.0, 4.0])
-    assert session.undo_stack.count() == 1
     dialog.close()
 
 

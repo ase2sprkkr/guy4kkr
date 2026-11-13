@@ -16,6 +16,7 @@ def _loaded(name: str) -> LoadedResult:
     return LoadedResult(
         result=SimpleNamespace(
             task_name="dos",
+            produces_potential=False,
             output_file=f"{name}.out",
             output_values={},
         ),

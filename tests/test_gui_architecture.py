@@ -1,5 +1,6 @@
 """Stable architectural and component-contract checks for the GUI."""
 import ast
+import importlib
 import importlib.util
 import os
 import subprocess
@@ -40,7 +41,7 @@ def _gui_graph():
 
     graph = {module: set() for module in modules}
     for module, (path, package) in modules.items():
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 targets = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
@@ -59,13 +60,32 @@ def _gui_graph():
     return graph
 
 
+def _reachable(graph, start):
+    """Return all GUI modules reachable from ``start`` in the import graph."""
+    reached = set()
+    pending = list(graph[start])
+    while pending:
+        module = pending.pop()
+        if module in reached:
+            continue
+        reached.add(module)
+        pending.extend(graph[module] - reached)
+    return reached
+
+
 def test_gui_dependencies_are_acyclic_and_follow_layers():
     """Keep broad layer boundaries without pinning individual implementations."""
     graph = _gui_graph()
     for module, targets in graph.items():
         if module.startswith("guy4ase.gui.widgets"):
             assert not any(
-                target.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.flows"))
+                target.startswith(
+                    (
+                        "guy4ase.gui.controllers",
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.flows",
+                    )
+                )
                 for target in targets
             ), module
         if module.startswith("guy4ase.gui.flows"):
@@ -85,6 +105,22 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
             assert not any(
                 target.startswith(
                     (
+                        "guy4ase.gui.controllers",
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.widgets",
+                        "guy4ase.gui.flows",
+                        "guy4ase.gui.workflow",
+                        "guy4ase.gui.presentation",
+                        "guy4ase.gui.recent_presentation",
+                    )
+                )
+                for target in targets
+            ), module
+        if module.startswith("guy4ase.gui.workflow"):
+            assert not any(
+                target.startswith(
+                    (
+                        "guy4ase.gui.controllers",
                         "guy4ase.gui.dialogs",
                         "guy4ase.gui.widgets",
                         "guy4ase.gui.flows",
@@ -92,6 +128,26 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
                 )
                 for target in targets
             ), module
+        if module in {
+            "guy4ase.gui.presentation",
+            "guy4ase.gui.recent_presentation",
+        }:
+            assert not any(
+                target.startswith(
+                    (
+                        "guy4ase.gui.application",
+                        "guy4ase.gui.controllers",
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.widgets",
+                        "guy4ase.gui.flows",
+                        "guy4ase.gui.workflow",
+                        "guy4ase.gui.input_parameters",
+                    )
+                )
+                for target in targets
+            ), module
+        if module == "guy4ase.gui.workspace_semantics":
+            assert not targets, module
 
     visited = set()
 
@@ -105,6 +161,34 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
 
     for module in graph:
         visit(module, ())
+
+
+def test_workflow_renderer_has_no_application_state_dependency():
+    """Renderer dependencies stay presentation-only, including transitively."""
+    dependencies = _reachable(
+        _gui_graph(),
+        "guy4ase.gui.widgets.workflow_actions",
+    )
+    assert not any(
+        module.startswith("guy4ase.gui.application") for module in dependencies
+    )
+
+
+def test_moved_semantics_are_not_reexported_from_old_modules():
+    """Canonical moves must not leave accidental compatibility APIs behind."""
+    action_card = importlib.import_module("guy4ase.gui.widgets.action_card")
+    presentation = importlib.import_module("guy4ase.gui.presentation")
+    recent_launcher = importlib.import_module("guy4ase.gui.widgets.recent_launcher")
+    workspace_controller = importlib.import_module(
+        "guy4ase.gui.application.workspace_controller"
+    )
+
+    assert not hasattr(action_card, "ActionCategory")
+    assert not hasattr(presentation, "RecentLaunch")
+    assert not hasattr(presentation, "recent_launch_presentation")
+    assert not hasattr(recent_launcher, "recent_path_label")
+    assert not hasattr(workspace_controller, "EmptySpheresAction")
+    assert importlib.util.find_spec("guy4ase.gui.application.workspace_actions") is None
 
 
 def test_result_widget_accepts_presentations_not_application_state():
@@ -148,9 +232,74 @@ def test_lightweight_input_parameter_modules_import_without_qt_or_dialogs():
             """
 import sys
 from guy4ase.gui.input_parameters.expert_fields import EXPERT_FIELDS
-from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
+from guy4ase.gui.input_parameters.tasks import guided_task_definition
 assert EXPERT_FIELDS
-assert task_dialog_spec('scf').task == 'scf'
+assert guided_task_definition('scf').backend_task == 'scf'
+assert not any(name.startswith('PyQt6') for name in sys.modules)
+assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        timeout=30,
+    )
+
+
+def test_workflow_model_import_does_not_load_task_registry():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from guy4ase.gui.workflow.model import RunTask
+assert RunTask('SCF').backend_task == 'SCF'
+assert not any(name.startswith('guy4ase.gui.input_parameters') for name in sys.modules)
+assert not any(name.startswith('PyQt6') for name in sys.modules)
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        timeout=30,
+    )
+
+
+def test_workflow_presentation_imports_without_qt_layers():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from guy4ase.gui.recent_presentation import RecentLaunch
+from guy4ase.gui.workflow.model import RunTask
+from guy4ase.gui.workflow.planner import WorkflowPlanner
+assert RecentLaunch and RunTask and WorkflowPlanner
+assert not any(name.startswith('PyQt6') for name in sys.modules)
+for prefix in (
+    'guy4ase.gui.controllers.',
+    'guy4ase.gui.dialogs.',
+    'guy4ase.gui.widgets.',
+    'guy4ase.gui.flows.',
+):
+    assert not any(name.startswith(prefix) for name in sys.modules)
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        timeout=30,
+    )
+
+
+def test_execution_cancellation_imports_without_qt_or_dialogs():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from guy4ase.gui.application.execution_cancellation import RunCancellation
+assert RunCancellation
 assert not any(name.startswith('PyQt6') for name in sys.modules)
 assert not any(name.startswith('guy4ase.gui.dialogs.') for name in sys.modules)
 """,

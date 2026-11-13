@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +17,24 @@ RecentKind = Literal["structure", "input", "output"]
 RECENT_KINDS: tuple[RecentKind, ...] = ("structure", "input", "output")
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RecentFilesSnapshot:
+    """Immutable read snapshot of all recent-file history and selection state."""
+
+    structure: tuple[str, ...]
+    input: tuple[str, ...]
+    output: tuple[str, ...]
+    last_kind: RecentKind | None
+
+    def paths(self, kind: RecentKind) -> tuple[str, ...]:
+        """Return the paths captured for one recent-file kind."""
+        return {
+            "structure": self.structure,
+            "input": self.input,
+            "output": self.output,
+        }[kind]
 
 
 def default_recent_files_path() -> Path:
@@ -56,8 +75,17 @@ class RecentFiles(QObject):
 
     @property
     def snapshot(self) -> dict[str, tuple[str, ...]]:
-        """Return an immutable snapshot of all histories."""
+        """Return the established paths-only snapshot API."""
         return {kind: tuple(self._files[kind]) for kind in RECENT_KINDS}
+
+    def read_snapshot(self) -> RecentFilesSnapshot:
+        """Capture paths and recent-launch selection in one immutable value."""
+        return RecentFilesSnapshot(
+            structure=tuple(self._files["structure"]),
+            input=tuple(self._files["input"]),
+            output=tuple(self._files["output"]),
+            last_kind=self.last_kind,
+        )
 
     @staticmethod
     def _normalize(value: object) -> list[str]:
