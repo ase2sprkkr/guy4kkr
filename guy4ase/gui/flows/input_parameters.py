@@ -46,7 +46,7 @@ def load_input_parameters(
         )
         return False
 
-    expected_task = session.working_parameters.task_name.lower()
+    expected_task = session.task_name.lower()
     actual_task = parameters.task_name.lower()
     if actual_task != expected_task:
         QMessageBox.critical(

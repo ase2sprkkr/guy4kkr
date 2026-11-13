@@ -17,10 +17,10 @@ from PyQt6.QtWidgets import (
 class InputFileEditor(QDialog):
     """Only publish a new parameter object after successful parsing on OK.
 
-    ``apply_parameters(candidate)`` is an optional caller-supplied callback for
-    additional validation/application. It runs before closing; exceptions keep
-    the draft open. The caller must leave its state intact if it raises. This
-    editor has no dependency on either the guided session or the expert tree.
+    ``apply_parameters(candidate)`` is an optional caller-supplied application
+    callback. Input-file parsing/validation errors keep the draft open; callback
+    failures are programming errors and are not presented as text-file errors.
+    This editor has no dependency on either the guided session or the expert tree.
     """
 
     def __init__(self, parameters, parent=None, *, apply_parameters=None):
@@ -58,23 +58,24 @@ class InputFileEditor(QDialog):
         self.error_label.hide()
 
     def accept(self):
-        """Parse and apply a candidate; close only when both operations succeed."""
+        """Parse a candidate, then publish it through the application callback."""
         self._clear_error()
+        candidate = self._parameters.copy(copy_values=True)
         try:
-            candidate = self._parameters.copy(copy_values=True)
             # The instance reader uses the current task's grammar and already
             # exposes pyparsing exceptions, including line/column information.
             candidate.read_from_file(StringIO(self.editor.toPlainText()))
-            if self._apply_parameters is not None:
-                self._apply_parameters(candidate)
         except Exception as error:
             self._show_error(error)
             return
+
+        if self._apply_parameters is not None:
+            self._apply_parameters(candidate)
         self.parameters = candidate
         super().accept()
 
     def _semantic_error_line(self, error):
-        """Best-effort location for validation/apply errors without parser offsets."""
+        """Best-effort location for semantic input errors without parser offsets."""
         message = str(error)
         names = re.findall(r"(?:option|parameter|member|section)\s+(?:named\s+)?['\"`]?([\w]+(?:\.[\w]+)*)",
                            message, re.IGNORECASE)

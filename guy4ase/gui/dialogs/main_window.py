@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -44,8 +43,11 @@ from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
-from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.plots.lattice import plot_atoms_preview
+from guy4ase.gui.widgets.recent_launcher import (
+    build_recent_launch_menu,
+    recent_launch,
+)
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 from guy4ase.physics.composition import site_composition, structure_formula
 
@@ -71,9 +73,6 @@ class MainWindow(QMainWindow):
 
         self.controller = controller
         self.workspace = self.controller.workspace
-        self._structure_access = QtStructureAccess(
-            self.controller.structure_gate, self
-        )
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings or ApplicationSettings()
@@ -125,16 +124,9 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_structure_changed(self, _atoms: Any) -> None:
-        self._structure_access.retry(
-            self._workspace_structure_changed_locked,
-            reason="refreshing the structure view",
-        )
-
-    def _workspace_structure_changed_locked(self) -> None:
-        atoms = self.workspace.atoms
         self._update_potential_path_label()
         self._update_structure_view()
-        self._enable_actions(atoms is not None)
+        self._refresh_action_availability()
         self._update_input_params_preview()
 
     def _workspace_input_parameters_changed(self, _parameters: Any) -> None:
@@ -143,7 +135,7 @@ class MainWindow(QMainWindow):
     def _refresh_input_parameters(self) -> None:
         parameters = self.workspace.input_parameters
         self._update_input_params_preview()
-        self.enable_run_calculation()
+        self._refresh_action_availability()
         self.create_input_btn.setText(
             "Edit SPRKKR Input File..."
             if parameters is not None
@@ -155,7 +147,32 @@ class MainWindow(QMainWindow):
 
     def _refresh_directory(self) -> None:
         self._update_directory_label()
-        self.enable_run_calculation()
+        self._refresh_action_availability()
+
+    def _refresh_action_availability(self) -> None:
+        """Keep shared expert actions synchronized with workspace state."""
+        has_structure = self.workspace.atoms is not None
+        for action in (
+            self.save_structure_action,
+            self.edit_structure_action,
+            self.scale_structure_action,
+            self.repeat_structure_action,
+            self.rotate_structure_action,
+            self.build_2d_structure_action,
+            self.visualize_structure_action,
+        ):
+            action.setEnabled(has_structure)
+
+        self.run_calculation_action.setEnabled(self.workspace.can_calculate())
+
+        empty_spheres = self.workspace.empty_spheres_action()
+        self.empty_spheres_action.setVisible(empty_spheres is not None)
+        if empty_spheres is not None:
+            self.empty_spheres_action.setText(
+                "Recalculate Empty Spheres"
+                if empty_spheres == "recalculate"
+                else "Add Empty Spheres"
+            )
 
     def _update_input_params_preview(self) -> None:
         if self.input_params_preview is None:
@@ -165,10 +182,7 @@ class MainWindow(QMainWindow):
             if self.save_input_btn is not None:
                 self.save_input_btn.setEnabled(False)
             return
-        try:
-            txt = self.workspace.input_parameters.to_string(validate=False)
-        except Exception:
-            txt = str(self.workspace.input_parameters)
+        txt = self.workspace.input_parameters.to_string(validate=False)
         self.input_params_preview.setPlainText(txt)
         if self.save_input_btn is not None:
             self.save_input_btn.setEnabled(True)
@@ -232,66 +246,29 @@ class MainWindow(QMainWindow):
         if btn is None:
             return
 
-        structures = self.recent_history.paths("structure")
-        outputs = self.recent_history.paths("output")
-        has_recent = bool(structures or outputs)
-        btn.setVisible(has_recent)
-        if not has_recent:
+        launch = recent_launch(self.recent_history)
+        btn.setVisible(launch is not None)
+        if launch is None:
             return
 
-        default_kind = self.recent_history.last_kind
-        if default_kind == 'structure' and not structures:
-            default_kind = None
-        if default_kind == 'output' and not outputs:
-            default_kind = None
-        if default_kind not in {'structure', 'output'}:
-            if outputs:
-                default_kind = 'output'
-            else:
-                default_kind = 'structure'
-        default_path = self.recent_history.paths(default_kind)[0]
+        btn.setText(launch.title)
+        btn.setToolTip(launch.path)
+        self._recent_start_menu = build_recent_launch_menu(
+            btn,
+            self.recent_history,
+            self.open_recent_file,
+        )
+        btn.setMenu(self._recent_start_menu)
 
-        btn.setText(f"Continue: {Path(default_path).name}")
-        btn.setToolTip(default_path)
-
-        menu = self._recent_start_menu
-        if menu is None:
-            menu = QMenu(btn)
-            self._recent_start_menu = menu
-            btn.setMenu(menu)
-
-        menu.clear()
-        structures_menu = menu.addMenu("Structures")
-        if structures:
-            for file_path in structures:
-                action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('structure', p))
-                structures_menu.addAction(action)
-        else:
-            empty_action = QAction("(No recent files)", self)
-            empty_action.setEnabled(False)
-            structures_menu.addAction(empty_action)
-
-        outputs_menu = menu.addMenu("Outputs")
-        if outputs:
-            for file_path in outputs:
-                action = QAction(file_path, self)
-                action.triggered.connect(lambda _checked=False, p=file_path: self.open_recent_file('output', p))
-                outputs_menu.addAction(action)
-        else:
-            empty_action = QAction("(No recent files)", self)
-            empty_action.setEnabled(False)
-            outputs_menu.addAction(empty_action)
-
-        # Primary click action loads most recent
         try:
             btn.clicked.disconnect()
         except TypeError:
             pass
-        if default_kind == 'output':
-            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('output', p))
-        else:
-            btn.clicked.connect(lambda _checked=False, p=default_path: self.open_recent_file('structure', p))
+        btn.clicked.connect(
+            lambda _checked=False, item=launch: self.open_recent_file(
+                item.kind, item.path
+            )
+        )
 
     def _build_ui(self) -> None:
         """Build the main UI layout from its visual sections."""
@@ -307,10 +284,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._build_actions_panel())
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
-        try:
-            splitter.setSizes([1000, 350])
-        except Exception:
-            pass
+        splitter.setSizes([1000, 350])
 
     def _build_menu_bar(self) -> None:
         # Menu bar
@@ -343,6 +317,10 @@ class MainWindow(QMainWindow):
         load_action.triggered.connect(self.load_structure)
         structure_menu.addAction(load_action)
 
+        self.save_structure_action = QAction("&Save Structure...", self)
+        self.save_structure_action.triggered.connect(self._on_save_structure)
+        structure_menu.addAction(self.save_structure_action)
+
         self._recent_menus['structure'] = structure_menu.addMenu("Open &Recent")
 
         input_menu = menubar.addMenu("&Input")
@@ -361,44 +339,22 @@ class MainWindow(QMainWindow):
         self._recent_menus['output'] = output_menu.addMenu("Open &Recent")
 
         run_menu = menubar.addMenu("&Run")
-        empty_spheres_action = QAction("Add Empty Spheres", self)
-        empty_spheres_action.triggered.connect(
+        self.empty_spheres_action = QAction("Add Empty Spheres", self)
+        self.empty_spheres_action.triggered.connect(
             lambda: structure_flows.update_empty_spheres(self.controller, self)
         )
-        run_menu.addAction(empty_spheres_action)
+        run_menu.addAction(self.empty_spheres_action)
         run_menu.addSeparator()
-        run_calculation_action = QAction("Run SPRKKR Calculation...", self)
-        run_calculation_action.triggered.connect(
+        self.run_calculation_action = QAction("Run SPRKKR Calculation...", self)
+        self.run_calculation_action.triggered.connect(
             self._on_run_sprkkr_calculation
         )
-        run_menu.addAction(run_calculation_action)
-
-        def update_run_menu() -> None:
-            action = self.workspace.empty_spheres_action()
-            empty_spheres_action.setVisible(action is not None)
-            if action is not None:
-                empty_spheres_action.setText(
-                    "Recalculate Empty Spheres"
-                    if action == "recalculate"
-                    else "Add Empty Spheres"
-                )
-            run_calculation_action.setEnabled(
-                self.workspace.can_calculate()
-            )
-
-        run_menu.aboutToShow.connect(update_run_menu)
-        update_run_menu()
+        run_menu.addAction(self.run_calculation_action)
 
         view_menu = menubar.addMenu("&View")
-        visualize_action = QAction("&Visualize Structure", self)
-        visualize_action.triggered.connect(self._visualize_structure)
-        view_menu.addAction(visualize_action)
-
-        def update_view_menu() -> None:
-            visualize_action.setEnabled(self.workspace.atoms is not None)
-
-        view_menu.aboutToShow.connect(update_view_menu)
-        update_view_menu()
+        self.visualize_structure_action = QAction("&Visualize Structure", self)
+        self.visualize_structure_action.triggered.connect(self._visualize_structure)
+        view_menu.addAction(self.visualize_structure_action)
 
         tools_menu = menubar.addMenu("&Tools")
         settings_action = QAction("&Settings...", self)
@@ -406,28 +362,28 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._open_settings)
         tools_menu.addAction(settings_action)
 
-        assign_elements_action = QAction("&Edit the structure...", self)
-        assign_elements_action.setShortcut("Ctrl+E")
-        assign_elements_action.triggered.connect(self._on_assign_elements)
-        structure_menu.addAction(assign_elements_action)
+        self.edit_structure_action = QAction("&Edit the structure...", self)
+        self.edit_structure_action.setShortcut("Ctrl+E")
+        self.edit_structure_action.triggered.connect(self._on_assign_elements)
+        structure_menu.addAction(self.edit_structure_action)
 
         structure_menu.addSeparator()
 
-        scale_action = QAction("&Scale...", self)
-        scale_action.triggered.connect(self._on_scale_structure)
-        structure_menu.addAction(scale_action)
+        self.scale_structure_action = QAction("&Scale...", self)
+        self.scale_structure_action.triggered.connect(self._on_scale_structure)
+        structure_menu.addAction(self.scale_structure_action)
 
-        repeat_action = QAction("&Repeat...", self)
-        repeat_action.triggered.connect(self._on_repeat_structure)
-        structure_menu.addAction(repeat_action)
+        self.repeat_structure_action = QAction("&Repeat...", self)
+        self.repeat_structure_action.triggered.connect(self._on_repeat_structure)
+        structure_menu.addAction(self.repeat_structure_action)
 
-        rotate_action = QAction("R&otate...", self)
-        rotate_action.triggered.connect(self._on_rotate_structure)
-        structure_menu.addAction(rotate_action)
+        self.rotate_structure_action = QAction("R&otate...", self)
+        self.rotate_structure_action.triggered.connect(self._on_rotate_structure)
+        structure_menu.addAction(self.rotate_structure_action)
 
-        build_2d_action = QAction("Build &2D Structure...", self)
-        build_2d_action.triggered.connect(self.build_2d_structure)
-        structure_menu.addAction(build_2d_action)
+        self.build_2d_structure_action = QAction("Build &2D Structure...", self)
+        self.build_2d_structure_action.triggered.connect(self.build_2d_structure)
+        structure_menu.addAction(self.build_2d_structure_action)
 
         structure_menu.addSeparator()
 
@@ -441,6 +397,8 @@ class MainWindow(QMainWindow):
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+        self._refresh_action_availability()
 
     def _visualize_structure(self) -> None:
         visualization_flow.visualize_structure(self.controller, self.settings, self)
@@ -462,7 +420,6 @@ class MainWindow(QMainWindow):
         self.welcome_widget = QWidget(self._left_stack)
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         welcome_label = QLabel("No Structure Loaded")
         welcome_label.setStyleSheet("font-size: 18pt; font-weight: bold; color: #666;")
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -567,15 +524,17 @@ class MainWindow(QMainWindow):
         quick_actions_l.setContentsMargins(0, 0, 0, 0)
         quick_actions_l.setSpacing(8)
 
-        self.save_btn = QPushButton("Save Structure...")
+        self.save_btn = QToolButton(quick_actions)
+        self.save_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.save_btn.setDefaultAction(self.save_structure_action)
         self.save_btn.setMinimumWidth(150)
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._on_save_structure)
         quick_actions_l.addWidget(self.save_btn)
 
-        self.assign_elements_btn = QPushButton("Edit the structure")
-        self.assign_elements_btn.setEnabled(False)
-        self.assign_elements_btn.clicked.connect(self._on_assign_elements)
+        self.assign_elements_btn = QToolButton(quick_actions)
+        self.assign_elements_btn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.assign_elements_btn.setDefaultAction(self.edit_structure_action)
         quick_actions_l.addWidget(self.assign_elements_btn)
 
         quick_actions_l.addStretch(1)
@@ -728,9 +687,9 @@ class MainWindow(QMainWindow):
 
         self._update_directory_label()
 
-        self.run_calc_btn = QPushButton("Run SPRKKR Calculation...")
-        self.run_calc_btn.setEnabled(False)
-        self.run_calc_btn.clicked.connect(self._on_run_sprkkr_calculation)
+        self.run_calc_btn = QToolButton()
+        self.run_calc_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.run_calc_btn.setDefaultAction(self.run_calculation_action)
         layout.addWidget(self.run_calc_btn)
 
         self.load_output_btn = QPushButton("Load SPRKKR Output File...")
@@ -832,15 +791,6 @@ class MainWindow(QMainWindow):
             "Built with ASE and PyQt6."
         )
 
-    def _enable_actions(self, enabled: bool) -> None:
-        """Enable or disable action buttons based on structure availability."""
-        self.save_btn.setEnabled(enabled)
-        self.assign_elements_btn.setEnabled(enabled)
-        self.enable_run_calculation()
-
-    def enable_run_calculation(self) -> None:
-        self.run_calc_btn.setEnabled(self.workspace.can_calculate())
-
     def _update_structure_view(self) -> None:
         """Update all structure visualization and information panels."""
         if self.workspace.atoms is None:
@@ -875,19 +825,14 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        def update() -> None:
-            if self.workspace.atoms is None:
-                return
-            if row < 0 or row >= len(self.workspace.atoms):
-                return
-            if self._hovered_atom_index == row:
-                return
-            self._hovered_atom_index = row
-            self._update_visualization()
-
-        self._structure_access.retry(
-            update, reason="highlighting an atom"
-        )
+        if self.workspace.atoms is None:
+            return
+        if row < 0 or row >= len(self.workspace.atoms):
+            return
+        if self._hovered_atom_index == row:
+            return
+        self._hovered_atom_index = row
+        self._update_visualization()
 
     def _on_assign_elements(self) -> None:
         structure_flows.edit_site_elements(self.controller, self)
@@ -930,10 +875,7 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _update_visualization_nonblocking(self) -> None:
-        self._structure_access.retry(
-            self._update_visualization,
-            reason="refreshing the structure visualization",
-        )
+        self._update_visualization()
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""
@@ -951,24 +893,21 @@ class MainWindow(QMainWindow):
         if self.workspace.atoms is None:
             return
 
-        try:
-            cell = self.workspace.atoms.get_cell()
-            lengths = cell.lengths()
-            angles = cell.angles()
+        cell = self.workspace.atoms.get_cell()
+        lengths = cell.lengths()
+        angles = cell.angles()
 
-            self.lattice_labels['a'].setText(f"{lengths[0]:.4f} Å")
-            self.lattice_labels['b'].setText(f"{lengths[1]:.4f} Å")
-            self.lattice_labels['c'].setText(f"{lengths[2]:.4f} Å")
-            self.lattice_labels['α'].setText(f"{angles[0]:.2f}°")
-            self.lattice_labels['β'].setText(f"{angles[1]:.2f}°")
-            self.lattice_labels['γ'].setText(f"{angles[2]:.2f}°")
+        self.lattice_labels['a'].setText(f"{lengths[0]:.4f} Å")
+        self.lattice_labels['b'].setText(f"{lengths[1]:.4f} Å")
+        self.lattice_labels['c'].setText(f"{lengths[2]:.4f} Å")
+        self.lattice_labels['α'].setText(f"{angles[0]:.2f}°")
+        self.lattice_labels['β'].setText(f"{angles[1]:.2f}°")
+        self.lattice_labels['γ'].setText(f"{angles[2]:.2f}°")
 
-            # Update matrix
-            for i in range(3):
-                for j in range(3):
-                    self.lattice_matrix_labels[i][j].setText(f"{cell[i, j]:8.4f}")
-        except Exception as e:
-            print(f"Lattice params error: {e}")
+        # Update matrix
+        for i in range(3):
+            for j in range(3):
+                self.lattice_matrix_labels[i][j].setText(f"{cell[i, j]:8.4f}")
 
     def _update_positions_table(self) -> None:
         """Update atomic positions table."""

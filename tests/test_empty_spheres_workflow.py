@@ -17,7 +17,7 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
     controller = WorkspaceController(workspace)
     generation = controller.generation
     change = controller.update_empty_spheres(
-        lambda atoms, _previous: (atoms, 0),
+        lambda atoms, _previous: (atoms, 0, False),
         expected_generation=generation,
     )
 
@@ -29,16 +29,17 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
 
 
 def test_empty_sphere_update_publishes_found_count_as_result():
-    workspace = WorkspaceState(atoms=Atoms("Fe"), result=object())
+    original = Atoms("Fe")
+    workspace = WorkspaceState(atoms=original, result=object())
     controller = WorkspaceController(workspace)
     published = []
     controller.resultChanged.connect(published.append)
     generation = controller.generation
 
     def add_one(atoms, _previous):
-        updated = atoms.copy()
-        updated += Atoms("X")
-        return updated, 1
+        assert atoms is not original
+        atoms += Atoms("X")
+        return atoms, 1, True
 
     change = controller.update_empty_spheres(
         add_one,
@@ -46,6 +47,9 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     )
 
     assert change is DocumentChange.APPLIED
+    assert workspace.atoms is not original
+    assert len(original) == 1
+    assert len(workspace.atoms) == 2
     assert workspace.result == EmptySpheresResult(found=1)
     assert published == [workspace.result]
     assert controller.generation == generation + 1
@@ -56,7 +60,7 @@ def test_empty_sphere_result_keeps_search_parameters():
     controller = WorkspaceController(workspace)
 
     controller.update_empty_spheres(
-        lambda atoms, _previous: (atoms, 0),
+        lambda atoms, _previous: (atoms, 0, False),
         expected_generation=controller.generation,
         parameters={"min_radius": 0.7, "mesh": (20, 22, 24)},
     )

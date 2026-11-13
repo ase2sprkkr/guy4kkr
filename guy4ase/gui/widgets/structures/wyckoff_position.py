@@ -13,8 +13,10 @@ class WyckoffPositionWidget(QWidget):
     mouse_over = pyqtSignal(str, int)
     focus_changed = pyqtSignal(str, int, bool)
 
-    def __init__(self, wp, index=0, value=[], parent=None):
+    def __init__(self, wp, index=0, value=None, parent=None):
         super().__init__(parent)
+        if value is None:
+            value = []
         self.letter = wp.letter
         self.index = index
         label = self.letter
@@ -23,7 +25,6 @@ class WyckoffPositionWidget(QWidget):
         if dof:
             if value is False:
                 self.type = 'PLACEHOLDER'
-                self.__dict__['value'] = [0.0] * dof
             else:
                 self.type = 'MULTIPLE'
                 label += f".{index + 1}"

@@ -1,7 +1,6 @@
 """Visualization workflows."""
 from __future__ import annotations
 
-from functools import partial
 from typing import Any
 
 from ase import Atoms
@@ -9,8 +8,7 @@ from ase.visualize import view as ase_view
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.gui.application.settings import ApplicationSettings
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
-from guy4ase.gui.misc.structure_wait import wait_for_structure
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 
 def _visualization_atoms(atoms: Any) -> Atoms | None:
@@ -31,17 +29,7 @@ def visualize_structure(
     parent: QWidget,
 ) -> bool:
     """Open a snapshot of the current structure in the configured ASE viewer."""
-    snapshot = wait_for_structure(
-        parent,
-        partial(
-            controller.read_structure,
-            _visualization_atoms,
-            reason="reading the structure for visualization",
-        ),
-    )
-    if isinstance(snapshot, Busy):
-        return False
-    _generation, atoms = snapshot
+    atoms = _visualization_atoms(controller.atoms)
     if atoms is None:
         QMessageBox.information(
             parent,

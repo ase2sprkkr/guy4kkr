@@ -73,7 +73,6 @@ class _ScaleDialog(QDialog):
         *,
         base_lattice,
         preview_atoms: Optional[Any] = None,
-        scaled_positions=None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -95,7 +94,7 @@ class _ScaleDialog(QDialog):
 
         grid.addWidget(QLabel("Axis"), 0, 0)
         grid.addWidget(QLabel("Absolute (Å)"), 0, 1)
-        grid.addWidget(QLabel("Repative scale"), 0, 2)
+        grid.addWidget(QLabel("Relative scale"), 0, 2)
         grid.addWidget(QLabel("Reset"), 0, 3)
 
         for row, axis in enumerate(("a", "b", "c"), start=1):
@@ -341,7 +340,6 @@ def select_scale_lengths(
     c0: float,
     base_lattice,
     preview_atoms: Optional[Any] = None,
-    scaled_positions=None,
     parent: Optional[QWidget] = None,
 ) -> Optional[Tuple[float, float, float]]:
     dlg = _ScaleDialog(
@@ -350,7 +348,6 @@ def select_scale_lengths(
         c0,
         base_lattice=base_lattice,
         preview_atoms=preview_atoms,
-        scaled_positions=scaled_positions,
         parent=parent,
     )
     if dlg.exec() != int(QDialog.DialogCode.Accepted):
@@ -381,7 +378,6 @@ def scale_atoms(atoms: Any, *, parent: Optional[QWidget] = None) -> Optional[Any
         c0=float(current_lengths[2]),
         base_lattice=np.array(cell, dtype=float),
         preview_atoms=atoms,
-        scaled_positions=np.array(atoms.get_scaled_positions(), dtype=float),
         parent=parent,
     )
     if values is None:

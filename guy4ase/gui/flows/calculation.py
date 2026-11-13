@@ -1,22 +1,20 @@
 """Stateless Qt workflow for running and adopting a calculation."""
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.application.result_loading import load_result
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    CalculationNotReady,
+    WorkspaceController,
+)
 from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.run_calculation import SprkkrRunWindow
-from guy4ase.gui.flows.structures import copy_structure_snapshot
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
+from guy4ase.gui.misc.structure_wait import document_change_applied
+from guy4ase.gui.widgets.input_parameters.dataset import dataset_value
 
 
 def choose_working_directory(
@@ -38,14 +36,16 @@ def choose_working_directory(
     return True
 
 
-def _continue_with_parallel_run(parent: QWidget) -> bool:
+def _continue_with_parallel_run(parent: QWidget, dataset: str | None) -> bool:
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Icon.Warning)
     message.setWindowTitle("Calculation Already Running")
     message.setText("A calculation is already running in this workspace.")
+    current = f"Current DATASET: {dataset}" if dataset else "Current DATASET is unset."
     message.setInformativeText(
-        "Another run will share the selected directory. Potential file "
-        "collisions are not isolated automatically."
+        "Another run will share the selected directory. SPR-KKR derives auxiliary "
+        "result filenames from CONTROL.DATASET, so parallel runs are isolated only "
+        "when they use different DATASET values.\n\n" + current
     )
     cancel = message.addButton(QMessageBox.StandardButton.Cancel)
     proceed = message.addButton(
@@ -63,16 +63,15 @@ def run_calculation(
     parent: QWidget,
 ) -> SprkkrRunWindow | None:
     """Open a run window and adopt its result through the controller."""
-    if active_runs.count and not _continue_with_parallel_run(parent):
+    try:
+        request = controller.create_calculation_request()
+    except CalculationNotReady:
         return None
 
-    try:
-        request = wait_for_structure(
-            parent, controller.create_calculation_request
-        )
-    except ValueError:
-        return None
-    if isinstance(request, Busy):
+    if active_runs.count and not _continue_with_parallel_run(
+        parent,
+        dataset_value(request.input_parameters),
+    ):
         return None
 
     def adoption_completed(adoption) -> None:
@@ -94,19 +93,11 @@ def run_calculation(
                 f"loaded:\n{adoption.potential_error}",
             )
 
-    def finished(result) -> None:
+    def finished(loaded) -> None:
         try:
-            loaded = load_result(
-                result,
-                fallback_directory=request.directory,
-            )
-            adoption = wait_for_structure(
-                parent,
-                partial(
-                    controller.adopt_calculation_result,
-                    loaded,
-                    expected_generation=request.generation,
-                ),
+            adoption = controller.adopt_calculation_result(
+                loaded,
+                expected_generation=request.generation,
             )
         except Exception as exc:  # noqa: BLE001 - backend metadata varies
             QMessageBox.critical(
@@ -116,17 +107,14 @@ def run_calculation(
                 f"adopted:\n{exc}",
             )
             return
-        if not isinstance(adoption, Busy):
-            adoption_completed(adoption)
+        adoption_completed(adoption)
 
     window = SprkkrRunWindow(
         request=request,
-        structure_gate=controller.structure_gate,
         parent=parent,
         on_finished=finished,
         on_activity_started=active_runs.register,
         on_activity_ended=active_runs.unregister,
-        on_prepared=controller.notify_structure_prepared,
     )
     window.show()
     return window
@@ -151,17 +139,8 @@ def configure_and_run_task(
         ):
             return None
 
-        snapshot = wait_for_structure(
-            parent,
-            partial(
-                controller.read_structure,
-                copy_structure_snapshot,
-                reason="reading the structure for the task editor",
-            ),
-        )
-        if isinstance(snapshot, Busy):
-            return None
-        generation, atoms = snapshot
+        generation = controller.generation
+        atoms = controller.atoms
         if atoms is None:
             QMessageBox.information(
                 parent,

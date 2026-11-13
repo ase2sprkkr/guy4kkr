@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, MutableMapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol
 
 import numpy as np
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -17,8 +17,8 @@ from guy4ase.gui.input_parameters.bindings import (
     values_equal,
 )
 
-DormantKey: TypeAlias = tuple[InputParameterPath, int]
-DormantState: TypeAlias = MutableMapping[DormantKey, Any]
+DormantKey = tuple[InputParameterPath, int]
+DormantState = MutableMapping[DormantKey, Any]
 
 
 class SessionTransactionPlugin(Protocol):
@@ -171,9 +171,8 @@ class InputParametersSession(QObject):
         self.undo_stack.setUndoLimit(100)
 
     @property
-    def initial_parameters(self) -> InputParameters:
-        """Return the baseline object; callers must treat it as read-only."""
-        return self._initial
+    def task_name(self) -> str:
+        return self._working.task_name
 
     @property
     def working_parameters(self) -> InputParameters:
@@ -289,9 +288,9 @@ class InputParametersSession(QObject):
         source_page: str | None = None,
     ) -> bool:
         """Copy same-task input into one undoable edit; reject a different task."""
-        if parameters.task_name.upper() != self._working.task_name.upper():
+        if parameters.task_name.upper() != self.task_name.upper():
             raise ValueError(
-                f"Expected {self._working.task_name.upper()} input parameters, "
+                f"Expected {self.task_name.upper()} input parameters, "
                 f"got {parameters.task_name.upper()}."
             )
         candidate = parameters.copy(copy_values=True)
@@ -311,9 +310,9 @@ class InputParametersSession(QObject):
         without applying the plugins a second time.
         """
         parameters = session.result()
-        if parameters.task_name.upper() != self._working.task_name.upper():
+        if parameters.task_name.upper() != self.task_name.upper():
             raise ValueError(
-                f"Expected {self._working.task_name.upper()} input parameters, "
+                f"Expected {self.task_name.upper()} input parameters, "
                 f"got {parameters.task_name.upper()}."
             )
         return self._push_snapshot(

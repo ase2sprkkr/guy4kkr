@@ -80,12 +80,21 @@ def test_subtree_rebuild_keeps_dependency_registry_deduplicated(application):
         dialog.session.set_value(path, {"def": value})
         application.processEvents()
 
-    live_editors = [
-        editor for _item, editor in tree_editor._editor_widgets()
-        if editor is not None
-    ]
-    assert len(tree_editor._dependency_editors) == len(live_editors)
-    assert set(tree_editor._dependency_editors) == {id(editor) for editor in live_editors}
+    def actual_editors(item):
+        editor = tree.itemWidget(item, 2)
+        if editor is not None:
+            yield editor
+        for index in range(item.childCount()):
+            yield from actual_editors(item.child(index))
+
+    installed = []
+    root = tree.invisibleRootItem()
+    for index in range(root.childCount()):
+        installed.extend(actual_editors(root.child(index)))
+
+    registered = [registration.editor for registration in tree_editor._runtime.live_editors()]
+    assert len(registered) == len(installed)
+    assert {id(editor) for editor in registered} == {id(editor) for editor in installed}
     dialog.close()
 
 

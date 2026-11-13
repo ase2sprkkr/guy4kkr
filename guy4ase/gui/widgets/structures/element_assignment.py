@@ -162,11 +162,7 @@ class QLetterRow(QWidget):
         self._validate_totals()
 
     def _refresh_break_button(self) -> None:
-        try:
-            can_break = self.site.can_split
-        except Exception:
-            can_break = False
-        self.break_btn.setVisible(bool(can_break))
+        self.break_btn.setVisible(bool(self.site.can_split))
 
     def _rebuild_positions_table(self) -> None:
         positions = self.site.positions
@@ -180,11 +176,9 @@ class QLetterRow(QWidget):
             spin.setProperty("pos_col", j)
             spin.valueChanged.connect(lambda v, r=i, c=j: self._on_position_changed(r, c, v))
             spin.installEventFilter(self)
+            spin.blockSignals(True)
             try:
-                spin.blockSignals(True)
                 spin.setValue(float(positions[i][j]))
-            except Exception:
-                spin.setValue(0.0)
             finally:
                 spin.blockSignals(False)
 
@@ -217,10 +211,7 @@ class QLetterRow(QWidget):
         self.positions_table.setMaximumHeight(header_h + n_rows * row_h + 2)
 
         # Enable delete only when there is more than one row
-        try:
-            self.del_pos_btn.setEnabled(n_rows > 1)
-        except Exception:
-            pass
+        self.del_pos_btn.setEnabled(n_rows > 1)
 
     def _current_position_row(self) -> int:
         r = self.positions_table.currentRow()
@@ -230,15 +221,9 @@ class QLetterRow(QWidget):
         new_index = self.draft.add_position(self.site)
         self._refresh_break_button()
         self._rebuild_positions_table()
-        try:
-            self.positions_table.setCurrentCell(new_index, 0)
-        except Exception:
-            pass
-        try:
-            if callable(self._on_activity):
-                self._on_activity(self.label, new_index, True)
-        except Exception:
-            pass
+        self.positions_table.setCurrentCell(new_index, 0)
+        if callable(self._on_activity):
+            self._on_activity(self.label, new_index, True)
 
     def _delete_position(self) -> None:
         row = self._current_position_row()
@@ -248,24 +233,15 @@ class QLetterRow(QWidget):
         self._rebuild_positions_table()
 
         new_row = min(row, len(self.site.positions) - 1)
-        try:
-            self.positions_table.setCurrentCell(new_row, 0)
-        except Exception:
-            pass
-        try:
-            if callable(self._on_activity):
-                self._on_activity(self.label, new_row, True)
-        except Exception:
-            pass
+        self.positions_table.setCurrentCell(new_row, 0)
+        if callable(self._on_activity):
+            self._on_activity(self.label, new_row, True)
 
     def _on_position_changed(self, row: int, col: int, value: float) -> None:
         self.draft.set_position_component(self.site, row, col, value)
         # Ensure preview updates immediately when positions change
-        try:
-            if callable(self._on_activity):
-                self._on_activity(self.label, row, True)
-        except Exception:
-            pass
+        if callable(self._on_activity):
+            self._on_activity(self.label, row, True)
 
     def load_occupancy(self) -> None:
         """Refresh element controls from the model's occupancy entries."""
@@ -363,10 +339,7 @@ class QLetterRow(QWidget):
         if not self.draft.remove_occupancy(self.site, row['entry']):
             return
         row['w'].setParent(None)
-        try:
-            self.rows.remove(row)
-        except ValueError:
-            pass
+        self.rows.remove(row)
         self._validate_controls_state()
         self._validate_totals()
 
@@ -406,23 +379,17 @@ class QLetterRow(QWidget):
 
     # Focus event filter to trigger highlighting only when user focuses a widget.
     def eventFilter(self, obj, event):  # type: ignore[override]
-        try:
-            if event.type() == QEvent.Type.FocusIn:
-                if isinstance(obj, QDoubleSpinBox):
-                    r = obj.property("pos_row")
-                    c = obj.property("pos_col")
-                    if r is not None and c is not None:
-                        try:
-                            self.positions_table.setCurrentCell(int(r), int(c))
-                        except Exception:
-                            pass
-                if callable(self._on_activity):
-                    if isinstance(obj, QDoubleSpinBox) and obj.property("pos_row") is not None:
-                        self._on_activity(self.label, int(obj.property("pos_row")), False)
-                    else:
-                        self._on_activity(self.label)
-        except Exception:
-            pass
+        if event.type() == QEvent.Type.FocusIn:
+            if isinstance(obj, QDoubleSpinBox):
+                r = obj.property("pos_row")
+                c = obj.property("pos_col")
+                if r is not None and c is not None:
+                    self.positions_table.setCurrentCell(int(r), int(c))
+            if callable(self._on_activity):
+                if isinstance(obj, QDoubleSpinBox) and obj.property("pos_row") is not None:
+                    self._on_activity(self.label, int(obj.property("pos_row")), False)
+                else:
+                    self._on_activity(self.label)
         return super().eventFilter(obj, event)
 
     def is_valid(self) -> bool:

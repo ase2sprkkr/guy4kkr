@@ -100,9 +100,14 @@ The expert dialog also edits a copy: Cancel never modifies its caller's input.
 `dialogs.expert_input.InputParametersDialog` owns that draft, input-file and
 working-directory workflow, overall validation, and modal acceptance. The
 reusable `widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
-searchable tree, changed-only presentation, value editors, compound-value rows,
-and editor-error aggregation. It receives a getter for the dialog-owned draft,
-so replacing a parsed input does not create a second authoritative model.
+search/filter UI, session-change orchestration, changed-only presentation and
+focus restoration. `expert_tree_structure` provides the Qt-free structural
+`ValueShape` contract used to decide whether a branch may refresh in place;
+`expert_tree_renderer` owns recursive grammar/value rendering and editor/action
+installation; `expert_tree_runtime` owns live option rows/shapes, editor
+dependencies and validation errors. None of these layers owns a second
+parameter model: all reads and writes go through the dialog-owned
+`InputParametersSession`.
 Specialized expert fields are declared without Qt in
 `input_parameters.expert_fields`; their paths, registered editor names, related
 options and presentation metadata do not leak into the generic tree renderer.

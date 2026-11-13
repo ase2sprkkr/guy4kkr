@@ -75,6 +75,21 @@ def test_expert_binding_mutate_is_atomic_after_partial_callback_failure():
     assert session.undo_stack.count() == 0
 
 
+def test_expert_dialog_forks_supplied_session(application):
+    session = create_input_parameters_session(InputParameters.create("scf"))
+    before = _editable_values(session.result())
+    history_count = session.undo_stack.count()
+
+    dialog = InputParametersDialog(session)
+    assert dialog.session is not session
+    dialog.session.set_value(("SCF", "NITER"), 17)
+
+    assert values_equal(_editable_values(session.result()), before)
+    assert session.undo_stack.count() == history_count
+    assert dialog.result().SCF.NITER() == 17
+    dialog.close()
+
+
 def test_expert_bound_energy_compound_edit_commits_once_and_undoes_once(application):
     parameters = InputParameters.create("bsf")
     parameters.ENERGY.EMIN.set(0.5)
@@ -135,21 +150,21 @@ def test_guided_and_standalone_expert_share_single_site_policy(application):
     expert.close()
 
 
-def test_guided_expert_cancel_discards_temporary_session(application, monkeypatch):
+def test_guided_expert_cancel_keeps_parent_session(application, monkeypatch):
     dialog = GuidedInputParametersDialog("scf", InputParameters.create("scf"))
-    before = _editable_values(dialog.session.result())
-    history_count = dialog.session.undo_stack.count()
+    parent = dialog.session
+    before = _editable_values(parent.result())
+    history_count = parent.undo_stack.count()
 
-    def cancel(temporary, **_kwargs):
-        temporary.set_value(("SCF", "NITER"), 17)
-        temporary.set_value(("ENERGY", "SPLITSS"), True)
+    def cancel(session, **_kwargs):
+        assert session is parent
         return None
 
     monkeypatch.setattr(guided_input, "edit_input_parameters_session", cancel)
     dialog._open_expert_settings()
 
-    assert values_equal(_editable_values(dialog.session.result()), before)
-    assert dialog.session.undo_stack.count() == history_count
+    assert values_equal(_editable_values(parent.result()), before)
+    assert parent.undo_stack.count() == history_count
     dialog.close()
 
 
@@ -170,7 +185,9 @@ def test_guided_expert_accept_imports_state_as_one_transaction(
     equivalent.set_value(("ENERGY", "SPLITSS"), True)
     equivalent.set_value(("SCF", "NITER"), old_niter + 1)
 
-    def accept(temporary, **_kwargs):
+    def accept(session, **_kwargs):
+        assert session is parent
+        temporary = session.fork()
         temporary.set_value(("ENERGY", "SPLITSS"), True)
         temporary.set_value(("SCF", "NITER"), old_niter + 1)
         return temporary

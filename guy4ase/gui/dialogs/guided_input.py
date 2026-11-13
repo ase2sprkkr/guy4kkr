@@ -8,7 +8,6 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -49,6 +48,10 @@ from guy4ase.gui.style import (
     heading_font,
     navigation_tile_stylesheet,
     secondary_text_stylesheet,
+)
+from guy4ase.gui.widgets.input_parameters.dataset import (
+    DatasetEditor,
+    apply_default_dataset,
 )
 from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
@@ -116,6 +119,9 @@ class GuidedInputParametersDialog(QDialog):
         intro.setObjectName("guidedDialogSubtitle")
         intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         root.addWidget(intro)
+
+        self.dataset_editor = DatasetEditor(self.session, self)
+        root.addWidget(self.dataset_editor)
 
         body = QHBoxLayout()
         self.navigation = QListWidget(self)
@@ -303,19 +309,11 @@ class GuidedInputParametersDialog(QDialog):
         return self.form.editors_for(path)
 
     def _commit_pending(self) -> bool:
-        """Finish the focused edit and reveal errors; do not commit visual fallbacks.
+        """Synchronously commit editor drafts and reveal tracked errors."""
+        self.dataset_editor.commit()
+        for view in self.form.field_views:
+            view.editor.commit()
 
-        Other editors already commit on their own signals. This checks tracked
-        widget errors, not whole-model validity or save-time required options.
-        """
-        focused = QApplication.focusWidget()
-        if focused is not None:
-            focused.clearFocus()
-            QApplication.processEvents()
-        # Editors commit on editingFinished (or immediately for discrete
-        # controls).  Do not commit every displayed value here: optional values
-        # may be represented by a visual fallback while still being unset in
-        # InputParameters.
         errors = self.form.errors
         if errors:
             path = next(iter(errors))
@@ -345,12 +343,11 @@ class GuidedInputParametersDialog(QDialog):
         QMessageBox.critical(self, "Invalid Settings", message)
 
     def _open_expert_settings(self) -> None:
-        """Edit a detached copy; accepting installs the result as one undoable change."""
+        """Edit an isolated Expert draft and import it as one undoable change."""
         if not self._commit_pending():
             return
-        temporary = self.session.fork()
         accepted = edit_input_parameters_session(
-            temporary,
+            self.session,
             parent=self,
             show_changed_only=False,
             atoms=self.atoms,
@@ -386,6 +383,7 @@ def select_guided_input_parameters(
         is_2d=detect_structure_kind(atoms) == "2d",
     )
     parameters = InputParameters.create(spec.parameter_task)
+    apply_default_dataset(parameters, atoms)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,

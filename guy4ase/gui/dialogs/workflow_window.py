@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt, QUrl
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
+from PyQt6.QtGui import QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -27,19 +25,15 @@ from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
+from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
 from guy4ase.gui.flows import visualization as visualization_flow
-from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.misc.structure_wait import (
-    document_change_applied,
-    wait_for_structure,
-)
+from guy4ase.gui.misc.structure_wait import document_change_applied
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -51,6 +45,10 @@ from guy4ase.gui.style import (
     group_panel_stylesheet,
     heading_font,
     secondary_text_stylesheet,
+)
+from guy4ase.gui.widgets.recent_launcher import (
+    build_recent_launch_menu,
+    recent_launch,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -143,9 +141,6 @@ class WorkflowWindow(QMainWindow):
         )
         self.controller = controller
         self.workspace = self.controller.workspace
-        self._structure_access = QtStructureAccess(
-            self.controller.structure_gate, self
-        )
         self.recent_history = recent_files
         self.active_runs = active_runs
         self.settings = settings or ApplicationSettings()
@@ -446,36 +441,19 @@ class WorkflowWindow(QMainWindow):
         self._action_group(group).addWidget(button)
 
     def _add_recent_load_action(self) -> None:
-        recent_files = self.recent_history.snapshot
-        recent_structures = recent_files['structure']
-        recent_outputs = recent_files['output']
-        if not recent_structures and not recent_outputs:
+        launch = recent_launch(self.recent_history)
+        if launch is None:
             return
 
-        default_kind = self.recent_history.last_kind
-        if default_kind == 'structure' and not recent_structures:
-            default_kind = None
-        if default_kind == 'output' and not recent_outputs:
-            default_kind = None
-        if default_kind not in {'structure', 'output'}:
-            default_kind = 'output' if recent_outputs else 'structure'
-
-        recent_by_kind = {
-            'structure': recent_structures,
-            'output': recent_outputs,
-        }
-        default_path = recent_by_kind[default_kind][0]
-
         button = QToolButton(self._actions)
-        title = f"Continue: {Path(default_path).name}"
-        button.setToolTip(default_path)
+        button.setToolTip(launch.path)
         button.setMinimumHeight(52)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         _set_action_button_content(
             button,
-            title,
+            launch.title,
             "",
             self.style().standardIcon(
                 QStyle.StandardPixmap.SP_ArrowForward
@@ -485,36 +463,20 @@ class WorkflowWindow(QMainWindow):
         )
         button.setStyleSheet(self._action_style('load', 'QToolButton'))
         button.clicked.connect(
-            lambda _checked=False, kind=default_kind, path=default_path: self._load_recent(kind, path)
+            lambda _checked=False, item=launch: self._load_recent(
+                item.kind, item.path
+            )
         )
-
-        menu = QMenu(button)
-        for title, kind, paths in (
-            ('Structures', 'structure', recent_structures),
-            ('Outputs', 'output', recent_outputs),
-        ):
-            submenu = menu.addMenu(title)
-            if not paths:
-                empty_action = QAction("(No recent files)", submenu)
-                empty_action.setEnabled(False)
-                submenu.addAction(empty_action)
-                continue
-            for path in paths:
-                action = QAction(path, submenu)
-                action.triggered.connect(
-                    lambda _checked=False, item_kind=kind, item_path=path: self._load_recent(item_kind, item_path)
-                )
-                submenu.addAction(action)
-        button.setMenu(menu)
+        button.setMenu(
+            build_recent_launch_menu(
+                button,
+                self.recent_history,
+                self._load_recent,
+            )
+        )
         self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:
-        self._structure_access.retry(
-            self._refresh_locked,
-            reason="refreshing the workflow overview",
-        )
-
-    def _refresh_locked(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
         atoms = self.workspace.atoms
@@ -742,16 +704,10 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            change = wait_for_structure(
-                self,
-                partial(
-                    self.controller.use_for_new_calculation,
-                    expected_generation=generation,
-                ),
+            change = self.controller.use_for_new_calculation(
+                expected_generation=generation,
             )
-            if isinstance(change, Busy) or not document_change_applied(
-                self, change
-            ):
+            if not document_change_applied(self, change):
                 return
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Start New Calculation", str(exc))
@@ -766,7 +722,7 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        wait_for_structure(self, self.controller.reset)
+        self.controller.reset()
 
     def _visualize_structure(self) -> None:
         visualization_flow.visualize_structure(self.controller, self.settings, self)

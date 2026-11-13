@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from ase import Atoms
+from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.workspace_controller import (
+    CalculationNotReady,
+    WorkspaceController,
+)
+from guy4ase.gui.dialogs import run_calculation as run_dialog
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import input_editing as input_editing_flow
 from guy4ase.gui.flows import structures as structure_flows
@@ -33,15 +42,125 @@ def test_workspace_can_calculate_requires_all_inputs():
     assert workspace.can_calculate()
 
 
-def test_edit_current_structure_uses_detached_revision_snapshot():
+def test_create_calculation_request_reports_missing_preconditions():
+    controller = WorkspaceController(WorkspaceState())
+
+    with pytest.raises(CalculationNotReady):
+        controller.create_calculation_request()
+
+
+def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
+    class BrokenParameters:
+        def copy(self, *, copy_values: bool):
+            assert copy_values
+            raise ValueError("broken parameter copy")
+
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=BrokenParameters(),
+            directory=str(tmp_path),
+        )
+    )
+
+    with pytest.raises(ValueError, match="broken parameter copy"):
+        calculation_flow.run_calculation(
+            controller,
+            RecentFiles(),
+            SimpleNamespace(count=0),
+            None,
+        )
+
+
+def test_run_result_handoff_loads_once_and_preserves_backend_result(
+    tmp_path, monkeypatch
+):
+    _application = QApplication.instance() or QApplication([])
+    backend_result = object()
+    output_path = tmp_path / "Fe.out"
+    loaded = LoadedResult(
+        result=backend_result,
+        output_path=output_path,
+        potential_path=None,
+        atoms=None,
+        potential_error=None,
+        directory=str(tmp_path),
+    )
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters("scf"),
+            directory=str(tmp_path),
+        )
+    )
+    history = RecentFiles(tmp_path / "recent.json")
+    active_runs = SimpleNamespace(
+        count=0,
+        register=lambda _run_id: None,
+        unregister=lambda _run_id: None,
+    )
+
+    def capture_start(window, request):
+        window._test_request = request
+
+    monkeypatch.setattr(
+        calculation_flow.SprkkrRunWindow,
+        "_start",
+        capture_start,
+    )
+
+    load_calls = []
+
+    def fake_load_result(result, *, fallback_directory):
+        load_calls.append((result, fallback_directory))
+        assert result is backend_result
+        return loaded
+
+    monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
+
+    class Process:
+        def run(self):
+            return backend_result
+
+        def stop_the_process(self):
+            raise AssertionError("process must not be cancelled")
+
+    class Calculator:
+        def calculate(self, **_kwargs):
+            return Process()
+
+    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
+
+    window = calculation_flow.run_calculation(
+        controller,
+        history,
+        active_runs,
+        None,
+    )
+    assert window is not None
+
+    worker = run_dialog._SprkkrRunWorker(window._test_request)
+    worker.finished.connect(window._on_finished)
+    worker.run()
+
+    assert load_calls == [(backend_result, str(tmp_path))]
+    assert controller.workspace.result is backend_result
+    assert controller.workspace.result_history == (backend_result,)
+    assert history.paths("output") == (str(output_path.resolve()),)
+
+    window.close()
+
+
+def test_edit_current_structure_reads_published_structure_and_commits_replacement():
     original = Atoms("Fe")
     controller = WorkspaceController(WorkspaceState(atoms=original))
 
     def edit(atoms, *, parent):
         assert parent is None
-        assert atoms is not original
-        atoms.symbols = "Cu"
-        return atoms
+        assert atoms is original
+        edited = atoms.copy()
+        edited.symbols = "Cu"
+        return edited
 
     assert structure_flows.edit_current_structure(
         controller,
@@ -50,6 +169,7 @@ def test_edit_current_structure_uses_detached_revision_snapshot():
         error_title="Edit Error",
     )
     assert controller.workspace.atoms is not original
+    assert original.get_chemical_symbols() == ["Fe"]
     assert controller.workspace.atoms.get_chemical_symbols() == ["Cu"]
     assert controller.workspace.restarted
 
@@ -70,7 +190,7 @@ def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
         assert not show_changed_only
         assert parameters is not original_parameters
         assert parameters.name == "original-copy"
-        assert atoms is not original_atoms
+        assert atoms is original_atoms
         return edited_parameters
 
     monkeypatch.setattr(
@@ -100,3 +220,23 @@ def test_choose_working_directory_is_shared_flow(monkeypatch, tmp_path):
         None,
     )
     assert controller.workspace.directory == str(chosen)
+
+
+def test_edit_site_elements_rejects_missing_structure_before_draft(monkeypatch):
+    controller = WorkspaceController(WorkspaceState())
+    messages = []
+
+    def fail_if_called(_atoms):
+        raise AssertionError("ElementAssignmentDraft must not receive None")
+
+    monkeypatch.setattr(structure_flows, "ElementAssignmentDraft", fail_if_called)
+    monkeypatch.setattr(
+        structure_flows.QMessageBox,
+        "information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+
+    assert not structure_flows.edit_site_elements(controller, None)
+    assert messages == [
+        ("No Structure", "Load or create a structure first."),
+    ]

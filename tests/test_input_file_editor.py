@@ -90,57 +90,41 @@ def test_cancel_does_not_add_history(application, monkeypatch):
     dialog.close()
 
 
-def test_apply_error_keeps_editor_open_and_highlights_unknown_option(application):
-    parameters = InputParameters.create('scf')
+def test_apply_callback_error_propagates_without_becoming_input_error(application):
+    parameters = InputParameters.create("scf")
+    error = RuntimeError("broken session invariant")
 
-    def apply(candidate):
-        # The input grammar permits custom names; a consumer can reject them
-        # later. That failure must still happen inside the text editor.
-        if 'NITERR' in candidate.SCF:
-            raise ValueError("The option 'SCF.NITERR' is not known")
+    def apply(_candidate):
+        raise error
 
     editor = InputFileEditor(parameters, apply_parameters=apply)
-    source = editor.editor.toPlainText().replace('NITER=200', 'NITER=200\n\tNITERR=135')
-    # A comment and the same name in another section must not win the match.
-    source = '# NITERR=123\n' + source.replace('PRINT=0', 'PRINT=0\n\tNITERR=99')
-    editor.editor.setPlainText(source)
-    editor.show()
-    editor.accept()
-    assert editor.isVisible()
-    assert editor.parameters is None
-    assert editor.editor.toPlainText() == source
-    assert source.splitlines()[editor.error_line - 1] == '\tNITERR=135'
-    assert len(editor.editor.extraSelections()) == 1
-    assert parameters.SCF.NITER() == 200
-    editor.editor.setPlainText(source.replace('\n\tNITERR=135', ''))
-    editor.accept()
-    assert editor.result() == QDialog.DialogCode.Accepted
-    assert editor.parameters is not None
 
-
-def test_guided_apply_failure_does_not_close_text_editor_or_add_history(application, monkeypatch):
-    dialog = GuidedInputParametersDialog('scf', InputParameters.create('scf'))
-    original_replace = dialog.session.replace_parameters
-
-    def replace(parameters, **kwargs):
-        if 'NITERR' in parameters.SCF:
-            raise ValueError("Unknown option SCF.NITERR")
-        return original_replace(parameters, **kwargs)
-
-    def edit(editor):
-        source = editor.editor.toPlainText().replace('NITER=200', 'NITER=200\n\tNITERR=135')
-        editor.editor.setPlainText(source)
-        editor.show()
+    with pytest.raises(RuntimeError, match="broken session invariant") as raised:
         editor.accept()
-        assert editor.isVisible()
-        assert editor.error_line is not None
-        assert dialog.session.undo_stack.count() == 0
-        assert not dialog.session.is_modified()
-        editor.reject()
-        return editor.result()
 
-    monkeypatch.setattr(dialog.session, 'replace_parameters', replace)
-    monkeypatch.setattr(InputFileEditor, 'exec', edit)
-    dialog.edit_input_button.click()
-    assert not dialog.session.is_modified()
-    dialog.close()
+    assert raised.value is error
+    assert editor.parameters is None
+    assert editor.error_line is None
+    assert not editor.error_label.text()
+    assert not editor.editor.extraSelections()
+
+
+def test_parameter_copy_error_propagates_without_becoming_input_error(application, monkeypatch):
+    parameters = InputParameters.create("scf")
+    error = RuntimeError("broken parameter copy")
+
+    def broken_copy(*, copy_values):
+        assert copy_values
+        raise error
+
+    monkeypatch.setattr(parameters, "copy", broken_copy)
+    editor = InputFileEditor(parameters)
+
+    with pytest.raises(RuntimeError, match="broken parameter copy") as raised:
+        editor.accept()
+
+    assert raised.value is error
+    assert editor.parameters is None
+    assert editor.error_line is None
+    assert not editor.error_label.text()
+    assert not editor.editor.extraSelections()

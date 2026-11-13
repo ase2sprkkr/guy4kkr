@@ -1,0 +1,99 @@
+"""Recent-file persistence and display-path regressions."""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+import pytest
+
+from guy4ase.gui.application.recent_files import RecentFiles
+from guy4ase.gui.widgets.recent_launcher import recent_path_label
+
+
+def test_recent_files_store_canonical_absolute_paths(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    target = work / "Fe.cif"
+    target.touch()
+    history = RecentFiles(tmp_path / "recent.json")
+
+    monkeypatch.chdir(work)
+    history.remember("structure", "Fe.cif")
+    history.remember("structure", target)
+
+    assert history.paths("structure") == (str(target.resolve()),)
+    data = json.loads(history.path.read_text(encoding="utf-8"))
+    assert data["recent_files"]["structure"] == [str(target.resolve())]
+
+
+def test_recent_files_load_canonicalizes_legacy_entries(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    target = work / "Fe.cif"
+    target.touch()
+    path = tmp_path / "recent.json"
+    path.write_text(
+        json.dumps(
+            {
+                "recent_files": {
+                    "structure": ["Fe.cif", str(target)],
+                    "input": [],
+                    "output": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(work)
+    history = RecentFiles(path)
+    history.load()
+
+    assert history.paths("structure") == (str(target.resolve()),)
+
+
+def test_recent_files_resolve_symlink_duplicates(tmp_path):
+    target = tmp_path / "Fe.cif"
+    target.touch()
+    alias = tmp_path / "alias.cif"
+    try:
+        alias.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+
+    history = RecentFiles(tmp_path / "recent.json")
+    history.remember("structure", alias)
+    history.remember("structure", target)
+
+    assert history.paths("structure") == (str(target.resolve()),)
+
+
+def test_recent_file_save_failure_is_logged_but_model_changes(tmp_path, caplog):
+    history = RecentFiles(tmp_path / "recent.json")
+    history.path = tmp_path  # writing text to a directory fails
+    target = tmp_path / "Fe.cif"
+    target.touch()
+
+    with caplog.at_level(logging.ERROR):
+        history.remember("structure", target)
+
+    assert history.paths("structure") == (str(target.resolve()),)
+    assert "Failed to save recent files" in caplog.text
+
+
+def test_recent_path_label_is_relative_only_below_base(tmp_path):
+    base = tmp_path / "work"
+    inside = base / "results" / "Fe.out"
+    outside = tmp_path / "other" / "Cu.out"
+
+    assert recent_path_label(inside, base) == str(Path("results") / "Fe.out")
+    assert recent_path_label(outside, base) == str(outside.resolve())
+    assert not recent_path_label(outside, base).startswith("..")
+
+
+def test_recent_path_label_defaults_to_current_directory(tmp_path, monkeypatch):
+    target = tmp_path / "results" / "Fe.out"
+    monkeypatch.chdir(tmp_path)
+
+    assert recent_path_label(target) == str(Path("results") / "Fe.out")

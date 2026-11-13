@@ -28,6 +28,10 @@ from guy4ase.gui.input_parameters.validation import (
     InputParametersValidationError,
     validate_setup,
 )
+from guy4ase.gui.widgets.input_parameters.dataset import (
+    DatasetEditor,
+    apply_default_dataset,
+)
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
 
@@ -46,9 +50,7 @@ class InputParametersDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         if isinstance(parameters, InputParametersSession):
-            # The caller owns an explicitly supplied session and may need it
-            # after this dialog has closed (Guided applies it on Accept).
-            self.session = parameters
+            self.session = parameters.fork(self)
         else:
             self.session = create_input_parameters_session(parameters, self)
         self._calculate_mode = calculate_mode
@@ -75,6 +77,9 @@ class InputParametersDialog(QDialog):
             root.addLayout(directory_row)
         else:
             self._directory_edit = None
+
+        self.dataset_editor = DatasetEditor(self.session, self)
+        root.addWidget(self.dataset_editor)
 
         self.tree_editor = ExpertInputTreeEditor(
             self.session,
@@ -194,7 +199,7 @@ def edit_input_parameters_session(
     directory: str | None = None,
     atoms: Any = None,
 ) -> InputParametersSession | None:
-    """Run Expert over an independent session and return it only on Accept."""
+    """Run Expert over an isolated fork and return the fork only on Accept."""
     dialog = InputParametersDialog(
         session,
         parent=parent,
@@ -205,7 +210,7 @@ def edit_input_parameters_session(
     )
     code = dialog.exec()
     if code == QDialog.DialogCode.Accepted:
-        return session
+        return dialog.session
     return None
 
 
@@ -222,4 +227,5 @@ def select_input_parameters(
     )
     params_def = task_module.input_parameters()
     params = params_def.create_object()
+    apply_default_dataset(params, atoms)
     return edit_input_parameters(params, parent=parent, atoms=atoms)

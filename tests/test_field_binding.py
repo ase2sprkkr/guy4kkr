@@ -5,9 +5,7 @@ from ase2sprkkr.common.grammar_types import Array, Integer, Keyword, Real, Seque
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.input_parameters.field_binding import (
-    IndexedFieldBinding,
     ProjectedFieldBinding,
-    SessionFieldBinding,
     array_item_binding,
     create_field_binding,
     mapping_value_binding,
@@ -61,25 +59,6 @@ def test_field_binding_displays_dormant_mesh_without_storing_it():
     assert state.value == 87
     assert len(session.result().ENERGY.NE()) == 1
     assert session.undo_stack.count() == history_count
-
-
-def test_explicit_index_uses_specialized_field_binding():
-    session = InputParametersSession(InputParameters.create("scf"))
-    placement = field("ENERGY", "NE", "Energy points", index=0)
-
-    binding = create_field_binding(session, placement, "energy")
-
-    assert isinstance(binding, IndexedFieldBinding)
-    assert binding.index == 0
-
-
-def test_scalar_option_uses_whole_value_binding():
-    session = InputParametersSession(InputParameters.create("scf"))
-    placement = field("SCF", "NITER", "Iterations")
-
-    binding = create_field_binding(session, placement, "convergence")
-
-    assert type(binding) is SessionFieldBinding
 
 
 def test_binding_reads_plugin_result_and_tracks_undo_redo_and_other_editors():
@@ -140,13 +119,14 @@ def test_projected_binding_keeps_plugin_failure_atomic():
     assert session.undo_stack.count() == 0
 
 
-def test_array_type_without_explicit_index_remains_a_whole_value_binding():
+def test_array_type_without_explicit_index_exposes_the_whole_value():
     session = InputParametersSession(InputParameters.create("scf"))
-    placement = field("SCF", "MSPIN", "Spin moments", "literal")
+    path = ("SCF", "MSPIN")
+    placement = field(*path, "Spin moments", "literal")
 
     binding = create_field_binding(session, placement, "initial")
 
-    assert type(binding) is SessionFieldBinding
+    np.testing.assert_array_equal(binding.read().value, session.value(path))
 
 
 def test_dormant_only_plugin_state_is_generic_and_undoable():
