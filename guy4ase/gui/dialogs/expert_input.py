@@ -1,30 +1,33 @@
 """Modal workflow for editing an isolated copy of ``InputParameters``."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters  # type: ignore
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from guy4ase.gui.application.window_geometry import manage_window_geometry
-from guy4ase.gui.dialogs.input_file import InputFileEditor
+from guy4ase.gui.flows.input_parameters import (
+    choose_and_load_input_parameters,
+    edit_input_parameters_file,
+)
 from guy4ase.gui.input_parameters.session import (
     InputParametersSession,
     create_input_parameters_session,
 )
-from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.gui.input_parameters.validation import (
+    InputParametersValidationError,
+    validate_setup,
+)
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
 
@@ -105,43 +108,11 @@ class InputParametersDialog(QDialog):
         self.ok_btn = add_button('Calculate' if calculate_mode else 'OK', self._on_ok)
 
     def _load_input(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            'Load SPRKKR Input File',
-            '',
-            'SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)',
-        )
-        if not file_path:
-            return
-        try:
-            parameters = InputParameters.from_file(Path(file_path).resolve())
-            self._replace_parameters(parameters)
-        except Exception as exc:  # noqa: BLE001 - parser errors are heterogeneous.
-            QMessageBox.critical(
-                self,
-                'Load Error',
-                f'Failed to load input parameters:\n{exc}',
-            )
-            return
-        self.tree_editor.set_show_changed_only(True)
-
-    def _replace_parameters(self, parameters: InputParameters) -> None:
-        """Install parsed input as one session transaction."""
-        self.session.replace_parameters(parameters, text="Load input file")
+        if choose_and_load_input_parameters(self.session, self):
+            self.tree_editor.set_show_changed_only(True)
 
     def _edit_input_file(self) -> None:
-        focus = QApplication.focusWidget()
-        if focus is not None:
-            focus.clearFocus()
-        try:
-            editor = InputFileEditor(
-                self.session.result(),
-                self,
-                apply_parameters=self._replace_parameters,
-            )
-            editor.exec()
-        except Exception as exc:  # noqa: BLE001 - modal callback boundary.
-            QMessageBox.critical(self, 'Input File Error', str(exc))
+        edit_input_parameters_file(self.session, self)
 
     def _choose_directory(self) -> bool:
         start = (
@@ -167,7 +138,7 @@ class InputParametersDialog(QDialog):
             return
         try:
             validate_setup(self.session.working_parameters)
-        except Exception as error:  # noqa: BLE001 - backend validation boundary.
+        except InputParametersValidationError as error:
             self._validation_error.setText(str(error))
             self._validation_error.show()
             return
@@ -197,9 +168,8 @@ def edit_input_parameters(
     show_changed_only: bool = False,
     calculate_mode: bool = False,
     directory: str | None = None,
-    return_directory: bool = False,
     atoms: Any = None,
-) -> Any:
+) -> InputParameters | None:
     """Open the expert editor and return its accepted isolated draft."""
     session = create_input_parameters_session(params)
     accepted = edit_input_parameters_session(
@@ -208,13 +178,10 @@ def edit_input_parameters(
         show_changed_only=show_changed_only,
         calculate_mode=calculate_mode,
         directory=directory,
-        return_directory=return_directory,
         atoms=atoms,
     )
     if accepted is None:
         return None
-    if return_directory:
-        return accepted[0].result(), accepted[1]
     return accepted.result()
 
 
@@ -225,9 +192,8 @@ def edit_input_parameters_session(
     show_changed_only: bool = False,
     calculate_mode: bool = False,
     directory: str | None = None,
-    return_directory: bool = False,
     atoms: Any = None,
-) -> InputParametersSession | tuple[InputParametersSession, str] | None:
+) -> InputParametersSession | None:
     """Run Expert over an independent session and return it only on Accept."""
     dialog = InputParametersDialog(
         session,
@@ -239,8 +205,6 @@ def edit_input_parameters_session(
     )
     code = dialog.exec()
     if code == QDialog.DialogCode.Accepted:
-        if return_directory:
-            return session, dialog.directory()
         return session
     return None
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
-from weakref import WeakKeyDictionary
 
 import numpy as np
 from ase import Atoms
@@ -42,14 +41,6 @@ from guy4ase.physics.pyxtal_utils import (
     lattice_from_params,
 )
 from guy4ase.physics.structure_database import StructurePrototype
-
-_DIALOGS = WeakKeyDictionary()
-
-class _GlobalSentinel:
-    pass
-
-_DEFAULT_KEY = _GlobalSentinel()
-
 
 class SpaceGroupSelectorDialog(QDialog):
     _DEFAULT_TITLE = "Select Space Group"
@@ -826,17 +817,7 @@ def select_spacegroup(
       - 'back' if Back is enabled and pressed
       - None on cancel
     """
-    key = parent if parent is not None else _DEFAULT_KEY
-    try:
-        dlg = _DIALOGS.get(key)
-    except Exception:
-        dlg = None
-    if dlg is None or not isinstance(dlg, SpaceGroupSelectorDialog):
-        dlg = SpaceGroupSelectorDialog(parent, back=back)
-        _DIALOGS[key] = dlg
-    else:
-        dlg._allow_back = bool(back)
-        dlg.back_btn.setVisible(dlg._allow_back)
+    dlg = SpaceGroupSelectorDialog(parent, back=back)
 
     try:
         if prototype is None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -21,6 +23,33 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
+class _RunCancellation:
+    """Bridge a GUI stop request to a process that may not exist yet."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._requested = False
+        self._process: Any | None = None
+
+    def register(self, process: Any) -> bool:
+        """Register the process and return whether it may be started."""
+        with self._lock:
+            if self._requested:
+                return False
+            self._process = process
+            return True
+
+    def request(self) -> None:
+        with self._lock:
+            if self._requested:
+                return
+            self._requested = True
+            process = self._process
+
+        if process is not None:
+            process.stop_the_process()
+
+
 class _SprkkrRunWorker(QObject):
     output = pyqtSignal(str, str)  # (text, kind)
     status = pyqtSignal(str)
@@ -31,14 +60,17 @@ class _SprkkrRunWorker(QObject):
     activityEnded = pyqtSignal(object)
 
     def __init__(
-        self, request: CalculationRequest, structure_gate: StructureAccessGate
+        self,
+        request: CalculationRequest,
+        structure_gate: StructureAccessGate,
+        cancellation: _RunCancellation | None = None,
     ):
         super().__init__()
         self._request = request
         self._structure_gate = structure_gate
+        self._cancellation = cancellation or _RunCancellation()
         self.run_id = object()
-        self._process: Any | None = None
-        self._stop_requested = False
+        self._file_id = uuid4().hex[:12]
 
     @pyqtSlot()
     def run(self) -> None:
@@ -56,16 +88,21 @@ class _SprkkrRunWorker(QObject):
                 def prepare() -> Any:
                     self.status.emit("Preparing calculation…")
                     calc = SPRKKR()
+                    prefix = f"%a_%T_{self._file_id}"
                     return calc.calculate(
                         atoms=self._request.atoms,
                         input_parameters=self._request.input_parameters,
                         directory=self._request.directory,
+                        input_file=f"{prefix}.inp",
+                        potential_file=f"{prefix}.pot",
+                        output_file=f"{prefix}.out",
+                        empty_spheres=False,
                         run_async=True,
                         read_callback=read_callback,
                         print_output=False,
                     )
 
-                self._process = self._structure_gate.call(
+                process = self._structure_gate.call(
                     "preparing a calculation", prepare
                 )
             finally:
@@ -73,26 +110,17 @@ class _SprkkrRunWorker(QObject):
                 # shared structure. The lock is already released here.
                 self.preparationFinished.emit(self._request.atoms)
 
-            if self._stop_requested:
+            if not self._cancellation.register(process):
                 raise RuntimeError("Stopped")
 
             self.status.emit("Running…")
-            result = self._process.run()
+            result = process.run()
             self.status.emit("Finished")
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
         finally:
             self.activityEnded.emit(self.run_id)
-
-    @pyqtSlot()
-    def stop(self) -> None:
-        self._stop_requested = True
-        try:
-            if self._process is not None and hasattr(self._process, "stop_the_process"):
-                self._process.stop_the_process()
-        except Exception:
-            pass
 
 
 class SprkkrRunWindow(QDialog):
@@ -175,7 +203,10 @@ class SprkkrRunWindow(QDialog):
         request: CalculationRequest,
     ) -> None:
         thread = QThread(self)
-        worker = _SprkkrRunWorker(request, self._structure_gate)
+        self._cancellation = _RunCancellation()
+        worker = _SprkkrRunWorker(
+            request, self._structure_gate, self._cancellation
+        )
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -229,8 +260,7 @@ class SprkkrRunWindow(QDialog):
     @pyqtSlot()
     def _on_stop(self) -> None:
         self._stop_btn.setEnabled(False)
-        if self._worker is not None:
-            self._worker.stop()
+        self._cancellation.request()
 
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:

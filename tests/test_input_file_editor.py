@@ -120,13 +120,12 @@ def test_apply_error_keeps_editor_open_and_highlights_unknown_option(application
 
 def test_guided_apply_failure_does_not_close_text_editor_or_add_history(application, monkeypatch):
     dialog = GuidedInputParametersDialog('scf', InputParameters.create('scf'))
-    import guy4ase.gui.dialogs.guided_input as guided_module
-    original_prepare = guided_module._prepare_parameters
+    original_replace = dialog.session.replace_parameters
 
-    def prepare(parameters, task):
+    def replace(parameters, **kwargs):
         if 'NITERR' in parameters.SCF:
             raise ValueError("Unknown option SCF.NITERR")
-        return original_prepare(parameters, task)
+        return original_replace(parameters, **kwargs)
 
     def edit(editor):
         source = editor.editor.toPlainText().replace('NITER=200', 'NITER=200\n\tNITERR=135')
@@ -140,7 +139,7 @@ def test_guided_apply_failure_does_not_close_text_editor_or_add_history(applicat
         editor.reject()
         return editor.result()
 
-    monkeypatch.setattr(guided_module, '_prepare_parameters', prepare)
+    monkeypatch.setattr(dialog.session, 'replace_parameters', replace)
     monkeypatch.setattr(InputFileEditor, 'exec', edit)
     dialog.edit_input_button.click()
     assert not dialog.session.is_modified()

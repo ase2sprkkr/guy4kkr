@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -26,7 +25,10 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.dialogs.expert_input import edit_input_parameters_session
-from guy4ase.gui.dialogs.input_file import InputFileEditor
+from guy4ase.gui.flows.input_parameters import (
+    choose_and_load_input_parameters,
+    edit_input_parameters_file,
+)
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
 from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
@@ -34,9 +36,10 @@ from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
     TaskDialogSpec,
 )
-from guy4ase.gui.input_parameters.tasks import new_parameters
-from guy4ase.gui.input_parameters.tasks import prepare_parameters as _prepare_parameters
-from guy4ase.gui.input_parameters.validation import validate_setup
+from guy4ase.gui.input_parameters.validation import (
+    InputParametersValidationError,
+    validate_setup,
+)
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.style import (
     SPACE_LG,
@@ -49,13 +52,7 @@ from guy4ase.gui.style import (
 )
 from guy4ase.gui.widgets.input_parameters.form import GuidedFormRenderer
 from guy4ase.gui.widgets.input_parameters.parameter import ParameterEditor
-
-
-def _is_2d(atoms: Any) -> bool:
-    try:
-        return not all(bool(value) for value in atoms.get_pbc())
-    except Exception:
-        return False
+from guy4ase.physics.lattice import detect_structure_kind
 
 
 @dataclass(frozen=True)
@@ -81,9 +78,17 @@ class GuidedInputParametersDialog(QDialog):
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
-        prepared = _prepare_parameters(parameters, self.task)
-        self.session = create_input_parameters_session(prepared, self)
+        self.spec: TaskDialogSpec = task_dialog_spec(
+            self.task,
+            is_2d=detect_structure_kind(atoms) == "2d",
+        )
+        expected_task = self.spec.parameter_task.lower()
+        if parameters.task_name.lower() != expected_task:
+            raise ValueError(
+                f"Expected {expected_task.upper()} input parameters, "
+                f"got {parameters.task_name.upper()}."
+            )
+        self.session = create_input_parameters_session(parameters, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
         self._navigation: dict[str, NavigationView] = {}
 
@@ -326,7 +331,7 @@ class GuidedInputParametersDialog(QDialog):
             return
         try:
             validate_setup(self.session.working_parameters)
-        except Exception as exc:
+        except InputParametersValidationError as exc:
             self._show_model_error(exc)
             return
         self.accept()
@@ -343,69 +348,26 @@ class GuidedInputParametersDialog(QDialog):
         """Edit a detached copy; accepting installs the result as one undoable change."""
         if not self._commit_pending():
             return
-        try:
-            temporary = self.session.fork()
-            accepted = edit_input_parameters_session(
-                temporary,
-                parent=self,
-                show_changed_only=False,
-                atoms=self.atoms,
-            )
-            if accepted is not None:
-                assert not isinstance(accepted, tuple)
-                prepared = _prepare_parameters(accepted.result(), self.task)
-                accepted.replace_parameters(
-                    prepared,
-                    text="Normalize expert settings",
-                    source_page="expert",
-                )
-                self.session.replace_from_session(
-                    accepted,
-                    text="Apply expert settings",
-                    source_page="expert",
-                )
-        except Exception as exc:
-            QMessageBox.critical(self, "Expert Settings Error", str(exc))
+        temporary = self.session.fork()
+        accepted = edit_input_parameters_session(
+            temporary,
+            parent=self,
+            show_changed_only=False,
+            atoms=self.atoms,
+        )
+        if accepted is None:
+            return
+        self.session.replace_from_session(
+            accepted,
+            text="Apply expert settings",
+            source_page="expert",
+        )
 
     def _load_input(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load SPRKKR Input File",
-            "",
-            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)",
-        )
-        if not file_path:
-            return
-        try:
-            loaded = _prepare_parameters(
-                InputParameters.from_file(Path(file_path).resolve()),
-                self.task,
-            )
-            self.session.replace_parameters(
-                loaded,
-                text=f"Load {Path(file_path).name}",
-                source_page="load",
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Load Error", f"Failed to load input parameters:\n{exc}")
+        choose_and_load_input_parameters(self.session, self)
 
     def _edit_input_file(self) -> None:
-        """Apply parsed input through a callback so failed application keeps the draft open."""
-        # Parsing is also useful for repairing incomplete inputs; do not block
-        # opening the text editor on save-time/required-field validation.
-        focus = QApplication.focusWidget()
-        if focus is not None:
-            focus.clearFocus()
-        try:
-            def apply(parameters):
-                self.session.replace_parameters(
-                    _prepare_parameters(parameters, self.task),
-                    text="Edit input file", source_page="input_file",
-                )
-            editor = InputFileEditor(self.session.result(), self, apply_parameters=apply)
-            editor.exec()
-        except Exception as exc:
-            QMessageBox.critical(self, "Input File Error", str(exc))
+        edit_input_parameters_file(self.session, self)
 
     def result(self) -> InputParameters:
         """Return a detached parameter copy."""
@@ -419,8 +381,11 @@ def select_guided_input_parameters(
     atoms: Any = None,
 ) -> InputParameters | None:
     task = task.lower()
-    spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
-    parameters = new_parameters(spec.parameter_task)
+    spec = task_dialog_spec(
+        task,
+        is_2d=detect_structure_kind(atoms) == "2d",
+    )
+    parameters = InputParameters.create(spec.parameter_task)
     dialog = GuidedInputParametersDialog(
         task,
         parameters,

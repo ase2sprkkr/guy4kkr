@@ -7,7 +7,6 @@ from typing import Any, Callable
 from PyQt6.QtCore import QSize, Qt, QUrl
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -26,13 +25,15 @@ from PyQt6.QtWidgets import (
 
 from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
+from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
-from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
 from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.dialogs.settings import edit_settings
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.flows import visualization as visualization_flow
 from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
 from guy4ase.gui.misc.structure_wait import (
@@ -52,10 +53,6 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-
-
-def _copy_optional_atoms(atoms: Any) -> Any:
-    return None if atoms is None else atoms.copy()
 
 
 def _set_action_button_content(
@@ -118,11 +115,13 @@ class WorkflowWindow(QMainWindow):
     """Task-oriented entry point that keeps the full UI available as expert mode."""
 
     _GROUP_CALCULATE = "Calculate"
+    _GROUP_VIEW = "View"
     _GROUP_CREATE = "Create structure"
     _GROUP_LOAD = "Load structure"
     _GROUP_DIFFERENT = "And now something completely different..."
     _ACTION_GROUPS = (
         _GROUP_CALCULATE,
+        _GROUP_VIEW,
         _GROUP_CREATE,
         _GROUP_LOAD,
         _GROUP_DIFFERENT,
@@ -135,6 +134,7 @@ class WorkflowWindow(QMainWindow):
         active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
+        settings: ApplicationSettings | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
@@ -148,6 +148,7 @@ class WorkflowWindow(QMainWindow):
         )
         self.recent_history = recent_files
         self.active_runs = active_runs
+        self.settings = settings or ApplicationSettings()
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
         self.controller.directoryChanged.connect(
@@ -239,7 +240,12 @@ class WorkflowWindow(QMainWindow):
         )
         change_directory.setToolTip("Change working directory")
         change_directory.setAccessibleName("Change working directory")
-        change_directory.clicked.connect(self._choose_working_directory)
+        change_directory.clicked.connect(
+            lambda _checked=False: calculation_flow.choose_working_directory(
+                self.controller,
+                self,
+            )
+        )
         directory_row.addWidget(change_directory)
 
         self._browse_working_directory_button = QToolButton(working_directory)
@@ -284,15 +290,36 @@ class WorkflowWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
         expert_layout = QVBoxLayout(expert_box)
-        side_text = QLabel("Access every setting directly.", expert_box)
+        side_text = QLabel("Access the full expert interface.", expert_box)
         side_text.setWordWrap(True)
         side_text.setStyleSheet(secondary_text_stylesheet(self.palette()))
         expert_layout.addWidget(side_text)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_row.setSpacing(SPACE_XS)
         expert_btn = QPushButton("Open Expert Mode", expert_box)
         expert_btn.setMinimumHeight(40)
         expert_btn.setStyleSheet(button_stylesheet(self.palette()))
         expert_btn.clicked.connect(self._open_expert_mode)
-        expert_layout.addWidget(expert_btn)
+        bottom_row.addWidget(expert_btn, 1)
+
+        settings_btn = QToolButton(expert_box)
+        settings_btn.setAutoRaise(True)
+        settings_btn.setFixedSize(40, 40)
+        settings_btn.setIcon(
+            QIcon.fromTheme(
+                "preferences-system",
+                self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_FileDialogDetailedView
+                ),
+            )
+        )
+        settings_btn.setToolTip("Settings")
+        settings_btn.setAccessibleName("Settings")
+        settings_btn.clicked.connect(self._open_settings)
+        bottom_row.addWidget(settings_btn)
+        expert_layout.addLayout(bottom_row)
         expert_box.setStyleSheet(
             group_panel_stylesheet(
                 self.palette(), self.palette().color(QPalette.ColorRole.Highlight)
@@ -353,23 +380,6 @@ class WorkflowWindow(QMainWindow):
         self._working_directory_label.setToolTip(directory or "")
         self._browse_working_directory_button.setEnabled(bool(directory))
 
-    def _choose_working_directory(
-        self,
-        _checked: bool = False,
-        *,
-        title: str = "Select Calculation Directory",
-    ) -> bool:
-        start_directory = self.workspace.directory or str(Path.home())
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            title,
-            start_directory,
-        )
-        if not directory:
-            return False
-        self.controller.change_directory(str(directory))
-        return True
-
     def _browse_working_directory(self) -> None:
         directory = self.workspace.directory
         if not directory:
@@ -383,9 +393,9 @@ class WorkflowWindow(QMainWindow):
             )
 
     def _refresh_result_actions(self) -> None:
-        result = self.workspace.result
-        self._result_actions_widget.set_result(result)
-        self._result_actions.setVisible(self._result_actions_widget.has_rows)
+        results = self.workspace.result_history
+        self._result_actions_widget.set_results(results)
+        self._result_actions.setVisible(bool(results))
 
     def _action_style(self, category: str, widget: str) -> str:
         palette = self.palette()
@@ -565,7 +575,33 @@ class WorkflowWindow(QMainWindow):
         )
         self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
 
+        self._add_action(
+            "Visualize Structure",
+            "Open the current structure in the configured ASE viewer",
+            self._visualize_structure,
+            group=self._GROUP_VIEW,
+            category="neutral",
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+        )
+
         if not converged:
+            empty_spheres_action = (
+                None if status in stage_names else self.workspace.empty_spheres_action()
+            )
+            if empty_spheres_action is not None:
+                self._add_action(
+                    (
+                        "Recalculate Empty Spheres"
+                        if empty_spheres_action == "recalculate"
+                        else "Add Empty Spheres"
+                    ),
+                    "Find empty spheres explicitly before the SCF calculation",
+                    self._update_empty_spheres,
+                    group=self._GROUP_CALCULATE,
+                    category='structure',
+                    icon='run-build-clean.svg',
+                )
+
             if status in stage_names:
                 scf_label = "Continue SCF"
                 scf_description = f"Resume from {stage_names[status]} using the current potential"
@@ -604,9 +640,9 @@ class WorkflowWindow(QMainWindow):
 
         if converged or (status is not None and status != "START"):
             self._add_action(
-                "Recalculate SCF",
-                "Discard SCF progress and calculate again from the initial state",
-                self._recalculate_scf,
+                "Use for New Calculation",
+                "Keep the current potential as starting density for a new SCF sequence",
+                self._use_for_new_calculation,
                 group=self._GROUP_DIFFERENT,
                 category='destructive',
                 icon='run-build-clean.svg',
@@ -682,58 +718,24 @@ class WorkflowWindow(QMainWindow):
         )
 
     def _prepare_task(self, task: str) -> None:
-        try:
-            if not self.workspace.directory and not self._choose_working_directory(
-                title="Choose the directory for this calculation"
-            ):
-                return
-            snapshot = wait_for_structure(
-                self,
-                partial(
-                    self.controller.read_structure,
-                    _copy_optional_atoms,
-                    reason="reading the structure for the task editor",
-                ),
-            )
-            if isinstance(snapshot, Busy):
-                return
-            generation, atoms = snapshot
-            if atoms is None:
-                QMessageBox.information(
-                    self,
-                    "No Structure",
-                    "Load or create a structure first.",
-                )
-                return
-            parameters = select_guided_input_parameters(
-                task,
-                parent=self,
-                atoms=atoms,
-            )
-            if parameters is None:
-                return
-            completed = document_change_applied(
-                self,
-                self.controller.replace_input_parameters(
-                    parameters,
-                    expected_generation=generation,
-                ),
-            )
-            if not completed:
-                return
-            calculation_flow.run_calculation(
-                self.controller, self.recent_history, self.active_runs, self
-            )
-        except (ImportError, ModuleNotFoundError) as exc:
-            QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
-            return
+        calculation_flow.configure_and_run_task(
+            self.controller,
+            self.recent_history,
+            self.active_runs,
+            self,
+            task,
+        )
 
-    def _recalculate_scf(self) -> None:
+    def _update_empty_spheres(self) -> None:
+        structure_flows.update_empty_spheres(self.controller, self)
+
+    def _use_for_new_calculation(self) -> None:
         generation = self.controller.generation
         answer = QMessageBox.question(
             self,
-            "Recalculate SCF?",
-            "Really discard the current SCF convergence state and start again?",
+            "Use for New Calculation?",
+            "Keep the current potential as starting density, reset the SCF stage, "
+            "and use this structure for a new calculation?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -743,7 +745,7 @@ class WorkflowWindow(QMainWindow):
             change = wait_for_structure(
                 self,
                 partial(
-                    self.controller.restart_scf,
+                    self.controller.use_for_new_calculation,
                     expected_generation=generation,
                 ),
             )
@@ -752,10 +754,7 @@ class WorkflowWindow(QMainWindow):
             ):
                 return
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
-            return
-        self._refresh()
-        self._prepare_task("scf")
+            QMessageBox.critical(self, "Cannot Start New Calculation", str(exc))
 
     def _start_over(self) -> None:
         answer = QMessageBox.question(
@@ -768,6 +767,12 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         wait_for_structure(self, self.controller.reset)
+
+    def _visualize_structure(self) -> None:
+        visualization_flow.visualize_structure(self.controller, self.settings, self)
+
+    def _open_settings(self) -> None:
+        edit_settings(self.settings, self)
 
     def _open_expert_mode(self) -> None:
         self._open_expert()

@@ -48,6 +48,19 @@ def _show_potential_warning(
     )
 
 
+def _show_input_parameters_warning(
+    adoption: ResultAdoption, parent: QWidget
+) -> None:
+    if adoption.input_parameters_error is None:
+        return
+    QMessageBox.warning(
+        parent,
+        "Input Parameters Load Warning",
+        "The result was loaded, but its input parameters could not be loaded:\n"
+        f"{adoption.input_parameters_error}",
+    )
+
+
 def choose_and_load_structure(
     controller: WorkspaceController,
     recent_files: RecentFiles,
@@ -194,6 +207,7 @@ def load_output(
         return False
     recent_files.remember("output", file_path)
     _show_potential_warning(adoption, parent)
+    _show_input_parameters_warning(adoption, parent)
     return True
 
 
@@ -222,19 +236,20 @@ def save_structure(
     if match and not file_path.lower().endswith(f".{match.group(1)}"):
         file_path += f".{match.group(1)}"
 
-    def write_structure() -> None:
-        atoms = controller.workspace.atoms
+    path = Path(file_path).resolve()
+
+    def write_structure(atoms) -> None:
         if atoms is None:
             raise ValueError("No structure is loaded.")
-        ase_write(Path(file_path).resolve(), atoms)
+        ase_write(path, atoms)
 
     try:
         outcome = wait_for_structure(
             parent,
             partial(
-                controller.structure_gate.try_call,
-                "saving the structure",
+                controller.access_structure,
                 write_structure,
+                reason="saving the structure",
             ),
         )
     except Exception as exc:  # noqa: BLE001 - backend writers vary
