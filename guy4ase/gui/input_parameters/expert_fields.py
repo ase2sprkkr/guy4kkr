@@ -18,6 +18,7 @@ class ExpertFieldSpec:
     """Select a registered editor and its expert-tree presentation."""
 
     editor: str
+    small_editor: str | None = None
     label: str | None = None
     related_paths: tuple[InputParameterPath, ...] = ()
     type_label: str | None = None
@@ -28,12 +29,14 @@ class ExpertFieldSpec:
         self,
         path: InputParameterPath,
         default_label: str,
+        *,
+        editor: str | None = None,
     ) -> FieldPlacement:
         """Create the ordinary editor placement consumed by the registry."""
         return FieldPlacement(
             path,
             self.label or default_label,
-            editor=self.editor,
+            editor=editor or self.editor,
             minimum=self.minimum,
             related_paths=self.related_paths,
         )
@@ -58,10 +61,12 @@ EXPERT_FIELDS: Mapping[InputParameterPath, ExpertFieldSpec] = MappingProxyType({
     ),
     ('MODE', 'C'): ExpertFieldSpec(
         editor='scaling',
+        small_editor='auto',
         minimum_width=280,
     ),
     ('MODE', 'SOC'): ExpertFieldSpec(
         editor='scaling',
+        small_editor='auto',
         minimum_width=280,
     ),
 })

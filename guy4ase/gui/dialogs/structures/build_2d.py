@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -225,7 +226,7 @@ class Build2DStructureDialog(QDialog):
         if not file_path:
             return
         try:
-            self._set_right_atoms(ase_read(file_path))
+            self._set_right_atoms(ase_read(Path(file_path).resolve()))
         except Exception as e:
             self._set_status(f"Failed to load right structure: {str(e)}", error=True)
 

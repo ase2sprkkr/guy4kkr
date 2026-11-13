@@ -65,9 +65,9 @@ def _plain_literal(value: Any) -> Any:
 def _stringify_value(grammar_type: Any, value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
-    if isinstance(value, np.ndarray) and not isinstance(
-        grammar_type, (Array, SetOf, Table)
-    ):
+    if isinstance(grammar_type, (Array, SetOf)):
+        return repr(_plain_literal(value))
+    if isinstance(value, np.ndarray) and not isinstance(grammar_type, Table):
         return "<Data>"
     try:
         return str(grammar_type.string(value))
@@ -76,6 +76,14 @@ def _stringify_value(grammar_type: Any, value: Any, fallback: str = "") -> str:
             return str(value)
         except Exception:
             return fallback
+
+
+def _python_input_value(text: str) -> Any:
+    """Decode Python-like values, treating ase2sprkkr brace arrays as lists."""
+    node = ast.parse(text, mode="eval").body
+    if isinstance(node, ast.Set):
+        node = ast.fix_missing_locations(ast.List(elts=node.elts, ctx=ast.Load()))
+    return ast.literal_eval(ast.Expression(body=node))
 
 
 class _ScalarValueEditor(ParameterValueEditor):
@@ -298,14 +306,14 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
         *,
         nullable: bool,
         allow_empty: bool,
-        option: Any,
+        value_name: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._grammar_type = grammar_type
         self._nullable = nullable
         self._allow_empty = allow_empty
-        self._option = option
+        self._value_name = value_name
 
     literal = False
 
@@ -316,7 +324,7 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
             binding.value_type,
             nullable=binding.allows_unset,
             allow_empty=binding.allow_empty,
-            option=binding.option,
+            value_name=placement.label or "Value",
             parent=parent,
         )
         editor.setReadOnly(binding.read_only)
@@ -335,14 +343,15 @@ class TextEditor(QLineEdit, _ScalarValueEditor):
                 self._apply_value(None)
                 self._sync_display()
                 return
-            option_name = getattr(self._option, "name", "Value")
-            raise ValueError(f"{option_name} must have a value")
+            raise ValueError(f"{self._value_name} must have a value")
         if self.literal:
-            value = self._grammar_type.convert(ast.literal_eval(text))
-        elif isinstance(self._grammar_type, String):
-            value = self._grammar_type.convert(text)
+            value = ast.literal_eval(text)
         else:
-            value = self._grammar_type.parse(text)
+            try:
+                value = _python_input_value(text)
+            except (SyntaxError, ValueError):
+                value = text
+        value = self._grammar_type.convert(value)
         self._grammar_type.validate(value)
         self._apply_value(value)
         self._sync_display()

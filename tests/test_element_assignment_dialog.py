@@ -69,7 +69,7 @@ def test_cancel_does_not_apply_working_state_to_source():
     dialog.close()
 
 
-def test_accept_builds_result_from_model():
+def test_accept_returns_unapplied_draft():
     application = QApplication.instance() or QApplication([])
     dialog = ElementAssignmentDialog()
     dialog.setup(_atoms())
@@ -79,7 +79,9 @@ def test_accept_builds_result_from_model():
     application.processEvents()
 
     assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog._result is dialog._draft
+    result = dialog._result.apply()
     np.testing.assert_array_equal(
-        dialog._result.get_array("spacegroup_kinds"), (0, 1)
+        result.get_array("spacegroup_kinds"), (0, 1)
     )
     dialog.close()

@@ -13,12 +13,20 @@ from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 from guy4ase.gui.dialogs.guided_input import GuidedInputParametersDialog
 from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.single_site_contour import SingleSiteContourPlugin
 from guy4ase.gui.input_parameters.specs.schema import FieldRole
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 
 
 def _first(value):
     return value.flat[0] if isinstance(value, np.ndarray) else value
+
+
+def _contour_session(task):
+    return InputParametersSession(
+        InputParameters.create(task),
+        plugins=(SingleSiteContourPlugin(),),
+    )
 
 
 def test_session_undo_redo_and_content_based_modified_state():
@@ -460,18 +468,18 @@ def test_single_site_toggle_restores_clean_input_and_remembers_values(task, swit
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 def test_single_site_history_branch_does_not_reuse_future_cache(task):
     application = QApplication.instance() or QApplication([])
-    session = InputParametersSession(InputParameters.create(task))
+    session = _contour_session(task)
     flag = ("ENERGY", "SPLITSS")
     ne = ("ENERGY", "NE")
     original = int(session.value(ne)[0])
     session.set_value(flag, True)
     session.set_value(ne, [original, 87])
     session.set_value(flag, False)
-    assert session.single_site_value(ne) == 87
+    assert session.display_value(ne, 1) == 87
     for _ in range(3):
         session.undo_stack.undo()
     assert not session.is_modified()
-    assert session.single_site_value(ne) is None
+    assert session.display_value(ne, 1) is None
     session.set_value(flag, True)
     assert list(session.value(ne)) == [original, original]
     assert not session.undo_stack.canRedo()
@@ -481,7 +489,7 @@ def test_single_site_history_branch_does_not_reuse_future_cache(task):
 @pytest.mark.parametrize("task", ["scf", "bsf"])
 def test_forced_single_site_contour_stays_active_until_last_flag_is_off(task):
     application = QApplication.instance() or QApplication([])
-    session = InputParametersSession(InputParameters.create(task))
+    session = _contour_session(task)
     flag, force = ("ENERGY", "SPLITSS"), ("CONTROL", "FSOHFF")
     session.set_value(flag, True)
     session.set_value(force, True)
@@ -495,6 +503,47 @@ def test_forced_single_site_contour_stays_active_until_last_flag_is_off(task):
     session.undo_stack.undo()
     assert len(session.value(("ENERGY", "GRID"))) == 2
     application.processEvents()
+
+
+def test_compton_keeps_the_single_site_contour_without_a_switch(monkeypatch):
+    # ase2sprkkr does not yet ship a standalone COMPTON definition. Reuse an
+    # equivalent energy-bearing document and expose the task identity that the
+    # domain predicate is intentionally designed to support.
+    parameters = InputParameters.create("scf")
+    parameters.ENERGY.SPLITSS.set(True)
+    parameters.ENERGY.GRID.set([5, 3])
+    parameters.ENERGY.NE.set([32, 87])
+    monkeypatch.setattr(
+        InputParameters,
+        "task_name",
+        property(lambda _parameters: "COMPTON"),
+    )
+    session = InputParametersSession(
+        parameters,
+        plugins=(SingleSiteContourPlugin(),),
+    )
+
+    session.set_value(("ENERGY", "SPLITSS"), False)
+
+    assert session.working_parameters.uses_separate_single_site_contour()
+    assert list(session.value(("ENERGY", "GRID"))) == ["5", "3"]
+    assert list(session.value(("ENERGY", "NE"))) == [32, 87]
+
+
+def test_unrelated_edit_does_not_repair_incomplete_imported_split_contour():
+    parameters = InputParameters.create("scf")
+    parameters.ENERGY.SPLITSS.set(True)
+    parameters.ENERGY.GRID.set([5])
+    parameters.ENERGY.NE.set([32])
+    session = InputParametersSession(
+        parameters,
+        plugins=(SingleSiteContourPlugin(),),
+    )
+
+    session.set_value(("SCF", "NITER"), 201)
+
+    assert list(session.value(("ENERGY", "GRID"))) == ["5"]
+    assert list(session.value(("ENERGY", "NE"))) == [32]
 
 
 @pytest.mark.parametrize("task", ["scf", "bsf"])

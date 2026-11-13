@@ -7,9 +7,11 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QStyle,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
 )
 
@@ -32,6 +34,7 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         self.binding, self.path = binding, placement.path
         self._refreshing = False
         self._keys = []
+        self._value_columns = 1
         self.orbital_resolved = isinstance(binding.value_type, Array)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -50,9 +53,9 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
         self.add_button.setAutoDefault(False)
         self.add_button.clicked.connect(self.add_type)
         buttons.addWidget(self.add_button)
-        self.remove_button = QPushButton("Remove", self)
+        self.remove_button = QPushButton("Remove selected type", self)
         self.remove_button.setAutoDefault(False)
-        self.remove_button.clicked.connect(self.remove_type)
+        self.remove_button.clicked.connect(lambda _checked=False: self.remove_type())
         buttons.addWidget(self.remove_button)
         layout.addLayout(buttons)
         hint = QLabel("Global applies to all atomic types. Add type-specific settings using their potential-file indices.", self)
@@ -73,11 +76,22 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
                     columns = max(columns, int(np.max(self.binding.value_at(("SITES", "NL")))))
                 except (KeyError, TypeError, ValueError):
                     pass
-            self.table.setColumnCount(columns)
+            self._value_columns = columns
+            self.table.setColumnCount(columns + 1)
             orbitals = ("s", "p", "d", "f", "g", "h", "i")
-            self.table.setHorizontalHeaderLabels(
-                [orbitals[i] if i < len(orbitals) else f"l={i}" for i in range(columns)]
-                if self.orbital_resolved else ["Scale (all orbitals)"])
+            value_headers = (
+                [
+                    orbitals[i] if i < len(orbitals) else f"l={i}"
+                    for i in range(columns)
+                ]
+                if self.orbital_resolved
+                else ["Scale (all orbitals)"]
+            )
+            self.table.setHorizontalHeaderLabels([*value_headers, ""])
+            self.table.horizontalHeader().setSectionResizeMode(
+                columns,
+                QHeaderView.ResizeMode.ResizeToContents,
+            )
             self.table.setRowCount(len(self._keys))
             self.table.setVerticalHeaderLabels(["Global" if key == "def" else f"Type {key}" for key in self._keys])
             for row, key in enumerate(self._keys):
@@ -88,6 +102,21 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
                     item.setData(Qt.ItemDataRole.EditRole, number)
                     item.setToolTip(f"{self.path[-1]}{'' if key == 'def' else key}: {number!r}")
                     self.table.setItem(row, column, item)
+                if key != "def":
+                    remove = QToolButton(self.table)
+                    remove.setAutoRaise(True)
+                    remove.setIcon(self.style().standardIcon(
+                        QStyle.StandardPixmap.SP_DialogCloseButton
+                    ))
+                    remove.setToolTip(f"Remove type {key}")
+                    remove.setAccessibleName(
+                        f"Remove {self.path[-1]} value for type {key}"
+                    )
+                    remove.clicked.connect(
+                        lambda _checked=False, type_index=key:
+                            self.remove_type(type_index)
+                    )
+                    self.table.setCellWidget(row, columns, remove)
             fit_table_height(self.table)
             index = 1
             while index in values:
@@ -105,8 +134,14 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
             # absent global defaults and short arrays.
             values = dict(self.binding.read().value or {})
             for row, key in enumerate(self._keys):
-                cells = [coordinate_value(self.table.item(row, column).data(Qt.ItemDataRole.EditRole))
-                         for column in range(self.table.columnCount())]
+                cells = [
+                    coordinate_value(
+                        self.table.item(row, column).data(
+                            Qt.ItemDataRole.EditRole
+                        )
+                    )
+                    for column in range(self._value_columns)
+                ]
                 previous = np.atleast_1d(values.get(key, 1.0))
                 if any(value != previous[min(i, len(previous) - 1)] for i, value in enumerate(cells)):
                     values[key] = cells if self.orbital_resolved else cells[0]
@@ -130,19 +165,24 @@ class RelativisticScalingEditor(ParameterValueEditorWidget):
                 values,
                 text=f"Add {self.path[-1]} for type {index}",
             )
+            self.refresh()
         self.table.setCurrentCell(self._keys.index(index), 0)
 
-    def remove_type(self):
+    def remove_type(self, index=None):
         """Remove the selected explicit override; the global row cannot be removed."""
-        row = self.table.currentRow()
-        if row <= 0:
-            return
+        if index is None:
+            row = self.table.currentRow()
+            if row <= 0:
+                return
+            index = self._keys[row]
         values = dict(self.binding.read().value or {})
-        index = self._keys[row]
+        if index not in values:
+            return
         del values[index]
         self.binding.set_path_value(
             self.path,
             values,
             text=f"Remove {self.path[-1]} for type {index}",
         )
+        self.refresh()
         self.validationChanged.emit("")

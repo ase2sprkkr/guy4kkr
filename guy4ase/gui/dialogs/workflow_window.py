@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QAction, QColor, QIcon, QPalette
+from PyQt6.QtCore import QSize, Qt, QUrl
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPalette
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -22,10 +24,21 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.flows.operations import GuiOperations
+from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
+from guy4ase.gui.dialogs.guided_input import select_guided_input_parameters
+from guy4ase.gui.dialogs.object_view import execute_value_action
+from guy4ase.gui.flows import calculation as calculation_flow
+from guy4ase.gui.flows import files as file_flows
+from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
 from guy4ase.gui.misc.resources import icon_path
+from guy4ase.gui.misc.structure_wait import (
+    document_change_applied,
+    wait_for_structure,
+)
 from guy4ase.gui.style import (
     SPACE_LG,
     SPACE_SM,
@@ -39,7 +52,10 @@ from guy4ase.gui.style import (
     secondary_text_stylesheet,
 )
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
-from guy4ase.physics.lattice import detect_structure_kind
+
+
+def _copy_optional_atoms(atoms: Any) -> Any:
+    return None if atoms is None else atoms.copy()
 
 
 def _set_action_button_content(
@@ -116,22 +132,31 @@ class WorkflowWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        operations: GuiOperations,
+        active_runs: ActiveRunRegistry,
         *,
         open_expert: Callable[[], None],
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Workflow")
-        self.resize(980, 680)
+        manage_window_geometry(
+            self, "workflow", default_size=(1120, 700)
+        )
         self.controller = controller
         self.workspace = self.controller.workspace
+        self._structure_access = QtStructureAccess(
+            self.controller.structure_gate, self
+        )
         self.recent_history = recent_files
-        self.operations = operations
+        self.active_runs = active_runs
         self._open_expert = open_expert
         self.controller.structureChanged.connect(self._on_structure_changed)
+        self.controller.directoryChanged.connect(
+            lambda _directory: self._refresh_working_directory()
+        )
         self.controller.resultChanged.connect(lambda _result: self._refresh())
-        self.operations.recentFilesChanged.connect(self._refresh)
+        self.recent_history.changed.connect(self._refresh)
         self._build_ui()
+        self._refresh_working_directory()
         self._refresh()
 
     def _build_ui(self) -> None:
@@ -178,6 +203,65 @@ class WorkflowWindow(QMainWindow):
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(SPACE_SM)
 
+        working_directory = QWidget(side)
+        working_directory.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        working_directory_layout = QVBoxLayout(working_directory)
+        working_directory_layout.setContentsMargins(0, 0, 0, 0)
+        working_directory_layout.setSpacing(SPACE_XS)
+        working_directory_title = QLabel("Working directory", working_directory)
+        working_directory_title.setFont(
+            heading_font(working_directory_title.font(), "section")
+        )
+        working_directory_layout.addWidget(working_directory_title)
+
+        directory_row = QHBoxLayout()
+        directory_row.setContentsMargins(0, 0, 0, 0)
+        directory_row.setSpacing(SPACE_XS)
+        self._working_directory_label = QLabel(working_directory)
+        self._working_directory_label.setWordWrap(False)
+        self._working_directory_label.setMinimumWidth(0)
+        self._working_directory_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._working_directory_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        directory_row.addWidget(self._working_directory_label, 1)
+
+        change_directory = QToolButton(working_directory)
+        change_directory.setIcon(
+            QIcon.fromTheme(
+                "document-open",
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            )
+        )
+        change_directory.setToolTip("Change working directory")
+        change_directory.setAccessibleName("Change working directory")
+        change_directory.clicked.connect(self._choose_working_directory)
+        directory_row.addWidget(change_directory)
+
+        self._browse_working_directory_button = QToolButton(working_directory)
+        self._browse_working_directory_button.setIcon(
+            QIcon.fromTheme(
+                "system-file-manager",
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            )
+        )
+        self._browse_working_directory_button.setToolTip(
+            "Open working directory in file manager"
+        )
+        self._browse_working_directory_button.setAccessibleName(
+            "Open working directory in file manager"
+        )
+        self._browse_working_directory_button.clicked.connect(
+            self._browse_working_directory
+        )
+        directory_row.addWidget(self._browse_working_directory_button)
+        working_directory_layout.addLayout(directory_row)
+        side_layout.addWidget(working_directory)
+
         self._result_actions = QWidget(side)
         result_actions_layout = QVBoxLayout(self._result_actions)
         result_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -188,9 +272,7 @@ class WorkflowWindow(QMainWindow):
         )
         result_actions_layout.addWidget(result_actions_title)
         self._result_actions_widget = ResultActionsWidget(
-            lambda value, action: self.operations.execute_output_value_action(
-                value, action, self
-            ),
+            lambda value, action: execute_value_action(value, action, self),
             show_values_without_actions=False,
             parent=self._result_actions,
         )
@@ -264,6 +346,41 @@ class WorkflowWindow(QMainWindow):
         self._actions_layout.insertWidget(position, group)
         self._action_group_layouts[title] = layout
         return layout
+
+    def _refresh_working_directory(self) -> None:
+        directory = self.workspace.directory
+        self._working_directory_label.setText(directory or "(not defined)")
+        self._working_directory_label.setToolTip(directory or "")
+        self._browse_working_directory_button.setEnabled(bool(directory))
+
+    def _choose_working_directory(
+        self,
+        _checked: bool = False,
+        *,
+        title: str = "Select Calculation Directory",
+    ) -> bool:
+        start_directory = self.workspace.directory or str(Path.home())
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            title,
+            start_directory,
+        )
+        if not directory:
+            return False
+        self.controller.change_directory(str(directory))
+        return True
+
+    def _browse_working_directory(self) -> None:
+        directory = self.workspace.directory
+        if not directory:
+            return
+        path = Path(directory).expanduser().resolve()
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(
+                self,
+                "Cannot Open Directory",
+                f"Could not open the working directory in the system file manager:\n{path}",
+            )
 
     def _refresh_result_actions(self) -> None:
         result = self.workspace.result
@@ -382,6 +499,12 @@ class WorkflowWindow(QMainWindow):
         self._action_group(self._GROUP_LOAD).addWidget(button)
 
     def _refresh(self) -> None:
+        self._structure_access.retry(
+            self._refresh_locked,
+            reason="refreshing the workflow overview",
+        )
+
+    def _refresh_locked(self) -> None:
         self._clear_actions()
         self._refresh_result_actions()
         atoms = self.workspace.atoms
@@ -423,19 +546,27 @@ class WorkflowWindow(QMainWindow):
             return
 
         formula = atoms.get_chemical_formula()
-        structure_kind = detect_structure_kind(atoms)
-        status = self._scf_status(atoms)
+        structure_kind = self.workspace.structure_kind()
+        status = self.workspace.scf_status()
+        converged = self.workspace.is_scf_converged()
         stage_names = {
+            "ITR": "iterating SCF",
+            "ITR-BULK": "converging bulk",
             "ITR-L-BULK": "converging left bulk",
             "ITR-R-BULK": "converging right bulk",
             "ITR-I-ZONE": "converging interaction zone",
         }
-        status_text = stage_names.get(status, status if status is not None else "not converged")
+        status_text = (
+            "CONVERGED"
+            if converged
+            else stage_names.get(
+                status, status if status is not None else "not converged"
+            )
+        )
         self._subtitle.setText(f"Current structure: {formula}  •  SCF status: {status_text}")
 
-        if not self._is_converged(status):
-            intermediate_2d = status in {"ITR-L-BULK", "ITR-R-BULK", "ITR-I-ZONE"}
-            if intermediate_2d:
+        if not converged:
+            if status in stage_names:
                 scf_label = "Continue SCF"
                 scf_description = f"Resume from {stage_names[status]} using the current potential"
             else:
@@ -454,7 +585,7 @@ class WorkflowWindow(QMainWindow):
                 icon='system-run.svg',
             )
 
-        if self._is_converged(status):
+        if converged:
             for task, label, description in (
                 ("xas", "Calculate XAS", "X-ray absorption spectroscopy"),
                 ("arpes", "Calculate ARPES", "Angle-resolved photoemission spectroscopy"),
@@ -471,7 +602,7 @@ class WorkflowWindow(QMainWindow):
                     icon='system-run.svg',
                 )
 
-        if status is not None and status != "START":
+        if converged or (status is not None and status != "START"):
             self._add_action(
                 "Recalculate SCF",
                 "Discard SCF progress and calculate again from the initial state",
@@ -506,48 +637,99 @@ class WorkflowWindow(QMainWindow):
         self._refresh()
 
     def _create_3d(self) -> None:
-        self.operations.create_structure(self)
+        structure_flows.create_structure(self.controller, self)
 
     def _create_from_database(self) -> None:
-        self.operations.create_structure_from_database(self)
+        structure_flows.create_structure_from_database(self.controller, self)
 
     def _download_structure(self) -> None:
-        self.operations.download_structure(self)
+        structure_flows.download_structure(self.controller, self)
 
     def _create_surface(self) -> None:
-        self.operations.create_structure(self)
-        if self.workspace.atoms is not None:
+        atoms = structure_flows.create_structure(self.controller, self)
+        if atoms is not None:
             self._build_2d(surface_mode=True)
 
     def _create_transition(self) -> None:
-        self.operations.create_structure(self)
-        if self.workspace.atoms is not None:
+        atoms = structure_flows.create_structure(self.controller, self)
+        if atoms is not None:
             self._build_2d(surface_mode=False)
 
     def _load_structure(self) -> None:
-        self.operations.choose_structure(self)
+        file_flows.choose_and_load_structure(
+            self.controller, self.recent_history, self
+        )
 
     def _load_output(self) -> None:
-        self.operations.choose_output(self)
+        file_flows.choose_and_load_output(
+            self.controller, self.recent_history, self
+        )
 
     def _load_recent(self, kind: RecentKind, file_path: str) -> None:
-        self.operations.open_recent(kind, file_path, self)
+        file_flows.open_recent(
+            self.controller,
+            self.recent_history,
+            kind,
+            file_path,
+            self,
+        )
         if self.workspace.atoms is None:
             self._refresh()
 
     def _build_2d(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        self.operations.build_2d_structure(
-            self, surface_mode=surface_mode
+        structure_flows.build_2d_structure(
+            self.controller, self, surface_mode=surface_mode
         )
 
     def _prepare_task(self, task: str) -> None:
         try:
-            self.operations.prepare_guided_task(task, self)
+            if not self.workspace.directory and not self._choose_working_directory(
+                title="Choose the directory for this calculation"
+            ):
+                return
+            snapshot = wait_for_structure(
+                self,
+                partial(
+                    self.controller.read_structure,
+                    _copy_optional_atoms,
+                    reason="reading the structure for the task editor",
+                ),
+            )
+            if isinstance(snapshot, Busy):
+                return
+            generation, atoms = snapshot
+            if atoms is None:
+                QMessageBox.information(
+                    self,
+                    "No Structure",
+                    "Load or create a structure first.",
+                )
+                return
+            parameters = select_guided_input_parameters(
+                task,
+                parent=self,
+                atoms=atoms,
+            )
+            if parameters is None:
+                return
+            completed = document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    parameters,
+                    expected_generation=generation,
+                ),
+            )
+            if not completed:
+                return
+            calculation_flow.run_calculation(
+                self.controller, self.recent_history, self.active_runs, self
+            )
         except (ImportError, ModuleNotFoundError) as exc:
             QMessageBox.critical(self, "Task Unavailable", f"The {task.upper()} task is not available:\n{exc}")
             return
 
     def _recalculate_scf(self) -> None:
+        generation = self.controller.generation
         answer = QMessageBox.question(
             self,
             "Recalculate SCF?",
@@ -558,7 +740,17 @@ class WorkflowWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self.controller.restart_scf()
+            change = wait_for_structure(
+                self,
+                partial(
+                    self.controller.restart_scf,
+                    expected_generation=generation,
+                ),
+            )
+            if isinstance(change, Busy) or not document_change_applied(
+                self, change
+            ):
+                return
         except Exception as exc:
             QMessageBox.critical(self, "Cannot Reset SCF", str(exc))
             return
@@ -575,20 +767,7 @@ class WorkflowWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.controller.reset()
+        wait_for_structure(self, self.controller.reset)
 
     def _open_expert_mode(self) -> None:
         self._open_expert()
-
-    @staticmethod
-    def _scf_status(atoms: Any) -> Optional[str]:
-        try:
-            if hasattr(atoms, "has_potential") and atoms.has_potential():
-                return str(atoms.potential.SCF_INFO.SCFSTATUS()).strip().upper()
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _is_converged(status: Optional[str]) -> bool:
-        return status in {"CONVERGED", "SCF-CONVERGED", "DONE", "FINISHED"}

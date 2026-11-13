@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import re
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ase.io import write as ase_write
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QEvent, Qt
@@ -30,22 +29,37 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
+from guy4ase.ase.element_assignment import ElementAssignmentDraft
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles, RecentKind
-from guy4ase.gui.application.workspace_controller import WorkspaceController
+from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.application.workspace_controller import Busy, WorkspaceController
 from guy4ase.gui.dialogs.expert_input import (
     edit_input_parameters,
     select_input_parameters,
 )
+from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
 from guy4ase.gui.dialogs.structures.transforms import (
     repeat_atoms,
     rotate_atoms,
     scale_atoms,
 )
-from guy4ase.gui.flows.operations import GuiOperations
+from guy4ase.gui.flows import calculation as calculation_flow
+from guy4ase.gui.flows import files as file_flows
+from guy4ase.gui.flows import structures as structure_flows
+from guy4ase.gui.misc.qt_structure_access import QtStructureAccess
+from guy4ase.gui.misc.structure_wait import (
+    document_change_applied,
+    wait_for_structure,
+)
 from guy4ase.gui.plots.lattice import plot_atoms_preview
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
+from guy4ase.physics.composition import site_composition, structure_formula
+
+
+def _copy_optional_atoms(atoms: Any) -> Any:
+    return None if atoms is None else atoms.copy()
 
 
 class MainWindow(QMainWindow):
@@ -55,16 +69,24 @@ class MainWindow(QMainWindow):
         self,
         controller: WorkspaceController,
         recent_files: RecentFiles,
-        operations: GuiOperations,
+        active_runs: ActiveRunRegistry,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
-        self.resize(1400, 800)
+        manage_window_geometry(
+            self,
+            "structure-manager",
+            default_size=(1400, 800),
+            default_maximized=True,
+        )
 
         self.controller = controller
         self.workspace = self.controller.workspace
+        self._structure_access = QtStructureAccess(
+            self.controller.structure_gate, self
+        )
         self.recent_history = recent_files
-        self.operations = operations
+        self.active_runs = active_runs
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -88,7 +110,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._connect_workspace()
-        self.operations.recentFilesChanged.connect(self._refresh_recent_menus)
+        self.recent_history.changed.connect(self._refresh_recent_menus)
         self._refresh_recent_menus()
         self._workspace_structure_changed(self.workspace.atoms)
         self._workspace_input_parameters_changed(
@@ -112,13 +134,24 @@ class MainWindow(QMainWindow):
             lambda _result: self._refresh_result_panel()
         )
 
-    def _workspace_structure_changed(self, atoms: Any) -> None:
+    def _workspace_structure_changed(self, _atoms: Any) -> None:
+        self._structure_access.retry(
+            self._workspace_structure_changed_locked,
+            reason="refreshing the structure view",
+        )
+
+    def _workspace_structure_changed_locked(self) -> None:
+        atoms = self.workspace.atoms
         self._update_potential_path_label()
         self._update_structure_view()
         self._enable_actions(atoms is not None)
         self._update_input_params_preview()
 
-    def _workspace_input_parameters_changed(self, parameters: Any) -> None:
+    def _workspace_input_parameters_changed(self, _parameters: Any) -> None:
+        self._refresh_input_parameters()
+
+    def _refresh_input_parameters(self) -> None:
+        parameters = self.workspace.input_parameters
         self._update_input_params_preview()
         self.enable_run_calculation()
         self.create_input_btn.setText(
@@ -128,6 +161,9 @@ class MainWindow(QMainWindow):
         )
 
     def _workspace_directory_changed(self) -> None:
+        self._refresh_directory()
+
+    def _refresh_directory(self) -> None:
         self._update_directory_label()
         self.enable_run_calculation()
 
@@ -169,7 +205,7 @@ class MainWindow(QMainWindow):
         chosen = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
         if not chosen:
             return
-        self.controller.set_directory(str(chosen))
+        self.controller.change_directory(str(chosen))
 
     def _refresh_recent_menu(self, what: RecentKind) -> None:
         handlers = {
@@ -200,7 +236,13 @@ class MainWindow(QMainWindow):
 
     def open_recent_file(self, kind: RecentKind, file_path: str) -> None:
         """Open a persisted recent file through the shared GUI workflow."""
-        self.operations.open_recent(kind, file_path, self)
+        file_flows.open_recent(
+            self.controller,
+            self.recent_history,
+            kind,
+            file_path,
+            self,
+        )
 
     def _refresh_recent_start_button(self) -> None:
         btn = self._recent_start_button
@@ -658,7 +700,7 @@ class MainWindow(QMainWindow):
         self._result_group = QGroupBox("Calculation Result")
         result_layout = QVBoxLayout(self._result_group)
         self._result_actions_widget = ResultActionsWidget(
-            self.execute_output_value_action,
+            lambda value, action: execute_value_action(value, action, self),
             show_values_without_actions=True,
             parent=self._result_group,
         )
@@ -667,65 +709,52 @@ class MainWindow(QMainWindow):
 
     def create_structure(self) -> None:
         """Start the shared structure-creation workflow."""
-        self.operations.create_structure(self)
+        structure_flows.create_structure(self.controller, self)
 
     def create_structure_from_database(self) -> None:
         """Create a structure from a database prototype using shared editors."""
-        self.operations.create_structure_from_database(self)
+        structure_flows.create_structure_from_database(self.controller, self)
 
     def load_structure(self) -> None:
         """Start the shared structure-loading workflow."""
-        self.operations.choose_structure(self)
+        file_flows.choose_and_load_structure(
+            self.controller, self.recent_history, self
+        )
 
     def download_structure(self) -> None:
         """Download a structure from a configured online provider."""
-        self.operations.download_structure(self)
+        structure_flows.download_structure(self.controller, self)
 
     def _on_save_structure(self) -> None:
         """Save current structure to file."""
-        if self.workspace.atoms is None:
-            return
-
-        from ase.io.formats import ioformats
-        exts = {
-            " ".join(f"*.{ext}" for ext in (fmt.extensions)) : fmt.name
-            for fmt in ioformats.values() if fmt.extensions
-        }
-        exts["*"] = "All Files"
-
-        file_path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Save Structure File",
-            "",
-            ";;".join(f"{v} ({k})" for k, v in exts.items())
+        file_flows.save_structure(
+            self.controller, self.recent_history, self
         )
-
-        if file_path:
-            # Extract the extension from the selected filter
-            import re
-            match = re.search(r"\*\.(\w+)", selected_filter)
-            if match:
-                ext = match.group(1)
-                if not file_path.lower().endswith("." + ext):
-                    file_path += "." + ext
-            try:
-                ase_write(file_path, self.workspace.atoms)
-                self.operations.remember_recent('structure', file_path)
-            except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Failed to save structure:\n{e!s}")
 
     def _on_create_sprkkr_input(self, task: str = "scf") -> None:
         # QPushButton.clicked passes a bool; retain SCF as the expert-mode default.
         if not isinstance(task, str):
             task = "scf"
-        params = select_input_parameters(self.workspace.atoms, parent=self, task=task)
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        params = select_input_parameters(atoms, parent=self, task=task)
         if params is None:
             return
-        self.controller.set_input_parameters(params)
-
-    def prepare_guided_task(self, task: str) -> None:
-        """Configure and start the shared guided task workflow."""
-        self.operations.prepare_guided_task(task, self)
+        document_change_applied(
+            self,
+            self.controller.replace_input_parameters(
+                params, expected_generation=generation
+            ),
+        )
 
     def _on_input_preview_double_click(self, event) -> None:
         self._on_edit_sprkkr_input()
@@ -737,61 +766,82 @@ class MainWindow(QMainWindow):
         if self.workspace.input_parameters is None:
             self._on_create_sprkkr_input()
             return
-        result = edit_input_parameters(self.workspace.input_parameters, parent=self, atoms=self.workspace.atoms)
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        parameters = self.workspace.input_parameters
+        if parameters is None:
+            return
+        parameters = parameters.copy(copy_values=True)
+        result = edit_input_parameters(
+            parameters, parent=self, atoms=atoms
+        )
         if result is not None:
-            self.controller.set_input_parameters(result)
+            document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    result, expected_generation=generation
+                ),
+            )
 
     def _on_load_sprkkr_input(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Input File",
-            "",
-            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
+        loaded = file_flows.choose_and_load_input_parameters(
+            self.controller, self.recent_history, self
         )
-        if file_path:
-            if self.operations.load_input(file_path, self) and self.workspace.input_parameters is not None:
-                candidate = self.workspace.input_parameters.copy(copy_values=True)
-                edited = edit_input_parameters(candidate, parent=self, show_changed_only=True, atoms=self.workspace.atoms)
-                if edited is not None:
-                    self.controller.set_input_parameters(edited)
+        if not loaded or self.workspace.input_parameters is None:
+            return
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for the imported parameter editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, atoms = snapshot
+        candidate = self.workspace.input_parameters
+        if candidate is None:
+            return
+        candidate = candidate.copy(copy_values=True)
+        edited = edit_input_parameters(
+            candidate,
+            parent=self,
+            show_changed_only=True,
+            atoms=atoms,
+        )
+        if edited is not None:
+            document_change_applied(
+                self,
+                self.controller.replace_input_parameters(
+                    edited, expected_generation=generation
+                ),
+            )
 
     def load_sprkkr_output(self) -> None:
         """Start the shared output-loading workflow."""
-        self.operations.choose_output(self)
+        file_flows.choose_and_load_output(
+            self.controller, self.recent_history, self
+        )
 
     def _on_save_sprkkr_input(self) -> None:
-        if self.workspace.input_parameters is None:
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Input File",
-            "",
-            "SPRKKR Input Files (*.inp *.in *.txt);;All Files (*)"
+        file_flows.save_input_parameters(
+            self.controller, self.recent_history, self
         )
-        if not file_path:
-            return
-
-        try:
-            self.workspace.input_parameters.to_file(file_path)
-            self.operations.remember_recent('input', file_path)
-        except Exception as e:
-            QMessageBox.critical(self, "Save Error", f"Failed to save input parameters:\n{e!s}")
 
     def _on_run_sprkkr_calculation(self) -> None:
         """Start the shared calculation workflow."""
-        self.operations.run_calculation(self)
-
-    def execute_output_value_action(
-        self,
-        value: Any,
-        action: str,
-        *,
-        parent: Optional[QWidget] = None,
-    ) -> None:
-        """Delegate an advertised result action to the shared workflow."""
-        self.operations.execute_output_value_action(
-            value, action, parent or self
+        calculation_flow.run_calculation(
+            self.controller, self.recent_history, self.active_runs, self
         )
 
     def _refresh_result_panel(self) -> None:
@@ -837,6 +887,7 @@ class MainWindow(QMainWindow):
         if self._left_stack is not None:
             self._left_stack.setCurrentWidget(self.welcome_widget)
         self._site_colors = {}
+        self.converged_label.setText("")
 
         for lbl in self.lattice_labels.values():
             lbl.setText("–")
@@ -851,68 +902,105 @@ class MainWindow(QMainWindow):
         self._update_input_params_preview()
 
     def _on_positions_table_hovered(self, row: int, column: int) -> None:
-        if self.workspace.atoms is None:
-            return
-        if row < 0 or row >= len(self.workspace.atoms):
-            return
-        if self._hovered_atom_index == row:
-            return
-        self._hovered_atom_index = row
-        self._update_visualization()
+        def update() -> None:
+            if self.workspace.atoms is None:
+                return
+            if row < 0 or row >= len(self.workspace.atoms):
+                return
+            if self._hovered_atom_index == row:
+                return
+            self._hovered_atom_index = row
+            self._update_visualization()
+
+        self._structure_access.retry(
+            update, reason="highlighting an atom"
+        )
 
     def _on_assign_elements(self) -> None:
         if self.workspace.atoms is None:
             return
-
-        result = select_site_elements(self.workspace.atoms, parent=self, back=False)
+        draft_result = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                ElementAssignmentDraft,
+                reason="reading the structure for element assignment",
+            ),
+        )
+        if isinstance(draft_result, Busy):
+            return
+        generation, draft = draft_result
+        result = select_site_elements(
+            draft, parent=self, back=False, apply=False
+        )
         if isinstance(result, str):
             return
         if result is None:
             return
-        self.controller.set_structure(result)
+        def apply_draft(_atoms: Any) -> Any:
+            return result.apply()
+
+        change = wait_for_structure(
+            self,
+            partial(
+                self.controller.apply_structure_edit,
+                apply_draft,
+                expected_generation=generation,
+            ),
+        )
+        if not isinstance(change, Busy):
+            document_change_applied(self, change)
 
     def _on_scale_structure(self) -> None:
-        if self.workspace.atoms is None:
-            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
-            return
-
-        try:
-            atoms = scale_atoms(self.workspace.atoms, parent=self)
-            if atoms is None:
-                return
-            self.controller.set_structure(atoms)
-        except Exception as e:
-            QMessageBox.critical(self, "Scale Error", f"Failed to scale structure:\n{e!s}")
+        self._apply_structure_edit(scale_atoms, error_title="Scale Error")
 
     def _on_repeat_structure(self) -> None:
-        if self.workspace.atoms is None:
-            QMessageBox.information(self, "No Structure", "Load or create a structure first.")
-            return
-
-        try:
-            atoms = repeat_atoms(self.workspace.atoms, parent=self)
-            if atoms is None:
-                return
-            self.controller.set_structure(atoms)
-        except Exception as e:
-            QMessageBox.critical(self, "Repeat Error", f"Failed to repeat structure:\n{e!s}")
+        self._apply_structure_edit(repeat_atoms, error_title="Repeat Error")
 
     def _on_rotate_structure(self) -> None:
-        if self.workspace.atoms is None:
+        self._apply_structure_edit(rotate_atoms, error_title="Rotate Error")
+
+    def _apply_structure_edit(self, editor, *, error_title: str) -> None:
+        """Apply one expert-window modal structure transformation."""
+        snapshot = wait_for_structure(
+            self,
+            partial(
+                self.controller.read_structure,
+                _copy_optional_atoms,
+                reason="reading the structure for an editor",
+            ),
+        )
+        if isinstance(snapshot, Busy):
+            return
+        generation, source = snapshot
+        if source is None:
             QMessageBox.information(self, "No Structure", "Load or create a structure first.")
             return
 
         try:
-            atoms = rotate_atoms(self.workspace.atoms, parent=self)
+            atoms = editor(source, parent=self)
             if atoms is None:
                 return
-            self.controller.set_structure(atoms)
+            change = wait_for_structure(
+                self,
+                partial(
+                    self.controller.replace_structure,
+                    atoms,
+                    expected_generation=generation,
+                ),
+            )
+            if not isinstance(change, Busy):
+                document_change_applied(self, change)
         except Exception as e:
-            QMessageBox.critical(self, "Rotate Error", f"Failed to rotate structure:\n{e!s}")
+            QMessageBox.critical(
+                self,
+                error_title,
+                f"Failed to edit structure:\n{e!s}",
+            )
 
     def build_2d_structure(self, _checked: bool = False, *, surface_mode: bool = False) -> None:
-        self.operations.build_2d_structure(
-            self, surface_mode=surface_mode
+        structure_flows.build_2d_structure(
+            self.controller, self, surface_mode=surface_mode
         )
 
     def eventFilter(self, obj, event):  # type: ignore[override]
@@ -920,8 +1008,14 @@ class MainWindow(QMainWindow):
             if event.type() == QEvent.Type.Leave:
                 if self._hovered_atom_index is not None:
                     self._hovered_atom_index = None
-                    self._update_visualization()
+                    self._update_visualization_nonblocking()
         return super().eventFilter(obj, event)
+
+    def _update_visualization_nonblocking(self) -> None:
+        self._structure_access.retry(
+            self._update_visualization,
+            reason="refreshing the structure visualization",
+        )
 
     def _update_visualization(self) -> None:
         """Update 3D visualization of the structure."""
@@ -969,7 +1063,6 @@ class MainWindow(QMainWindow):
         arrays = getattr(self.workspace.atoms, 'arrays', {})
         empty = [None] * len(symbols)
         kinds = arrays.get('spacegroup_kinds', empty)
-        occs = self.workspace.atoms.info.get('occupancy', {})
         labels = arrays.get('labels', empty)
         color_lookup = self._site_colors
         self.positions_table.setRowCount(len(positions))
@@ -984,8 +1077,7 @@ class MainWindow(QMainWindow):
                     counter[sym] = 1
                 label = f"{sym}.{counter[sym]}"
 
-            occ = occs.get(str(kinds[i]), None) if kind is not None else None
-            comp_text = self._format_site_composition(occ) or sym
+            comp_text = site_composition(self.workspace.atoms, i)
 
             item_site = QTableWidgetItem(label)
             item_comp = QTableWidgetItem(comp_text)
@@ -1016,89 +1108,19 @@ class MainWindow(QMainWindow):
 
     def _update_info_label(self) -> None:
         """Update structure information label."""
-        if self.workspace.atoms is None:
+        atoms = self.workspace.atoms
+        if atoms is None:
             return
-        if self.workspace.atoms and hasattr(self.workspace.atoms, 'has_potential') and \
-            self.workspace.atoms.has_potential():
-                status = self.workspace.atoms.potential.SCF_INFO.SCFSTATUS()
-                if status != 'START':
-                    self.converged_label.setText(f"SCF Status: {status}")
-        else:
-            self.converged_label.setText("")
+        status = self.workspace.scf_status()
+        status_text = ""
+        if self.workspace.is_scf_converged():
+            status_text = "SCF Status: CONVERGED"
+        elif status and status != "START":
+            status_text = f"SCF Status: {status}"
+        self.converged_label.setText(status_text)
 
-        n_atoms = len(self.workspace.atoms)
-        formula_raw = self.workspace.atoms.get_chemical_formula()
-        assigned_counts = self._collect_assigned_counts()
-
-        if assigned_counts:
-            formula_text = self._format_formula_from_counts(assigned_counts)
-            info_text = f"Assigned formula: {formula_text}\n"
-        else:
-            info_text = f"Formula: {formula_raw}\n"
-
+        n_atoms = len(atoms)
+        info_text = f"Formula: {structure_formula(atoms)}\n"
         info_text += f"Number of atoms: {n_atoms}\n"
 
-        info_text += "\nComposition:\n"
-        if assigned_counts:
-            for element, count in sorted(assigned_counts.items()):
-                info_text += f"  {element}: {count:.2f}\n"
-        else:
-            from collections import Counter
-            symbols = self.workspace.atoms.get_chemical_symbols()
-            species_count = Counter(symbols)
-            for element, count in sorted(species_count.items()):
-                info_text += f"  {element}: {count}\n"
-
         self.info_label.setText(info_text)
-
-    def _format_site_composition(self, occ_dict: Any) -> str:
-        if not isinstance(occ_dict, dict) or not occ_dict:
-            return None
-        parts = []
-        for species, value in occ_dict.items():
-            try:
-                val = float(value)
-            except Exception:
-                continue
-            if val <= 0.0:
-                continue
-            sym = re.sub(r'_\d+$', '', species)
-            parts.append(f"{sym}:{val:.2f}")
-        return ", ".join(parts) if parts else None
-
-    def _collect_assigned_counts(self) -> Dict[str, float]:
-        arrays = getattr(self.workspace.atoms, 'arrays', {}) if self.workspace.atoms is not None else {}
-        occs = arrays.get('occupancy') if 'occupancy' in arrays else None
-        counts: Dict[str, float] = {}
-        if occs is None or len(occs) == 0:
-            return counts
-        for entry in occs:
-            if not isinstance(entry, dict):
-                continue
-            for species, value in entry.items():
-                sym = getattr(species, 'symbol', str(species))
-                try:
-                    counts[sym] = counts.get(sym, 0.0) + float(value)
-                except Exception:
-                    continue
-        return counts
-
-    def _format_formula_from_counts(self, counts: Dict[str, float]) -> str:
-        if not counts:
-            return "—"
-        positives = [v for v in counts.values() if v > 1e-6]
-        if not positives:
-            return "—"
-        min_val = min(positives)
-        normalized = {sym: value / min_val for sym, value in counts.items() if value > 1e-6}
-        parts = []
-        for sym, val in sorted(normalized.items()):
-            if abs(val - 1.0) < 1e-2:
-                suffix = ""
-            elif abs(val - round(val)) < 1e-2:
-                whole = int(round(val))
-                suffix = "" if whole == 1 else str(whole)
-            else:
-                suffix = f"{val:.2f}"
-            parts.append(f"{sym}{suffix}")
-        return "".join(parts) if parts else "—"

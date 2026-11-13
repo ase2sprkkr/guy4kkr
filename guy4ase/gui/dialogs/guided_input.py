@@ -11,10 +11,8 @@ from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -26,10 +24,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from guy4ase.gui.dialogs.expert_input import edit_input_parameters
+from guy4ase.gui.application.window_geometry import manage_window_geometry
+from guy4ase.gui.dialogs.expert_input import edit_input_parameters_session
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.bindings import InputParameterPath
-from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.session import create_input_parameters_session
 from guy4ase.gui.input_parameters.specs.registry import task_dialog_spec
 from guy4ase.gui.input_parameters.specs.schema import (
     PageSpec,
@@ -77,21 +76,21 @@ class GuidedInputParametersDialog(QDialog):
         parameters: InputParameters,
         parent: QWidget | None = None,
         *,
-        directory: str | None = None,
         atoms: Any = None,
     ) -> None:
         super().__init__(parent)
         self.task = task.lower()
         self.atoms = atoms
-        self.directory = directory or ""
         self.spec: TaskDialogSpec = task_dialog_spec(self.task, is_2d=_is_2d(atoms))
         prepared = _prepare_parameters(parameters, self.task)
-        self.session = InputParametersSession(prepared, self)
+        self.session = create_input_parameters_session(prepared, self)
         self._page_indexes = {page.id: index for index, page in enumerate(self.spec.pages)}
         self._navigation: dict[str, NavigationView] = {}
 
         self.setWindowTitle(self.spec.title)
-        self.resize(980, 700)
+        manage_window_geometry(
+            self, "guided-input", default_size=(1180, 740)
+        )
         self._build_ui()
         self._connect_session()
         self._update_all_statuses()
@@ -112,17 +111,6 @@ class GuidedInputParametersDialog(QDialog):
         intro.setObjectName("guidedDialogSubtitle")
         intro.setStyleSheet(secondary_text_stylesheet(self.palette()))
         root.addWidget(intro)
-
-        directory_row = QHBoxLayout()
-        directory_row.addWidget(QLabel("Working directory:"))
-        self.directory_edit = QLineEdit(self.directory, self)
-        self.directory_edit.setPlaceholderText("Select a calculation directory")
-        directory_row.addWidget(self.directory_edit, 1)
-        browse = QPushButton("Browse…", self)
-        browse.setStyleSheet(button_stylesheet(self.palette()))
-        browse.clicked.connect(self._choose_directory)
-        directory_row.addWidget(browse)
-        root.addLayout(directory_row)
 
         body = QHBoxLayout()
         self.navigation = QListWidget(self)
@@ -341,9 +329,6 @@ class GuidedInputParametersDialog(QDialog):
         except Exception as exc:
             self._show_model_error(exc)
             return
-        if not self.directory_edit.text().strip() and not self._choose_directory():
-            return
-        self.directory = self.directory_edit.text().strip()
         self.accept()
 
     def _show_model_error(self, exception: Exception) -> None:
@@ -354,29 +339,28 @@ class GuidedInputParametersDialog(QDialog):
                 break
         QMessageBox.critical(self, "Invalid Settings", message)
 
-    def _choose_directory(self) -> bool:
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Select Calculation Directory",
-            self.directory_edit.text().strip(),
-        )
-        if not selected:
-            return False
-        self.directory = str(selected)
-        self.directory_edit.setText(self.directory)
-        return True
-
     def _open_expert_settings(self) -> None:
         """Edit a detached copy; accepting installs the result as one undoable change."""
         if not self._commit_pending():
             return
         try:
-            candidate = self.session.result()
-            result = edit_input_parameters(candidate, parent=self, show_changed_only=False, atoms=self.atoms)
-            if result is not None:
-                result = _prepare_parameters(result, self.task)
-                self.session.replace_parameters(
-                    result,
+            temporary = self.session.fork()
+            accepted = edit_input_parameters_session(
+                temporary,
+                parent=self,
+                show_changed_only=False,
+                atoms=self.atoms,
+            )
+            if accepted is not None:
+                assert not isinstance(accepted, tuple)
+                prepared = _prepare_parameters(accepted.result(), self.task)
+                accepted.replace_parameters(
+                    prepared,
+                    text="Normalize expert settings",
+                    source_page="expert",
+                )
+                self.session.replace_from_session(
+                    accepted,
                     text="Apply expert settings",
                     source_page="expert",
                 )
@@ -393,7 +377,10 @@ class GuidedInputParametersDialog(QDialog):
         if not file_path:
             return
         try:
-            loaded = _prepare_parameters(InputParameters.from_file(file_path), self.task)
+            loaded = _prepare_parameters(
+                InputParameters.from_file(Path(file_path).resolve()),
+                self.task,
+            )
             self.session.replace_parameters(
                 loaded,
                 text=f"Load {Path(file_path).name}",
@@ -420,18 +407,17 @@ class GuidedInputParametersDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Input File Error", str(exc))
 
-    def result(self) -> tuple[InputParameters, str]:
-        """Return a detached parameter copy and the selected calculation directory."""
-        return self.session.result(), self.directory
+    def result(self) -> InputParameters:
+        """Return a detached parameter copy."""
+        return self.session.result()
 
 
 def select_guided_input_parameters(
     task: str,
     parent: QWidget | None = None,
     *,
-    directory: str | None = None,
     atoms: Any = None,
-) -> tuple[InputParameters, str] | None:
+) -> InputParameters | None:
     task = task.lower()
     spec = task_dialog_spec(task, is_2d=_is_2d(atoms))
     parameters = new_parameters(spec.parameter_task)
@@ -439,7 +425,6 @@ def select_guided_input_parameters(
         task,
         parameters,
         parent=parent,
-        directory=directory,
         atoms=atoms,
     )
     if dialog.exec() != QDialog.DialogCode.Accepted:

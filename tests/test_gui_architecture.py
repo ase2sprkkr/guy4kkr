@@ -16,17 +16,17 @@ from ase2sprkkr.common.grammar_types import Energy, Real
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtWidgets import QApplication
 
-from guy4ase.gui.input_parameters.bindings import InputParametersBinding
+from guy4ase.ase.element_assignment import ElementAssignmentDraft
 from guy4ase.gui.input_parameters.field_binding import (
     IndexedFieldBinding,
     SessionFieldBinding,
 )
+from guy4ase.gui.input_parameters.session import InputParametersSession
+from guy4ase.gui.input_parameters.specs.schema import field
 from guy4ase.gui.misc.resources import icon_path
-from guy4ase.gui.widgets.input_parameters.value_editor import (
-    ParameterValueEditor,
-)
 from guy4ase.gui.widgets.input_parameters.energy import EnergyEditor
 from guy4ase.gui.widgets.input_parameters.kpath import VectorEditor
+from guy4ase.gui.widgets.input_parameters.registry import EDITORS, editor_for_type
 from guy4ase.gui.widgets.input_parameters.scalar import (
     BooleanEditor,
     ChoiceEditor,
@@ -34,9 +34,10 @@ from guy4ase.gui.widgets.input_parameters.scalar import (
     RealEditor,
     TextEditor,
 )
-from guy4ase.gui.widgets.input_parameters.registry import EDITORS, editor_for_type
+from guy4ase.gui.widgets.input_parameters.value_editor import (
+    ParameterValueEditor,
+)
 from guy4ase.gui.widgets.structures.element_assignment import QLetterRow
-from guy4ase.ase.element_assignment import ElementAssignmentDraft
 
 ROOT = Path(__file__).resolve().parents[1]
 GUI = ROOT / "guy4ase" / "gui"
@@ -76,13 +77,31 @@ def test_gui_dependencies_are_acyclic_and_follow_layers():
                 t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.flows"))
                 for t in targets
             ), module
+        if module.startswith("guy4ase.gui.flows"):
+            assert not any(
+                t in {
+                    "guy4ase.gui.dialogs.main_window",
+                    "guy4ase.gui.dialogs.workflow_window",
+                }
+                for t in targets
+            ), module
         if module.startswith("guy4ase.gui.input_parameters"):
             assert not any(t.startswith(("guy4ase.gui.dialogs", "guy4ase.gui.widgets")) for t in targets), module
         if module.startswith("guy4ase.gui.input_parameters.specs"):
             assert "guy4ase.gui.input_parameters.session" not in targets, module
+        if module.startswith("guy4ase.gui.application"):
+            assert not any(
+                t.startswith(
+                    (
+                        "guy4ase.gui.dialogs",
+                        "guy4ase.gui.widgets",
+                        "guy4ase.gui.flows",
+                    )
+                )
+                for t in targets
+            ), module
         if module == "guy4ase.gui.style" or module.startswith(
             (
-                "guy4ase.gui.application",
                 "guy4ase.gui.misc",
                 "guy4ase.gui.plots",
             )
@@ -120,7 +139,6 @@ def test_composition_root_owns_services_and_top_level_windows():
         assert not constructed & {
             "WorkspaceController",
             "RecentFiles",
-            "GuiOperations",
             "MainWindow",
             "WorkflowWindow",
         }
@@ -129,51 +147,113 @@ def test_composition_root_owns_services_and_top_level_windows():
     for dependency in (
         "WorkspaceController(",
         "RecentFiles(",
-        "GuiOperations(",
         "WorkflowWindow(",
         "MainWindow(",
     ):
         assert composition_source.count(dependency) == 1
 
-    for operation in (
-        "create_structure",
-        "download_structure",
-        "load_structure",
-        "prepare_guided_task",
-        "build_2d_structure",
-        "execute_output_value_action",
-        "open_recent_file",
-    ):
-        assert f"self._expert.{operation}" not in workflow_source
-    assert "self.operations." in workflow_source
-
-    operations_source = (GUI / "flows" / "operations.py").read_text()
-    assert "dialogs.main_window" not in operations_source
-    assert "dialogs.workflow_window" not in operations_source
+    assert "GuiOperations" not in composition_source
+    assert not (GUI / "flows" / "operations.py").exists()
+    assert "self.operations" not in workflow_source
+    assert "self.operations" not in main_window_source
+    assert "def prepare_guided_task" not in main_window_source
 
 
 def test_workspace_mutation_and_history_persistence_are_outside_main_window():
-    source = (GUI / "dialogs" / "main_window.py").read_text()
-    for assignment in (
-        "self.workspace.atoms =",
-        "self.workspace.input_parameters =",
-        "self.workspace.directory =",
-        "self.workspace.potential_path =",
-        "self.workspace.result =",
-    ):
-        assert assignment not in source
-    assert "def _remember_recent" not in source
-    assert "def _load_recent_files" not in source
-    assert "def _save_recent_files" not in source
+    for name in ("main_window.py", "workflow_window.py"):
+        source = (GUI / "dialogs" / name).read_text()
+        for assignment in (
+            "workspace.atoms =",
+            "workspace.input_parameters =",
+            "workspace.directory =",
+            "workspace.potential_path =",
+            "workspace.result =",
+        ):
+            assert assignment not in source
+    main_source = (GUI / "dialogs" / "main_window.py").read_text()
+    assert "def _remember_recent" not in main_source
+    assert "def _load_recent_files" not in main_source
+    assert "def _save_recent_files" not in main_source
 
 
-def test_workflow_does_not_cache_derived_structure_kind():
+def test_workspace_low_level_mutation_is_confined_to_controller():
+    controller_path = GUI / "application" / "workspace_controller.py"
+    workspace_path = GUI / "application" / "workspace.py"
+    forbidden_assignments = (
+        "workspace.atoms =",
+        "workspace.input_parameters =",
+        "workspace.directory =",
+        "workspace.potential_path =",
+        "workspace.result =",
+    )
+    private_operations = (
+        "._set_structure(",
+        "._set_input_parameters(",
+        "._set_directory(",
+        "._set_result(",
+    )
+    retired_public_setters = (
+        ".set_structure(",
+        ".set_input_parameters(",
+        ".set_directory(",
+        ".adopt_result(",
+    )
+
+    for path in GUI.rglob("*.py"):
+        if path in {controller_path, workspace_path}:
+            continue
+        source = path.read_text()
+        assert not any(value in source for value in forbidden_assignments), path
+        assert not any(value in source for value in private_operations), path
+        assert not any(value in source for value in retired_public_setters), path
+
+    workspace_source = workspace_path.read_text()
+    assert "def reset(" not in workspace_source
+
+
+def test_result_actions_have_one_dialog_owned_execution_implementation():
+    object_view = (GUI / "dialogs" / "object_view.py").read_text()
+    main_window = (GUI / "dialogs" / "main_window.py").read_text()
     workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
+    widget = (GUI / "widgets" / "result_actions.py").read_text()
+
+    assert object_view.count("def execute_value_action(") == 1
+    assert "execute_value_action(value, action, self)" in main_window
+    assert "execute_value_action(value, action, self)" in workflow
+    assert "object_view" not in widget
+    assert "_result_dialogs" not in object_view + main_window + workflow
+
+
+def test_transient_dialog_lifetime_uses_qt_ownership():
+    calculation = (GUI / "flows" / "calculation.py").read_text()
+    run_dialog = (GUI / "dialogs" / "run_calculation.py").read_text()
+    object_view = (GUI / "dialogs" / "object_view.py").read_text()
+
+    assert "_run_windows" not in calculation
+    assert "_result_dialogs" not in object_view
+    assert "_child_dialogs" not in object_view
+    assert "WA_DeleteOnClose" in run_dialog
+    assert "WA_DeleteOnClose" in object_view
+
+
+def test_workspace_owns_derived_structure_and_scf_queries():
+    workflow = (GUI / "dialogs" / "workflow_window.py").read_text()
+    workspace = (GUI / "application" / "workspace.py").read_text()
     lattice = (ROOT / "guy4ase" / "physics" / "lattice.py").read_text()
 
     assert "self._structure_kind" not in workflow
     assert "_detect_structure_kind" not in workflow
-    assert "detect_structure_kind(atoms)" in workflow
+    assert "detect_structure_kind" not in workflow
+    assert "_scf_status" not in workflow
+    assert "_is_converged" not in workflow
+    assert "self.workspace.structure_kind()" in workflow
+    assert "self.workspace.scf_status()" in workflow
+    assert "self.workspace.is_scf_converged()" in workflow
+    assert "def structure_kind(" in workspace
+    assert "def scf_status(" in workspace
+    assert "def is_scf_converged(" in workspace
+    assert "detect_structure_kind(self.atoms)" in workspace
+    assert "sprkkr_is_scf_converged" in workspace
     assert "def detect_structure_kind" in lattice
     assert "PyQt" not in lattice
 
@@ -193,6 +273,20 @@ def test_guided_renderer_has_no_task_specific_presentation_branches():
     assert "SPLIT_SWITCHES" not in source
     assert "bsf_mode" not in renderer
     assert "SPLIT_SWITCHES" not in renderer
+
+
+def test_session_has_no_single_site_contour_semantics():
+    source = (GUI / "input_parameters" / "session.py").read_text()
+    for identifier in ("SPLITSS", "FSOHFF", '"GRID"', '"NE"'):
+        assert identifier not in source
+    assert "default_input_parameter_plugins" in source
+    assert "SingleSiteContourPlugin" in source
+
+
+def test_single_site_contour_policy_imports_without_qt():
+    source = (GUI / "input_parameters" / "single_site_contour.py").read_text()
+    assert "PyQt" not in source
+    assert "InputParametersSession" not in source
 
 
 def test_guided_dialog_delegates_field_anatomy_to_form_views():
@@ -238,11 +332,10 @@ def test_expert_dialog_delegates_parameter_tree_rendering():
     ):
         assert tree_detail not in dialog
 
-    # The modal shell owns the one isolated draft. The reusable tree only
-    # accesses the current externally owned document through its getter.
-    assert "copy(copy_values=True)" in dialog
+    # Both shells and the reusable tree share the transactional session model.
+    assert "create_input_parameters_session" in dialog
     assert "copy(copy_values=True)" not in renderer
-    assert "self._params" not in renderer
+    assert "DirectFieldBinding" not in renderer
     assert "create_editor(" in renderer
     assert "ParameterValueEditor" in renderer
     for option_semantic in (
@@ -413,21 +506,22 @@ for module in pkgutil.walk_packages(guy4ase.gui.__path__, 'guy4ase.gui.'):
 """], cwd=ROOT, check=True, timeout=30)
 
 
-def test_binding_follows_replacement_without_owning_values():
-    current = [InputParameters.create("scf")]
-    changes = []
-    binding = InputParametersBinding(lambda: current[0], changes.append)
+def test_session_binding_parameters_follows_the_working_snapshot():
+    session = InputParametersSession(InputParameters.create("scf"))
     path = ("SCF", "NITER")
-    assert binding.set_value(path, 42)
-    assert current[0].SCF.NITER() == 42
-    assert changes == [path]
-    assert not binding.set_value(path, 42)
-    old = current[0]
-    current[0] = InputParameters.create("scf")
-    assert binding.option(path) is current[0].SCF.NITER
-    binding.set_value(path, 17)
-    assert old.SCF.NITER() == 42
-    assert current[0].SCF.NITER() == 17
+    binding = SessionFieldBinding(
+        session,
+        field("SCF", "NITER", "Iterations"),
+        "expert",
+    )
+
+    binding.set_value(42)
+    first_snapshot = binding.parameters
+    binding.set_value(17)
+
+    assert first_snapshot.SCF.NITER() == 42
+    assert binding.parameters is session.working_parameters
+    assert binding.parameters.SCF.NITER() == 17
 
 
 @pytest.mark.parametrize("name", ["system-run.svg", "run-build-clean.svg", "labplot-xy-interpolation-curve.svg"])

@@ -17,8 +17,8 @@
   individual task modules expose `build_spec`, and `registry.task_dialog_spec`
   selects and validates a layout.
 - `plots`: Matplotlib rendering. Pure lattice queries and transformations,
-  including structure dimensionality derived from `Atoms.pbc`, belong in
-  `guy4ase.physics.lattice`, not in the GUI.
+  including supported bulk/layered classification derived from periodicity
+  and SPR-KKR regions, belong in `guy4ase.physics.lattice`, not in the GUI.
 - `misc`: small, specifically named Qt/layout/resource helpers. It must not
   become a home for application state or task-specific rules.
 - `style`: the small palette-aware visual vocabulary shared by dialogs and
@@ -26,33 +26,66 @@
   primary/secondary action states. Semantic colors and layout remain with the
   window or task that owns their meaning; this is intentionally not a theme
   manager.
-- `application`: shared application state and document services, kept separate from
-  Qt windows and reusable widgets. `application.workspace.WorkspaceState` is
-  the Qt-independent current document. `application.workspace_controller`
-  provides its single mutation/signalling boundary, and
-  `application.recent_files` owns Qt-independent history persistence. Menus
-  and other presentation state remain owned by the windows.
-- `flows`: shared Qt orchestration such as structure selection, file loading,
-  guided task setup, calculation windows and result actions. A flow may compose
-  leaf dialogs and update `application`, but it does not depend on
-  `MainWindow` or `WorkflowWindow`.
+- `application`: shared observable/document state, kept separate from windows
+  and reusable widgets. `application.workspace.WorkspaceState` is the
+  Qt-independent current document. `WorkspaceController` is not a bag of
+  setters: it is the single mutation/signalling boundary and owns semantic
+  document transitions and result adoption. Concrete file actions call public
+  ASE/ASE2SPRKKR APIs directly in their owning flow; `result_loading` provides
+  reusable functions for result-artifact interpretation. The controller
+  guarantees consistency between structure, calculation setup, potential
+  provenance and the current result. `RecentFiles` is observable persistent
+  application state. None of these objects knows file choosers, messages or
+  concrete windows.
+- `flows`: stateless shared Qt workflows composed from application state and
+  leaf dialogs. `structures`, `files` and `calculation` are modules of ordinary
+  functions, not service objects. They may show modal UI and publish changes
+  through `WorkspaceController`, but never import `MainWindow` or
+  `WorkflowWindow`. Window-specific orchestration remains with its owning
+  dialog.
 
 `guy4ase.main.GuiApplication` is the single composition root. It creates and
-owns one `WorkspaceController`, `RecentFiles` and `GuiOperations`, then injects
-those same instances into the sibling `WorkflowWindow` and `MainWindow` views.
-It also owns their top-level lifetime and lazy expert-window creation.
-Neither window constructs application services or another top-level window.
+owns one `WorkspaceController` and one `RecentFiles`, then injects those same
+instances into the sibling `WorkflowWindow` and `MainWindow` views. It also
+owns their top-level lifetime and lazy expert-window creation. Neither window
+constructs application state or another top-level window. Shared behavior does
+not require an injected operations namespace; windows call the appropriate
+stateless flow function directly.
 
 Package `__init__.py` files intentionally do not eagerly import dialogs or
 re-export their internals. Import concrete modules directly. The former flat
 module paths and `calculation_setup` package have no compatibility wrappers.
 
+### Workspace lifecycle
+
+Windows and flows use named `WorkspaceController` transitions rather than
+assigning workspace facets independently. `replace_structure()` invalidates the
+current result and drops potential provenance unless a new source is explicit;
+`replace_input_parameters()` invalidates the result while retaining structure.
+File-loading transitions also select the source file's directory.
+
+File flows load or parse each document once, then use Qt waiting only around a
+short revision-sensitive controller transition. `adopt_external_result()`
+installs an output opened by the user. Its atoms and potential source therefore
+come only from that result; if its potential is missing or unreadable, old
+unrelated atoms are cleared. Existing input parameters may remain as an
+independent editable setup, but are not considered the provenance of the
+external result. In contrast, `adopt_calculation_result()` accepts a loaded
+result just produced from the current workspace. If no converged potential can
+be read, the current atoms and their potential provenance remain valid. Both
+operations return `ResultAdoption`; views decide how to present its non-fatal
+potential error.
+
 ## Parameter editing
 
 `input_parameters.session.InputParametersSession` owns the working parameters,
-initial snapshot, Undo/Redo and remembered single-site settings. Widgets must not
-keep a second authoritative parameter model. Invalid or incomplete input may
-remain in a widget's draft until committed or discarded.
+initial snapshot, Undo/Redo and generic non-serialized field state. Small
+Qt-independent transaction plugins may adjust a candidate and that dormant
+state before one atomic history command is created. Concrete SPR-KKR semantics,
+such as the optional second single-site contour, live in their own plugin and
+are explicitly composed by the guided dialog. Widgets must not keep a second
+authoritative parameter model. Invalid or incomplete input may remain in a
+widget's draft until committed or discarded.
 
 `input_parameters.bindings.InputParameterPath` is a tuple such as
 `("ENERGY", "EMIN")`. It is an option address, not a file-system path.
@@ -152,7 +185,8 @@ conversion belongs to the energy value editor rather than the storage binding.
 The field declaration selects a presentation explicitly with, for example,
 `editor="energy"`. Only `editor="auto"` invokes the deterministic grammar-MRO
 mapping in `editor_for_type()`.
-Dormant single-site mesh values remain owned by the session.
+Dormant indexed values remain owned and snapshotted by the session; the
+single-site contour plugin alone decides when its second mesh is active.
 `ParameterEditor` remains the
 session/tooltip/presentation shell and delegates `refresh()`, `commit()` and
 history focus without knowing any concrete Qt value-editor type.
@@ -197,6 +231,10 @@ and expert tree. Additional validation/application is passed through its
 - Windows render `WorkspaceController` changes; they do not assign document
   fields directly. Calculation completion is delivered through an explicit
   callback rather than by inspecting a parent window for a named method.
+- `application` does not import dialogs, widgets or flows. Flows may compose
+  application state and leaf dialogs, but never import either top-level window.
+- `RecentFiles.changed` directly refreshes interested views; no forwarding
+  service signal or transient-window registry exists.
 - Widgets may use parameter services and small helpers, but never import
   concrete application dialogs. Use signals or callbacks to request actions.
 - `input_parameters` must not import `dialogs` or `widgets`.

@@ -1,7 +1,7 @@
-"""Paths and direct access to an existing InputParameters object (no value copy)."""
+"""Input-parameter paths and shared value helpers."""
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -47,45 +47,3 @@ def values_equal(left: Any, right: Any) -> bool:
         return bool(result)
     except Exception:
         return False
-
-
-class InputParametersBinding:
-    """Read/write adapter; the caller owns parameters and reacts to commits.
-
-    A getter follows replaced parameter objects without retaining stale values.
-    Guided editors can use InputParametersSession's matching methods directly.
-    """
-
-    def __init__(self, get_parameters: Callable[[], InputParameters],
-                 on_changed: Callable[[InputParameterPath], None]):
-        self._get_parameters = get_parameters
-        self._on_changed = on_changed
-
-    def option(self, path: InputParameterPath):
-        return resolve_option(self._get_parameters(), path)
-
-    @property
-    def parameters(self) -> InputParameters:
-        return self._get_parameters()
-
-    def value(self, path: InputParameterPath):
-        return self.option(path)(all_values=True)
-
-    def set_value(self, path: InputParameterPath, value, **_kwargs):
-        """Write directly and notify after success; this adapter supplies no undo.
-
-        Extra session-style arguments (such as source_page) are ignored so
-        shared widgets can use either this adapter or InputParametersSession.
-        """
-        option = self.option(path)
-        if values_equal(option(all_values=True), value):
-            return False
-        option.set(value)
-        self._on_changed(path)
-        return True
-
-    def mutate(self, callback, *, path: InputParameterPath):
-        """Apply an atomic direct edit and notify the owning view."""
-        callback(self._get_parameters())
-        self._on_changed(path)
-        return True
