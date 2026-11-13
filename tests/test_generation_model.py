@@ -224,6 +224,32 @@ def test_multi_value_conflict_is_resolved_once(tmp_path):
     }
 
 
+def test_calculation_context_rejects_conflict_without_partial_changes(tmp_path):
+    conflicts = []
+
+    def reject(items):
+        conflicts.append(items)
+        return False
+
+    controller = _controller(tmp_path, conflict_resolver=reject)
+    directory_generation = controller.directory_generation
+    project_generation = controller.active_project_generation
+    controller.set_active_project("concurrent")
+
+    change = controller.set_calculation_context(
+        str(tmp_path / "new-directory"),
+        "chosen",
+        expected_directory_generation=directory_generation,
+        expected_active_project_generation=project_generation,
+    )
+
+    assert change is DocumentChange.CANCELLED
+    assert controller.directory == str(tmp_path)
+    assert controller.active_project_id == "concurrent"
+    assert len(conflicts) == 1
+    assert [item.component for item in conflicts[0]] == ["active project"]
+
+
 def test_result_publication_does_not_advance_workspace_generations(tmp_path):
     controller = _controller(tmp_path)
     generations = _generations(controller)

@@ -538,31 +538,71 @@ class WorkspaceController(QObject):
         self.inputParametersChanged.emit(parameters)
         return DocumentChange.APPLIED
 
+    def _change_context(
+        self,
+        *,
+        directory: str | None | object = _KEEP_DIRECTORY,
+        project_id: str | None | object = _KEEP_DIRECTORY,
+        expected_directory_generation: Generation | None = None,
+        expected_active_project_generation: Generation | None = None,
+    ) -> DocumentChange:
+        """Change workspace context atomically, checking all changed values."""
+        directory_changed = (
+            directory is not _KEEP_DIRECTORY and directory != self.directory
+        )
+        project_changed = (
+            project_id is not _KEEP_DIRECTORY and project_id != self.active_project_id
+        )
+        checks = []
+        if directory_changed:
+            checks.append((
+                "working directory",
+                self._workspace.context.directory,
+                expected_directory_generation,
+            ))
+        if project_changed:
+            checks.append((
+                "active project",
+                self._workspace.context.active_project_id,
+                expected_active_project_generation,
+            ))
+        if not checks:
+            return DocumentChange.APPLIED
+        rejected, force = self._prepare_change(tuple(checks))
+        if rejected is not None:
+            return rejected
+
+        if directory_changed:
+            self._commit_locked(
+                self._workspace.context.directory,
+                directory,
+                expected_generation=expected_directory_generation,
+                force=force,
+            )
+        if project_changed:
+            self._commit_locked(
+                self._workspace.context.active_project_id,
+                project_id,
+                expected_generation=expected_active_project_generation,
+                force=force,
+            )
+        # Publish only after both values have been committed.
+        if directory_changed:
+            self.directoryChanged.emit(directory)
+        if project_changed:
+            self.activeProjectChanged.emit(project_id)
+        return DocumentChange.APPLIED
+
     def change_directory(
         self,
         directory: str | None,
         *,
         expected_directory_generation: Generation | None = None,
     ) -> DocumentChange:
-        if directory == self.directory:
-            return DocumentChange.APPLIED
-        rejected, force = self._prepare_change(
-            ((
-                "working directory",
-                self._workspace.context.directory,
-                expected_directory_generation,
-            ),)
+        return self._change_context(
+            directory=directory,
+            expected_directory_generation=expected_directory_generation,
         )
-        if rejected is not None:
-            return rejected
-        self._commit_locked(
-            self._workspace.context.directory,
-            directory,
-            expected_generation=expected_directory_generation,
-            force=force,
-        )
-        self.directoryChanged.emit(directory)
-        return DocumentChange.APPLIED
 
     def set_active_project(
         self,
@@ -570,25 +610,26 @@ class WorkspaceController(QObject):
         *,
         expected_active_project_generation: Generation | None = None,
     ) -> DocumentChange:
-        if project_id == self.active_project_id:
-            return DocumentChange.APPLIED
-        rejected, force = self._prepare_change(
-            ((
-                "active project",
-                self._workspace.context.active_project_id,
-                expected_active_project_generation,
-            ),)
+        return self._change_context(
+            project_id=project_id,
+            expected_active_project_generation=expected_active_project_generation,
         )
-        if rejected is not None:
-            return rejected
-        self._commit_locked(
-            self._workspace.context.active_project_id,
-            project_id,
-            expected_generation=expected_active_project_generation,
-            force=force,
+
+    def set_calculation_context(
+        self,
+        directory: str,
+        project_id: str | None,
+        *,
+        expected_directory_generation: Generation | None = None,
+        expected_active_project_generation: Generation | None = None,
+    ) -> DocumentChange:
+        """Commit the execution dialog's directory and active project together."""
+        return self._change_context(
+            directory=directory,
+            project_id=project_id,
+            expected_directory_generation=expected_directory_generation,
+            expected_active_project_generation=expected_active_project_generation,
         )
-        self.activeProjectChanged.emit(project_id)
-        return DocumentChange.APPLIED
 
     @staticmethod
     def _result_adoption(

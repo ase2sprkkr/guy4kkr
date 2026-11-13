@@ -218,6 +218,7 @@ def test_standalone_run_keeps_parent_ownership(monkeypatch, tmp_path):
 
 def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_path):
     controller = _controller(tmp_path)
+    controller.set_active_project("existing-project")
     constructed = []
 
     monkeypatch.setattr(
@@ -237,6 +238,7 @@ def test_cancelled_profile_selection_does_not_construct_window(monkeypatch, tmp_
         object(),
     ) is None
     assert constructed == []
+    assert controller.active_project_id == "existing-project"
 
 
 def test_automatic_profile_is_distinct_from_cancel(monkeypatch, tmp_path):
@@ -321,7 +323,7 @@ def test_cancelling_execution_setup_with_no_directory_is_side_effect_free(
     assert controller.directory_generation == old_generation
 
 
-def test_selected_project_is_bound_to_run_without_changing_active_project(
+def test_selected_project_becomes_active_and_is_bound_to_run(
     monkeypatch, tmp_path
 ):
     controller = _controller(tmp_path)
@@ -350,7 +352,7 @@ def test_selected_project_is_bound_to_run_without_changing_active_project(
         controller, RecentFiles(tmp_path / "recent.json"), object()
     ) is not None
     assert captured["project_id"] == "selected-project"
-    assert controller.active_project_id == "active-project"
+    assert controller.active_project_id == "selected-project"
 
 
 def test_unassigned_project_is_explicit_even_when_active_project_exists(
@@ -380,4 +382,36 @@ def test_unassigned_project_is_explicit_even_when_active_project_exists(
         controller, RecentFiles(tmp_path / "recent.json"), object()
     ) is not None
     assert captured["project_id"] is None
-    assert controller.active_project_id == "active-project"
+    assert controller.active_project_id is None
+
+
+def test_stale_project_selection_does_not_change_directory_or_launch(
+    monkeypatch, tmp_path
+):
+    controller = _controller(tmp_path)
+    controller.set_active_project("initial")
+    directory = str(tmp_path / "selected-directory")
+    created = []
+
+    def select(_parent, **kwargs):
+        assert kwargs["active_project_id"] == "initial"
+        controller.set_active_project("concurrent")
+        return True, None, None, directory, "selected"
+
+    monkeypatch.setattr(calculation_flow, "_select_profile", select)
+    monkeypatch.setattr(
+        calculation_flow, "SprkkrRunWindow",
+        lambda **kwargs: created.append(kwargs),
+    )
+    # Avoid showing a Qt message box for the expected stale selection.
+    monkeypatch.setattr(
+        calculation_flow, "document_change_applied",
+        lambda _parent, change: change.name == "APPLIED",
+    )
+
+    assert calculation_flow.run_calculation(
+        controller, RecentFiles(tmp_path / "recent.json"), object()
+    ) is None
+    assert created == []
+    assert controller.active_project_id == "concurrent"
+    assert controller.directory == str(tmp_path)
