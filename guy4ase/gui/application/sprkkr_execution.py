@@ -135,9 +135,9 @@ class SprkkrExecution:
         runner = self._submit(self._calculator())
 
         record = runner.record if self.project_id is not None else None
-        if record is not None and record.execution.endpoint.executor != "local":
-            endpoint = record.execution.endpoint
-            self._status(f"Running on {endpoint.host or endpoint.executor}…")
+        if record is not None and not record.execution.transport.is_local:
+            transport = record.execution.transport
+            self._status(f"Running on {transport.host}…")
         else:
             self._status("Running…")
 

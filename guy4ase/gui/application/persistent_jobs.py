@@ -1,17 +1,21 @@
 """Read and track ASE2SPRKKR persistent-run history behind a GUI-facing API."""
 from __future__ import annotations
 
-from ase2sprkkr.sprkkr.projects import default_project_repository, project_execution_manager
-
 import logging
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Callable
 
-from kkrunner.projects import ProjectExecutionManager, ProjectRepository
-
+from kkrunner.backends.contracts import BackendCapability
+from kkrunner.projects import ProjectRepository, ProjectRunManager
 from ase2sprkkr.outputs.project_results import (
-    application_metadata, attach_project_run, load_project_result, retry_project_postprocessing,
+    attach_project_run,
+    load_project_result,
+    retry_project_postprocessing,
+)
+from ase2sprkkr.sprkkr.projects import (
+    default_project_repository,
+    project_execution_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,8 +27,9 @@ JobChangedListener = Callable[[str], None]
 _RECOVERING = object()
 
 
-def project_run_manager(projects: ProjectRepository) -> ProjectExecutionManager:
-    return project_execution_manager(projects)
+def project_run_manager(projects: ProjectRepository) -> ProjectRunManager:
+    """Use ASE2SPRKKR's storage policy with KKRunner's project-run manager."""
+    return project_execution_manager(project_repository=projects)
 
 
 def _value(value: Any) -> str:
@@ -33,19 +38,17 @@ def _value(value: Any) -> str:
 
 
 def _execution_target(record: Any) -> str:
-    endpoint = record.execution.endpoint
-    executor = _value(endpoint.executor) or "local"
-    host = _value(endpoint.host)
-    psij_backend = _value(endpoint.psij_backend)
-    if executor == "local":
-        return "Local"
-    if executor == "psij":
-        return "PSI/J" + (f" · {psij_backend}" if psij_backend else "")
-    label = executor.upper() if executor == "ssh" else executor
-    if host:
-        label = f"{label} · {host}"
-    if psij_backend:
-        label = f"{label} · PSI/J {psij_backend}"
+    """Describe transport and native backend separately."""
+    transport = record.execution.transport
+    backend = record.execution.backend
+    kind = _value(transport.kind)
+    label = "Local" if transport.is_local else f"{kind.upper()} · {transport.host}"
+    if backend.name == "psij":
+        executor_name = dict(backend.options).get("executor_name", "slurm")
+        return (f"PSI/J · {executor_name}" if transport.is_local
+                else f"{label} · PSI/J {executor_name}")
+    if backend.name == "process":
+        return f"{label} · supervised"
     return label
 
 
@@ -53,6 +56,7 @@ def _is_attachable(record: Any, state: str) -> bool:
     return (
         state not in _FINAL_STATES
         and record.execution.backend_id is not None
+        and BackendCapability.REATTACH in record.execution.backend.create().supports
     )
 
 
@@ -92,8 +96,12 @@ class PersistentJob:
 
     @property
     def can_retry_postprocessing(self) -> bool:
-        return (self.state == "failed" and self.failure_phase == "postprocessing"
-                and self.return_code == 0)
+        """Whether failed result processing can be retried without execution."""
+        return (
+            self.state == "failed"
+            and self.failure_phase == "postprocessing"
+            and self.return_code == 0
+        )
 
     @classmethod
     def from_run_record(
@@ -106,14 +114,15 @@ class PersistentJob:
         result_files = record.files
         result_files_state = None if result_files is None else _value(result_files.state)
         finished_at = getattr(record, "finished_at", None)
+        metadata = record.metadata.get("ase2sprkkr", {})
         return cls(
             id=str(record.id),
             state=state,
             created_at=str(record.created_at),
             updated_at=str(record.updated_at),
-            task=str(application_metadata(record)["task"]).upper(),
+            task=str(metadata.get("task") or "Unknown").upper(),
             directory=str(record.execution.directory.local),
-            dataset=application_metadata(record).get("dataset"),
+            dataset=(None if metadata.get("dataset") is None else str(metadata["dataset"])),
             target=_execution_target(record),
             return_code=getattr(record, "return_code", None),
             message=getattr(record, "message", None),
@@ -269,10 +278,11 @@ class PersistentJobSource:
 
         if "ase2sprkkr" not in record.metadata:
             with self._lock:
-                removed = self._jobs.pop(job_id, None)
-            if removed is not None:
+                existed = self._jobs.pop(job_id, None) is not None
+            if existed:
                 self._notify(job_id)
             return None
+
         job = PersistentJob.from_run_record(record)
         changed = self._replace_cached_job(job)
         if changed:
@@ -324,13 +334,15 @@ class PersistentJobSource:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot retry a failed download."
             )
-        return attach_project_run(self._manager, str(job_id),
+        return attach_project_run(
+            self._manager,
+            str(job_id),
             callback=callback,
             output_listener=output_listener,
         )
 
     def retry_postprocessing(self, job_id: str) -> Any:
-        """Explicitly rebuild a failed application result from verified files."""
+        """Reprocess persisted output files without executing the run again."""
         if not self.supports_retry_postprocessing:
             raise NotImplementedError("This runner cannot retry postprocessing")
         try:

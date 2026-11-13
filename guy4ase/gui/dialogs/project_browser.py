@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from kkrunner.projects import Project, ProjectConflictError, ProjectRepository, ProjectRepositoryError
+from kkrunner.projects import Project, ProjectConflictError, ProjectDeleteError, ProjectRepository, ProjectRepositoryError
 
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.imported_project_results import assignments
@@ -341,7 +341,7 @@ class ProjectBrowserDialog(QDialog):
         project = self._selected_project()
         self.edit_project_button.setEnabled(project is not None)
         self.move_project_button.setEnabled(project is not None)
-        self.delete_project_button.setEnabled(project is not None)
+        self.delete_project_button.setEnabled(project is not None and project.parent_id is not None)
         self.set_active_project_button.setEnabled(
             project is not None and project.id != self._active_project_id
         )
@@ -414,7 +414,8 @@ class ProjectBrowserDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "Delete Project?",
-            f"Delete project {project.name!r}? Persistent calculation runs are not deleted.",
+            f"Delete project {project.name!r} and its completed run history? "
+            "Root projects and projects with active runs cannot be deleted.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -425,7 +426,7 @@ class ProjectBrowserDialog(QDialog):
                 project.id,
                 expected_generation=project.generation,
             )
-        except (ProjectRepositoryError, KeyError) as exc:
+        except (ProjectRepositoryError, ProjectDeleteError, KeyError) as exc:
             QMessageBox.warning(self, "Delete Project Failed", str(exc))
             return
         if project.id == self._active_project_id:
