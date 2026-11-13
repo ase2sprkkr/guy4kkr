@@ -81,6 +81,7 @@ class PersistentJobsWidget(QWidget):
     jobSelected = pyqtSignal(object)
     refreshRequested = pyqtSignal()
     monitorRequested = pyqtSignal(str)
+    retryFinalizationRequested = pyqtSignal(str)
     loadResultRequested = pyqtSignal(str)
 
     def __init__(
@@ -96,6 +97,7 @@ class PersistentJobsWidget(QWidget):
         self._selected_job_id: str | None = None
         self._supports_results = False
         self._supports_attach = False
+        self._supports_retry_finalization = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -183,6 +185,11 @@ class PersistentJobsWidget(QWidget):
         self.monitor_button.hide()
         details_layout.addWidget(self.monitor_button)
 
+        self.retry_finalization_button = QPushButton("Retry finalization", details)
+        self.retry_finalization_button.clicked.connect(self._request_retry_finalization)
+        self.retry_finalization_button.hide()
+        details_layout.addWidget(self.retry_finalization_button)
+
         self.load_result_button = QPushButton("Load result", details)
         self.load_result_button.clicked.connect(self._request_result)
         self.load_result_button.hide()
@@ -222,6 +229,7 @@ class PersistentJobsWidget(QWidget):
         supports_refresh: bool,
         supports_results: bool,
         supports_attach: bool,
+        supports_retry_finalization: bool,
     ) -> None:
         """Render a complete source snapshot while preserving view selection."""
         self._all_jobs = tuple(
@@ -230,6 +238,7 @@ class PersistentJobsWidget(QWidget):
         self._jobs_by_id = {job.id: job for job in self._all_jobs}
         self._supports_results = supports_results
         self._supports_attach = supports_attach
+        self._supports_retry_finalization = supports_retry_finalization
         self.refresh_button.setEnabled(supports_refresh)
 
         if not available:
@@ -381,6 +390,7 @@ class PersistentJobsWidget(QWidget):
                 widget.setText("—")
             self.message_value.hide()
             self.monitor_button.hide()
+            self.retry_finalization_button.hide()
             self.load_result_button.hide()
             if selection_changed:
                 self.jobSelected.emit(None)
@@ -410,7 +420,14 @@ class PersistentJobsWidget(QWidget):
         self.message_value.setText(job.message or "")
         self.message_value.setVisible(bool(job.message))
         self.monitor_button.setVisible(job.attachable and self._supports_attach)
-        self.load_result_button.setVisible(job.is_final and self._supports_results)
+        self.retry_finalization_button.setVisible(
+            job.can_retry_finalization and self._supports_retry_finalization
+        )
+        self.load_result_button.setVisible(
+            job.is_final
+            and not job.can_retry_finalization
+            and self._supports_results
+        )
         if selection_changed:
             self.jobSelected.emit(job.id)
 
@@ -418,6 +435,11 @@ class PersistentJobsWidget(QWidget):
         job_id = self._selected_job_id
         if job_id is not None:
             self.monitorRequested.emit(job_id)
+
+    def _request_retry_finalization(self) -> None:
+        job_id = self._selected_job_id
+        if job_id is not None:
+            self.retryFinalizationRequested.emit(job_id)
 
     def _request_result(self) -> None:
         job_id = self._selected_job_id
@@ -428,7 +450,9 @@ class PersistentJobsWidget(QWidget):
         job = self._job_for_item(item)
         if job is None:
             return
-        if job.is_final and self._supports_results:
+        if job.can_retry_finalization and self._supports_retry_finalization:
+            self.retryFinalizationRequested.emit(job.id)
+        elif job.is_final and self._supports_results:
             self.loadResultRequested.emit(job.id)
         elif job.attachable and self._supports_attach:
             self.monitorRequested.emit(job.id)

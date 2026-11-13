@@ -3,7 +3,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QCoreApplication, QEvent
 
 from guy4ase.gui.dialogs.structures.spacegroup_selector import SpaceGroupSelectorDialog
 from guy4ase.gui.dialogs.structures.database import StructureDatabaseDialog
@@ -11,11 +11,9 @@ from guy4ase.physics.structure_database import load_structure_database
 
 
 def test_filtered_selection_and_details_stay_synchronized():
-    application = QApplication.instance() or QApplication([])
     dialog = StructureDatabaseDialog()
 
     dialog.search_edit.setText("CsCl")
-    application.processEvents()
 
     assert dialog.selected_prototype is not None
     assert dialog.selected_prototype.name.startswith("B2")
@@ -27,11 +25,9 @@ def test_filtered_selection_and_details_stay_synchronized():
 
 
 def test_unknown_structure_type_is_presented_without_source_placeholder():
-    application = QApplication.instance() or QApplication([])
     dialog = StructureDatabaseDialog()
 
     dialog.search_edit.setText("ReSi2")
-    application.processEvents()
 
     assert dialog.table.item(0, 1).text() == "Unknown"
     assert "Unknown oI6 ReSi2" in dialog.details_label.text()
@@ -40,7 +36,6 @@ def test_unknown_structure_type_is_presented_without_source_placeholder():
 
 
 def test_every_database_prototype_can_preload_the_shared_editor():
-    application = QApplication.instance() or QApplication([])
     dialog = SpaceGroupSelectorDialog()
 
     for prototype in load_structure_database():
@@ -52,11 +47,9 @@ def test_every_database_prototype_can_preload_the_shared_editor():
         assert sum(map(len, dialog._selected_sites.values())) == len(prototype.sites)
 
     dialog.close()
-    application.processEvents()
 
 
 def test_shared_editor_creates_representative_database_structures():
-    application = QApplication.instance() or QApplication([])
     dialog = SpaceGroupSelectorDialog()
     expected_atom_counts = {
         "B2    cP2   CsCl": 2,
@@ -87,11 +80,31 @@ def test_shared_editor_creates_representative_database_structures():
         )
 
     dialog.close()
-    application.processEvents()
 
 
-def test_database_editor_focuses_first_editable_lattice_parameter():
-    application = QApplication.instance() or QApplication([])
+def test_structure_editor_deferred_gui_work_is_object_owned(_qt_application):
+    dialog = SpaceGroupSelectorDialog()
+    prototype = next(
+        item for item in load_structure_database() if item.name.startswith("C4 ")
+    )
+    dialog.load_prototype(prototype)
+
+    assert dialog._draw_timer.parent() is dialog
+    assert dialog._draw_timer.isActive()
+    assert dialog._focus_timer.parent() is dialog
+
+    wyckoff = next(iter(dialog._wyckoff_widgets.values()))
+    assert wyckoff._focus_filter.parent() is wyckoff
+    assert wyckoff._focus_filter._leave_timer.parent() is wyckoff._focus_filter
+
+    # Deleting the dialog must cancel its pending redraw rather than leaving a
+    # Python callback that can run against an already-destroyed Qt widget tree.
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    _qt_application.processEvents()
+
+
+def test_database_editor_focuses_first_editable_lattice_parameter(_qt_application):
     dialog = SpaceGroupSelectorDialog()
     prototype = next(
         item for item in load_structure_database() if item.name.startswith("C4 ")
@@ -100,7 +113,7 @@ def test_database_editor_focuses_first_editable_lattice_parameter():
     dialog.show()
 
     dialog.focus_lattice_parameters()
-    application.processEvents()
+    _qt_application.processEvents()
 
-    assert application.focusWidget() is dialog._lat_vars["a"]
+    assert _qt_application.focusWidget() is dialog._lat_vars["a"]
     dialog.close()

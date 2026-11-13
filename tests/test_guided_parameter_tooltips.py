@@ -4,7 +4,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
@@ -23,7 +22,6 @@ def _dialog(task):
 
 
 def test_scf_fields_show_real_name_and_ase2sprkkr_help():
-    application = QApplication.instance() or QApplication([])
     dialog = _dialog("scf")
 
     for view in dialog.form.field_views:
@@ -37,12 +35,9 @@ def test_scf_fields_show_real_name_and_ase2sprkkr_help():
     assert "Maximal number of iterations of the SCF cycle" in niter.toolTip()
 
     dialog.close()
-    application.processEvents()
 
 
 def test_all_task_fields_show_real_parameter_name_on_editor_and_label():
-    application = QApplication.instance() or QApplication([])
-
     for task in ("dos", "xas", "arpes", "bsf", "jxc"):
         dialog = _dialog(task)
         for view in dialog.form.field_views:
@@ -51,8 +46,6 @@ def test_all_task_fields_show_real_parameter_name_on_editor_and_label():
             assert parameter_name in editor.toolTip()
             assert parameter_name in view.label.toolTip()
         dialog.close()
-
-    application.processEvents()
 
 
 def test_generic_help_is_not_mistaken_for_parameter_documentation():
@@ -69,7 +62,6 @@ def test_generic_help_is_not_mistaken_for_parameter_documentation():
 
 
 def test_bsf_path_controls_share_kpath_tooltip():
-    application = QApplication.instance() or QApplication([])
     dialog = _dialog("bsf")
 
     for editor in dialog.editors_for(("TASK", "KPATH")):
@@ -78,4 +70,3 @@ def test_bsf_path_controls_share_kpath_tooltip():
         assert "TASK.KPATH" in editor.control.path_summary.toolTip()
 
     dialog.close()
-    application.processEvents()

@@ -10,7 +10,9 @@ from ase2sprkkr.outputs import attach_persistent_run, load_persistent_result
 
 logger = logging.getLogger(__name__)
 
-_FINAL_STATES = frozenset({"finished", "failed", "cancelled"})
+_FINAL_STATES = frozenset(
+    {"finished", "execution_failed", "finalization_failed", "cancelled"}
+)
 JobChangedListener = Callable[[str], None]
 _RECOVERING = object()
 
@@ -87,6 +89,11 @@ class PersistentJob:
     def is_final(self) -> bool:
         return self.state in _FINAL_STATES
 
+    @property
+    def can_retry_finalization(self) -> bool:
+        """Whether an explicit retry-finalization action is meaningful."""
+        return self.state == "finalization_failed"
+
     @classmethod
     def from_run_record(
         cls,
@@ -94,13 +101,13 @@ class PersistentJob:
         *,
         result_files_verified: bool = False,
     ) -> "PersistentJob":
+        state = _value(record.state)
         result_files = record.result_files
         result_files_state = (
-            _value(getattr(result_files, "state", None))
-            if result_files is not None
-            else None
+            None
+            if state == "finalization_failed" or result_files is None
+            else _value(getattr(result_files, "state", None))
         )
-        state = _value(record.state)
         finished_at = getattr(record, "finished_at", None)
         return cls(
             id=str(record.id),
@@ -127,8 +134,10 @@ class PersistentJobSource:
     receives only a stable run id and reloads the record from the persistent
     store instead of accepting a parallel copy of lifecycle state.
 
-    Recovery of persisted ``finishing`` jobs is an implementation detail of
-    this source. Presentation code never owns or drives recovery.
+    Recovery of persisted ``finalizing`` jobs is an implementation detail of
+    this source. Presentation code never owns or classifies recovery failures.
+    A ``finalization_failed`` run is terminal until the user explicitly retries
+    it; the backend then owns the transition back through ``finalizing``.
     """
 
     def __init__(self, manager: Any | None = None) -> None:
@@ -187,6 +196,12 @@ class PersistentJobSource:
         return self.available and callable(getattr(self._manager, "attach", None))
 
     @property
+    def supports_retry_finalization(self) -> bool:
+        return self.supports_attach and callable(
+            getattr(self._manager, "retry_finalization", None)
+        )
+
+    @property
     def supports_result_file_check(self) -> bool:
         return self.available and callable(
             getattr(self._manager, "check_result_files", None)
@@ -228,7 +243,7 @@ class PersistentJobSource:
             return self._jobs.get(str(job_id))
 
     def reload(self, *, notify: bool = True) -> tuple[PersistentJob, ...]:
-        """Reload persisted metadata and recover unfinished finalization."""
+        """Reload persisted metadata and recover interrupted finalization."""
         if self._manager is None:
             return ()
         records = self._manager.store.runs()
@@ -244,7 +259,7 @@ class PersistentJobSource:
             for job_id in set(previous) | set(loaded)
             if previous.get(job_id) != loaded.get(job_id)
         )
-        self._recover_finishing(tuple(loaded.values()))
+        self._recover_finalizing(tuple(loaded.values()))
         if notify:
             for job_id in changed:
                 self._notify(job_id)
@@ -266,7 +281,7 @@ class PersistentJobSource:
 
         job = PersistentJob.from_run_record(record)
         changed = self._replace_cached_job(job)
-        self._recover_finishing((job,))
+        self._recover_finalizing((job,))
         if changed:
             self._notify(job_id)
         return job
@@ -297,10 +312,19 @@ class PersistentJobSource:
         callback=None,
         output_listener=None,
     ) -> Any:
-        """Reconnect to an active run for an explicit user monitor."""
+        """Attach to an active run or explicitly retry failed finalization."""
         if not self.supports_attach:
             raise NotImplementedError(
                 "This ASE2SPRKKR version cannot attach to persistent calculations."
+            )
+        job = self.job(str(job_id))
+        if (
+            job is not None
+            and job.can_retry_finalization
+            and not self.supports_retry_finalization
+        ):
+            raise NotImplementedError(
+                "This ASE2SPRKKR version cannot retry persistent finalization."
             )
         return attach_persistent_run(
             self._manager,
@@ -328,20 +352,34 @@ class PersistentJobSource:
             self._jobs[job.id] = job
         return previous != job
 
-    def _recover_finishing(self, jobs: tuple[PersistentJob, ...]) -> None:
+    def _refresh_after_recovery_failure(self, job_id: str) -> None:
+        """Refresh cache after recovery without recursively attempting recovery."""
+        try:
+            record = self._manager.store.get(job_id)
+        except (OSError, RuntimeError, ValueError):
+            logger.exception(
+                "Failed to refresh persistent run %s after recovery failure", job_id
+            )
+            return
+        job = PersistentJob.from_run_record(record)
+        if self._replace_cached_job(job):
+            self._notify(job.id)
+
+    def _recover_finalizing(self, jobs: tuple[PersistentJob, ...]) -> None:
         if not self.supports_attach:
             return
         for job in jobs:
-            if job.state != "finishing" or not job.attachable:
+            if job.state != "finalizing" or not job.attachable:
                 continue
             try:
                 self._recover(job.id)
             except Exception:  # noqa: BLE001 - persisted/backend recovery boundary
                 logger.exception("Failed to recover persistent run %s", job.id)
+                self._refresh_after_recovery_failure(job.id)
 
     def _recover(self, job_id: str) -> Any | None:
         # Reserve the identity before attach, then release the lock. A second
-        # reload sees the sentinel and cannot attach the same finishing run.
+        # reload sees the sentinel and cannot attach the same finalizing run.
         with self._lock:
             if job_id in self._recovery_runners:
                 value = self._recovery_runners[job_id]
