@@ -64,8 +64,11 @@ def test_attached_execution_honors_cancellation_before_registration():
         def wait(self):  # pragma: no cover - cancellation stops before wait
             events.append("wait")
 
+        def stop_observation(self):
+            events.append("stop_observation")
+
         def cancel(self):
-            events.append("cancel")
+            raise AssertionError("An attached observer must not kill the job")
 
     with pytest.raises(ExecutionCancelled):
         AttachedRunExecution(
@@ -74,7 +77,7 @@ def test_attached_execution_honors_cancellation_before_registration():
             _Cancellation(requested=True),
         ).run()
 
-    assert events == ["cancel"]
+    assert events == ["stop_observation"]
 
 
 def test_attached_execution_converts_wait_failure_after_cancel_to_cancellation():

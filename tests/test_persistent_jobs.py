@@ -7,7 +7,7 @@ import pytest
 from kkrunner.runs import RunState, FailurePhase, ExecutionMetadata, WorkingDirectory
 from kkrunner.client import SshTransport
 from kkrunner.backends import BackendConfig
-from kkrunner.files import FileManifest
+from kkrunner.files import FileManifest, FileEntry
 import guy4ase.gui.application.persistent_jobs as module
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
@@ -150,8 +150,9 @@ def test_unknown_direct_ssh_run_explains_why_it_cannot_be_reattached():
     item.execution = replace(item.execution, backend=BackendConfig("direct"))
     restored = PersistentJob.from_run_record(item)
     assert not restored.attachable
-    assert "direct backend" in restored.reattach_unavailable_reason
-    assert "still be running" in restored.reattach_unavailable_reason
+    assert "no saved output" in restored.reattach_unavailable_reason.lower()
+    assert not restored.cancelable
+    assert "verified PID" in restored.cancel_unavailable_reason
 
 
 def test_submitting_run_explains_missing_backend_identity():
@@ -172,3 +173,47 @@ def test_profile_comes_from_ase2sprkkr_metadata():
     assert PersistentJob.from_run_record(item).profile is None
     item.metadata["ase2sprkkr"].pop("profile")
     assert PersistentJob.from_run_record(item).profile is None
+
+
+def test_direct_run_with_saved_output_can_monitor_and_safely_cancel():
+    item = record(RunState.UNKNOWN, backend_id="direct:42:137:00000000-0000-0000-0000-000000000000")
+    item.execution = replace(item.execution, backend=BackendConfig("direct"))
+    item.files = FileManifest(stdout=FileEntry(
+        local_path="/tmp/calc/stdout.txt", remote_path="/remote/calc/stdout.txt",
+    ))
+    job = PersistentJob.from_run_record(item)
+    assert job.attachable
+    assert job.cancelable
+    assert job.reattach_unavailable_reason is None
+
+
+def test_source_cancel_and_forget_delegate_to_manager():
+    item = record(RunState.UNKNOWN)
+    store = Store(item)
+    calls = []
+
+    def forget(job_id, *, force=False):
+        calls.append(("forget", job_id, force))
+        store.current = None
+        return item
+
+    store.runs = lambda: (() if store.current is None else (store.current,))
+
+    def get(job_id):
+        if store.current is None:
+            raise FileNotFoundError(job_id)
+        return store.current
+
+    store.get = get
+    manager = SimpleNamespace(
+        store=store,
+        cancel=lambda job_id: calls.append(("cancel", job_id)),
+        forget=forget,
+    )
+    source = PersistentJobSource(manager)
+    assert source.supports_cancel
+    assert source.supports_forget
+    assert source.cancel(item.id) is not None
+    source.forget(item.id, force=True)
+    assert source.job(item.id) is None
+    assert calls == [("cancel", item.id), ("forget", item.id, True)]

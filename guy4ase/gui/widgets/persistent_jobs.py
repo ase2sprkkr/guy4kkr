@@ -89,6 +89,8 @@ class PersistentJobsWidget(QWidget):
     retryDownloadRequested = pyqtSignal(str)
     retryPostprocessingRequested = pyqtSignal(str)
     loadResultRequested = pyqtSignal(str)
+    cancelRequested = pyqtSignal(str)
+    forgetRequested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -108,6 +110,8 @@ class PersistentJobsWidget(QWidget):
         self._supports_attach = False
         self._supports_retry_download = False
         self._supports_retry_postprocessing = False
+        self._supports_cancel = False
+        self._supports_forget = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -200,6 +204,15 @@ class PersistentJobsWidget(QWidget):
         self.monitor_button.hide()
         details_layout.addWidget(self.monitor_button)
 
+        lifecycle_buttons = QHBoxLayout()
+        self.cancel_button = QPushButton("Cancel process", details)
+        self.cancel_button.clicked.connect(self._request_cancel)
+        lifecycle_buttons.addWidget(self.cancel_button)
+        self.forget_button = QPushButton("Delete run record…", details)
+        self.forget_button.clicked.connect(self._request_forget)
+        lifecycle_buttons.addWidget(self.forget_button)
+        details_layout.addLayout(lifecycle_buttons)
+
         self.reattach_notice = QLabel(details)
         self.reattach_notice.setWordWrap(True)
         self.reattach_notice.hide()
@@ -255,6 +268,8 @@ class PersistentJobsWidget(QWidget):
         supports_attach: bool,
         supports_retry_download: bool,
         supports_retry_postprocessing: bool = False,
+        supports_cancel: bool = False,
+        supports_forget: bool = False,
     ) -> None:
         """Render a complete source snapshot while preserving view selection."""
         self._all_jobs = tuple(
@@ -265,6 +280,8 @@ class PersistentJobsWidget(QWidget):
         self._supports_attach = supports_attach
         self._supports_retry_download = supports_retry_download
         self._supports_retry_postprocessing = supports_retry_postprocessing
+        self._supports_cancel = supports_cancel
+        self._supports_forget = supports_forget
         self.refresh_button.setEnabled(supports_refresh)
 
         if not available:
@@ -426,6 +443,8 @@ class PersistentJobsWidget(QWidget):
                 widget.setText("—")
             self.message_value.hide()
             self.monitor_button.hide()
+            self.cancel_button.hide()
+            self.forget_button.hide()
             self.reattach_notice.hide()
             self.retry_download_button.hide()
             self.retry_postprocessing_button.hide()
@@ -475,6 +494,23 @@ class PersistentJobsWidget(QWidget):
             if job.attachable and self._supports_attach
             else (reason or "Reattachment is not available for this calculation.")
         )
+        self.cancel_button.setVisible(not job.is_final)
+        self.cancel_button.setEnabled(
+            not job.is_final and job.cancelable and self._supports_cancel
+        )
+        self.cancel_button.setToolTip(
+            "Request termination of the original calculation process."
+            if job.cancelable and self._supports_cancel
+            else (
+                job.cancel_unavailable_reason
+                or "Cancelling persisted processes is not supported by this installation."
+            )
+        )
+        self.forget_button.setVisible(self._supports_forget)
+        self.forget_button.setEnabled(self._supports_forget)
+        self.forget_button.setToolTip(
+            "Remove only this calculation's history entry; keep the process and output files."
+        )
         self.reattach_notice.setText(reason or "")
         self.reattach_notice.setVisible(not job.is_final and bool(reason))
         self.retry_download_button.setVisible(
@@ -490,6 +526,14 @@ class PersistentJobsWidget(QWidget):
         )
         if selection_changed:
             self.jobSelected.emit(job.id)
+
+    def _request_cancel(self) -> None:
+        if self._selected_job_id is not None:
+            self.cancelRequested.emit(self._selected_job_id)
+
+    def _request_forget(self) -> None:
+        if self._selected_job_id is not None:
+            self.forgetRequested.emit(self._selected_job_id)
 
     def _request_monitor(self) -> None:
         job_id = self._selected_job_id

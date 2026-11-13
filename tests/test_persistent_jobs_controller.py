@@ -528,3 +528,51 @@ def test_reconnect_action_is_enabled_for_unknown_supervised_run():
     assert not view.monitor_button.isHidden()
     assert view.monitor_button.isEnabled()
     assert view.reattach_notice.isHidden()
+
+
+def test_unknown_run_can_be_forgotten_only_after_dangerous_confirmation(monkeypatch):
+    _app = QApplication.instance() or QApplication([])
+    job = _job("unresolved", state="unknown")
+    source = _Source((job,))
+    source.supports_forget = True
+    calls = []
+
+    def forget(job_id, *, force=False):
+        calls.append((job_id, force))
+        source._jobs.pop(job_id)
+        for listener in tuple(source.listeners):
+            listener(job_id)
+
+    source.forget = forget
+    controller = PersistentJobsController(source)
+    view = _view()
+    controller.bind_view(view)
+    monkeypatch.setattr(controller_module, "run_modal_task", lambda _view, fn, **_kwargs: fn())
+    confirmations = []
+    def prompt(*args, **kwargs):
+        confirmations.append(args[2])
+        return QMessageBox.StandardButton.Yes
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "warning", prompt)
+    view.forgetRequested.emit(job.id)
+    assert calls == [(job.id, True)]
+    assert "may still be running" in confirmations[0]
+    assert view.all_jobs == ()
+
+
+def test_cancel_uses_native_backend_and_keeps_history(monkeypatch):
+    _app = QApplication.instance() or QApplication([])
+    job = replace(_job("active"), cancelable=True)
+    source = _Source((job,))
+    source.supports_cancel = True
+    calls = []
+    source.cancel = lambda job_id: calls.append(job_id)
+    controller = PersistentJobsController(source)
+    view = _view()
+    controller.bind_view(view)
+    monkeypatch.setattr(controller_module, "run_modal_task", lambda _view, fn, **_kwargs: fn())
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    view.cancelRequested.emit(job.id)
+    assert calls == [job.id]
+    assert view.all_jobs == (job,)

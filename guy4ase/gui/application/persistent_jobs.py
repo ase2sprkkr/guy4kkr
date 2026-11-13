@@ -64,11 +64,39 @@ def _attachment_availability(record: Any, state: str) -> tuple[bool, str | None]
         )
     backend = record.execution.backend.create()
     if BackendCapability.REATTACH not in backend.supports:
+        return False, f"The {backend.name} backend does not support reattachment."
+    if backend.name == "direct":
+        local = record.execution.transport.is_local
+        streams = (record.files.stdout, record.files.stderr)
+        if not any(
+            stream is not None and (
+                stream.local_path if local else stream.remote_path
+            )
+            for stream in streams
+        ):
+            return (
+                False,
+                "Direct execution has no saved output or error file to monitor. "
+                "Refresh statuses to check whether its process still exists.",
+            )
+    return True, None
+
+
+def _cancellation_availability(record: Any, state: str) -> tuple[bool, str | None]:
+    """Do not offer unverified process killing for legacy direct identities."""
+    if state in _FINAL_STATES:
+        return False, None
+    token = record.execution.backend_id
+    if token is None:
+        return False, "This calculation has no saved process reference to cancel."
+    backend = record.execution.backend.create()
+    if BackendCapability.CANCEL not in backend.supports:
+        return False, f"The {backend.name} backend cannot cancel persisted processes."
+    if backend.name == "direct" and not token.startswith("direct:"):
         return (
             False,
-            f"The {backend.name} backend cannot reattach to an existing calculation. "
-            "A remote calculation may still be running, even when its status is Unknown. "
-            "For future SSH calculations, enable 'Reattachable process' in the run profile.",
+            "This older direct run has no verified PID/start-time identity. "
+            "It cannot be safely killed; you can remove its history record instead.",
         )
     return True, None
 
@@ -95,6 +123,8 @@ class PersistentJob:
     failure_phase: str | None = None
     project_id: str | None = None
     profile: str | None = None
+    cancelable: bool = False
+    cancel_unavailable_reason: str | None = None
 
     @property
     def started_at(self) -> str:
@@ -131,6 +161,7 @@ class PersistentJob:
         finished_at = getattr(record, "finished_at", None)
         metadata = record.metadata.get("ase2sprkkr", {})
         attachable, reattach_unavailable_reason = _attachment_availability(record, state)
+        cancelable, cancel_unavailable_reason = _cancellation_availability(record, state)
         return cls(
             id=str(record.id),
             state=state,
@@ -150,6 +181,8 @@ class PersistentJob:
             failure_phase=(None if record.failure_phase is None else _value(record.failure_phase)),
             project_id=getattr(record, "project_id", None),
             profile=metadata.get("profile"),
+            cancelable=cancelable,
+            cancel_unavailable_reason=cancel_unavailable_reason,
         )
 
 
@@ -217,6 +250,14 @@ class PersistentJobSource:
     @property
     def supports_retry_postprocessing(self) -> bool:
         return self.available and callable(getattr(self._manager, "retry_postprocessing", None))
+
+    @property
+    def supports_cancel(self) -> bool:
+        return self.available and callable(getattr(self._manager, "cancel", None))
+
+    @property
+    def supports_forget(self) -> bool:
+        return self.available and callable(getattr(self._manager, "forget", None))
 
     @property
     def supports_result_file_check(self) -> bool:
@@ -318,7 +359,11 @@ class PersistentJobSource:
                     recover_submitting(record)
         if self.supports_refresh:
             self._manager.refresh()
-        return self.reload()
+        jobs = self.reload()
+        # Recover any processing/downloading work that just became eligible
+        # after a backend status refresh; never resubmit its calculation.
+        self._recover_incomplete(jobs)
+        return jobs
 
     def check_result_files(self, job_id: str) -> PersistentJob:
         if not self.supports_result_file_check:
@@ -358,6 +403,24 @@ class PersistentJobSource:
             callback=callback,
             output_listener=output_listener,
         )
+
+    def cancel(self, job_id: str) -> PersistentJob | None:
+        """Ask the backend to stop the native process, then refresh its record."""
+        if not self.supports_cancel:
+            raise NotImplementedError("This runner cannot cancel persistent jobs")
+        try:
+            self._manager.cancel(str(job_id))
+        finally:
+            self.job_changed(str(job_id))
+        return self.job(str(job_id))
+
+    def forget(self, job_id: str, *, force: bool = False) -> Any:
+        """Forget history only: never delete output files or kill processes."""
+        if not self.supports_forget:
+            raise NotImplementedError("This runner cannot remove persistent history")
+        removed = self._manager.forget(str(job_id), force=force)
+        self.job_changed(str(job_id))
+        return removed
 
     def retry_postprocessing(self, job_id: str) -> Any:
         """Reprocess persisted output files without executing the run again."""

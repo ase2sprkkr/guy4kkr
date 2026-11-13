@@ -70,6 +70,7 @@ class RunMonitorWindow(QDialog):
         on_finished: Callable[[Any], None] | None = None,
         background_thread_factory: Callable[..., Any] = Thread,
         autostart: bool = True,
+        observation_only: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -80,7 +81,7 @@ class RunMonitorWindow(QDialog):
         self._finished_callback = on_finished
         self._warning_title = warning_title
         self._background_thread_factory = background_thread_factory
-        self._cancellation = RunCancellation()
+        self._cancellation = RunCancellation(observation_only=observation_only)
         self._thread: QThread | None = None
         self._worker: RunMonitorWorker | None = None
         self._close_requested = False
@@ -102,7 +103,11 @@ class RunMonitorWindow(QDialog):
         layout.addWidget(self._output, 1)
 
         buttons = QHBoxLayout()
-        self._stop_btn = QPushButton("Stop", self)
+        self._stop_btn = QPushButton("Stop monitoring" if observation_only else "Stop", self)
+        self._stop_btn.setToolTip(
+            "Stop following output without terminating the calculation."
+            if observation_only else "Request termination of the calculation process."
+        )
         self._stop_btn.clicked.connect(self._on_stop)
         buttons.addWidget(self._stop_btn)
 

@@ -50,7 +50,8 @@ def wait_for_runner(cancellation: Cancellation, runner: Any) -> Any:
 class RunCancellation:
     """Bridge a cancellation request to a runner that may not exist yet."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, observation_only: bool = False) -> None:
+        self._observation_only = observation_only
         self._lock = Lock()
         self._requested = False
         self._runner: Any | None = None
@@ -73,12 +74,17 @@ class RunCancellation:
             self._runner = runner
             return True
 
-    @staticmethod
-    def _cancel_runner(runner: Any) -> None:
+    def _cancel_runner(self, runner: Any) -> None:
         try:
-            runner.cancel()
-        except Exception:  # noqa: BLE001 - backend cancellation boundary
-            logger.exception("Failed to cancel calculation")
+            if self._observation_only:
+                runner.stop_observation()
+            else:
+                runner.cancel()
+        except Exception:  # noqa: BLE001 - backend observer/cancellation boundary
+            logger.exception(
+                "Failed to stop observing calculation" if self._observation_only
+                else "Failed to cancel calculation"
+            )
 
     def request(self) -> None:
         """Latch cancellation and cancel an already-registered runner off-thread."""

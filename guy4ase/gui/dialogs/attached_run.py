@@ -43,7 +43,7 @@ class AttachedRunWorker(RunMonitorWorker):
         )
 
     def _emit_cancelled(self) -> None:
-        self.status.emit("Cancelled")
+        self.status.emit("Monitoring stopped")
         self.cancelled.emit()
 
     @pyqtSlot()
@@ -79,4 +79,5 @@ def create_attached_run_monitor_window(
         initial_status=state_label(job.state),
         on_finished=on_finished,
         autostart=autostart,
+        observation_only=True,
     )

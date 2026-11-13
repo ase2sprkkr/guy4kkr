@@ -155,3 +155,12 @@ def test_generic_monitor_discards_old_output_blocks():
     assert window._output.document().blockCount() <= MAX_OUTPUT_BLOCKS
     assert "line 0\n" not in window._output.toPlainText()
     assert f"line {MAX_OUTPUT_BLOCKS + 9}" in window._output.toPlainText()
+
+
+def test_attached_monitor_stop_button_describes_observation_only():
+    app = QApplication.instance() or QApplication([])
+    window = RunMonitorWindow(
+        lambda cancellation: object(), observation_only=True, autostart=False,
+    )
+    assert window._stop_btn.text() == "Stop monitoring"
+    assert window._cancellation._observation_only

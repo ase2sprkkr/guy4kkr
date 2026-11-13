@@ -42,3 +42,20 @@ def test_cancellation_requested_before_runner_registration_is_latched():
     assert cancellation.requested
     assert not cancellation.register(object())
     assert cancellation.runner is None
+
+
+def test_observation_stop_never_cancels_underlying_job():
+    detached = Event()
+
+    class Runner:
+        def cancel(self):
+            raise AssertionError("An attached monitor cannot cancel its job")
+
+        def stop_observation(self):
+            detached.set()
+
+    cancellation = RunCancellation(observation_only=True)
+    assert cancellation.register(Runner())
+    cancellation.request()
+    assert detached.wait(5)
+    assert cancellation.requested

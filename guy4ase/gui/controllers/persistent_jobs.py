@@ -118,6 +118,8 @@ class PersistentJobsController(QObject):
             lambda bound_view=view: self._refresh_requested(bound_view)
         )
         view.monitorRequested.connect(self.open_monitor_window)
+        view.cancelRequested.connect(lambda job_id, bound_view=view: self._cancel_requested(bound_view, job_id))
+        view.forgetRequested.connect(lambda job_id, bound_view=view: self._forget_requested(bound_view, job_id))
         view.retryDownloadRequested.connect(self.retry_download)
         view.retryPostprocessingRequested.connect(
             lambda job_id, bound_view=view: self._retry_postprocessing_requested(bound_view, job_id)
@@ -150,6 +152,8 @@ class PersistentJobsController(QObject):
             supports_attach=self._source.supports_attach,
             supports_retry_download=self._source.supports_retry_download,
             supports_retry_postprocessing=getattr(self._source, "supports_retry_postprocessing", False),
+            supports_cancel=getattr(self._source, "supports_cancel", False),
+            supports_forget=getattr(self._source, "supports_forget", False),
         )
 
     def refresh_views(self) -> None:
@@ -421,6 +425,65 @@ class PersistentJobsController(QObject):
             )
         except Exception as exc:  # noqa: BLE001 - execution backend boundary
             QMessageBox.warning(view, "Status Refresh Failed", str(exc))
+
+    def _cancel_requested(self, view: PersistentJobsWidget, job_id: str) -> None:
+        """Cancel a native process, not its historical metadata."""
+        job = self._source.job(job_id)
+        if job is None or job.is_final or not job.cancelable or not self._source.supports_cancel:
+            return
+        answer = QMessageBox.question(
+            view,
+            "Cancel calculation process?",
+            f"Request termination of {job.dataset or job.id}? "
+            "The calculation may be running on another computer. "
+            "Its history and result files will be preserved.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            run_modal_task(
+                view,
+                lambda: self._source.cancel(job_id),
+                title="Cancelling Calculation",
+                label="Requesting process termination…",
+            )
+        except Exception as exc:  # noqa: BLE001 - remote execution boundary
+            QMessageBox.warning(view, "Cancellation Failed", str(exc))
+
+    def _forget_requested(self, view: PersistentJobsWidget, job_id: str) -> None:
+        """Allow removal of unresolved history without claiming its job ended."""
+        job = self._source.job(job_id)
+        if job is None or not self._source.supports_forget:
+            return
+        active = not job.is_final
+        warning = (
+            "WARNING: The process may still be running. Removing its record "
+            "will NOT stop it, even if its status is Unknown.\n\n"
+            if active else ""
+        )
+        answer = QMessageBox.warning(
+            view,
+            "Dangerous: delete calculation history?",
+            f"{warning}Permanently remove the saved run record for "
+            f"{job.dataset or job.id} ({job.id})?\n\n"
+            "This removes the history entry only. Calculation output files "
+            "and result files will NOT be deleted.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            run_modal_task(
+                view,
+                lambda: self._source.forget(job_id, force=active),
+                title="Removing Calculation Record",
+                label="Removing saved calculation history…",
+            )
+        except Exception as exc:  # noqa: BLE001 - persistent storage boundary
+            QMessageBox.warning(view, "Delete Run Record Failed", str(exc))
 
     @staticmethod
     def _show_monitor_window(monitor_window: RunMonitorWindow) -> None:

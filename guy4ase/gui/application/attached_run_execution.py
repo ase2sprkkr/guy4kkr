@@ -6,7 +6,7 @@ from typing import Any
 
 from guy4ase.gui.application.execution_cancellation import (
     Cancellation,
-    register_runner,
+    ExecutionCancelled,
     wait_for_runner,
 )
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
@@ -35,7 +35,11 @@ class AttachedRunExecution:
             self._job_id,
             output_listener=self._output,
         )
-        register_runner(self._cancellation, runner)
+        # Stop on an attached observer must never kill the underlying job,
+        # including when Stop was requested before registration finished.
+        if not self._cancellation.register(runner):
+            runner.stop_observation()
+            raise ExecutionCancelled
         self._attached(runner)
         return runner
 
