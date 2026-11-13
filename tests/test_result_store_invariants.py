@@ -7,7 +7,6 @@ from ase import Atoms
 
 from guy4ase.gui.application import result_store as result_store_module
 from guy4ase.gui.application.result_store import ResultStore
-from guy4ase.gui.application.workspace import Generation
 from guy4ase.gui.application.workspace_controller import (
     CalculationRequest,
     WorkspaceController,
@@ -42,7 +41,6 @@ def test_calculation_request_requires_structure_and_state_ids():
         atoms=Atoms("Fe"),
         input_parameters=object(),
         directory=".",
-        generation=Generation(),
     )
 
     with pytest.raises(TypeError, match="structure_id"):
@@ -212,7 +210,8 @@ def test_replace_structure_store_failure_keeps_workspace_unchanged(monkeypatch):
     controller.replace_structure(original, directory="old", restarted=True)
     original_structure_id = controller.structure_id
     original_state_id = controller.state_id
-    original_generation = controller.generation
+    original_structure_generation = controller.structure_generation
+    original_directory_generation = controller.directory_generation
 
     def fail_new_structure_state(*_args, **_kwargs):
         raise ValueError("state preparation failed")
@@ -235,7 +234,8 @@ def test_replace_structure_store_failure_keeps_workspace_unchanged(monkeypatch):
     assert controller.structure_id == original_structure_id
     assert controller.state_id == original_state_id
     assert controller.restarted is True
-    assert controller.generation == original_generation
+    assert controller.structure_generation == original_structure_generation
+    assert controller.directory_generation == original_directory_generation
 
 
 def test_apply_structure_edit_store_failure_keeps_workspace_unchanged(monkeypatch):
@@ -244,7 +244,7 @@ def test_apply_structure_edit_store_failure_keeps_workspace_unchanged(monkeypatc
     controller.replace_structure(original)
     original_structure_id = controller.structure_id
     original_state_id = controller.state_id
-    original_generation = controller.generation
+    original_generation = controller.structure_generation
 
     def fail_new_structure_state(*_args, **_kwargs):
         raise ValueError("state preparation failed")
@@ -258,14 +258,14 @@ def test_apply_structure_edit_store_failure_keeps_workspace_unchanged(monkeypatc
     with pytest.raises(ValueError, match="state preparation failed"):
         controller.apply_structure_edit(
             lambda atoms: atoms,
-            expected_generation=original_generation,
+            expected_structure_generation=original_generation,
         )
 
     assert controller.atoms is original
     assert controller.structure_id == original_structure_id
     assert controller.state_id == original_state_id
     assert controller.restarted is False
-    assert controller.generation == original_generation
+    assert controller.structure_generation == original_generation
 
 
 def test_result_record_snapshots_task_name_and_input_parameters():

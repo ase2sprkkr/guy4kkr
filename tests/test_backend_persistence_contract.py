@@ -10,6 +10,7 @@ from ase2sprkkr.execution import (
     RunState,
     RunStore,
 )
+from ase2sprkkr.outputs.reader_registry import reader_registry
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
 from guy4ase.gui.application.result_store import ResultStore
@@ -79,12 +80,20 @@ def test_persistent_task_identity_round_trip_drives_recompute_editor(
             result.complete(None, return_code)
             return result
 
-    effective_task = InputParameters.task_registry["SPLEED"]
-    monkeypatch.setattr(effective_task, "output_reader", Reader)
+    resolved_tasks = []
+
+    def reader_class_for_task(task):
+        resolved_tasks.append(task)
+        return Reader
+
+    monkeypatch.setattr(reader_registry, "class_for_task", reader_class_for_task)
 
     source = PersistentJobSource(manager)
     loaded = source.load_result(run.id)
 
+    assert len(resolved_tasks) == 1
+    assert resolved_tasks[0].name == "SPLEED"
+    assert resolved_tasks[0].input_parameters_definition_name == "ARPES"
     assert loaded.task_name.lower() == "spleed"
     assert loaded.input_parameters.task_name.upper() == "ARPES"
     assert loaded.input_parameters.task_definition.name.upper() == "SPLEED"

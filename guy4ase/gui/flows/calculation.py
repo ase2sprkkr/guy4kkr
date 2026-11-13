@@ -36,6 +36,7 @@ def choose_working_directory(
     title: str = "Select Calculation Directory",
 ) -> bool:
     """Choose and publish the workspace calculation directory."""
+    generation = controller.directory_generation
     start_directory = controller.directory or str(Path.home())
     directory = QFileDialog.getExistingDirectory(
         parent,
@@ -44,8 +45,13 @@ def choose_working_directory(
     )
     if not directory:
         return False
-    controller.change_directory(str(directory))
-    return True
+    return document_change_applied(
+        parent,
+        controller.change_directory(
+            str(directory),
+            expected_directory_generation=generation,
+        ),
+    )
 
 
 def _position_like_window(window: QWidget, window_id: str | None) -> None:
@@ -141,9 +147,6 @@ def run_calculation(
         window.show()
         window.start()
     except BaseException:
-        # Any failure after construction must retire the window through its
-        # normal Qt lifetime path. This also covers a failed ownership transfer,
-        # which may have partially installed application/controller references.
         window.close()
         raise
     return window
@@ -169,7 +172,8 @@ def configure_and_run_task(
     ):
         return None
 
-    generation = controller.generation
+    structure_generation = controller.structure_generation
+    input_generation = controller.input_parameters_generation
     atoms = controller.atoms
     if atoms is None:
         QMessageBox.information(
@@ -200,7 +204,8 @@ def configure_and_run_task(
         parent,
         controller.replace_input_parameters(
             parameters,
-            expected_generation=generation,
+            expected_input_parameters_generation=input_generation,
+            expected_structure_generation=structure_generation,
         ),
     ):
         return None
@@ -231,7 +236,7 @@ def use_for_new_calculation(
     expected_potential: PotentialFileVersion | None = None,
 ) -> bool:
     """Confirm and atomically branch from the active or historical structure."""
-    generation = controller.generation
+    generation = controller.structure_generation
     answer = QMessageBox.question(
         parent,
         "Use for New Calculation?",
@@ -247,7 +252,7 @@ def use_for_new_calculation(
         change = controller.use_for_new_calculation(
             result_id=result_id,
             expected_potential=expected_potential,
-            expected_generation=generation,
+            expected_structure_generation=generation,
         )
     except PotentialVersionChanged as exc:
         QMessageBox.warning(
@@ -285,7 +290,8 @@ def recompute_result(
     ):
         return None
 
-    generation = controller.generation
+    structure_generation = controller.structure_generation
+    input_generation = controller.input_parameters_generation
     atoms = controller.atoms
     if atoms is None:
         return None
@@ -319,7 +325,8 @@ def recompute_result(
         parent,
         controller.replace_input_parameters(
             parameters,
-            expected_generation=generation,
+            expected_input_parameters_generation=input_generation,
+            expected_structure_generation=structure_generation,
         ),
     ):
         return None
