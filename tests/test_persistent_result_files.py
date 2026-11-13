@@ -1,31 +1,26 @@
 """Result-file freshness checks for persistent calculation history."""
 from __future__ import annotations
 
-from enum import Enum
+from ase2sprkkr.execution import Execution, ExecutorEndpoint, WorkingDirectory
 from types import SimpleNamespace
 
 from guy4ase.gui.application.persistent_jobs import PersistentJob, PersistentJobSource
 
 
-class _State(str, Enum):
-    FINISHED = "finished"
-
-
 def _record(*, result_files=None):
     return SimpleNamespace(
         id="1234567890abcdef",
-        state=_State.FINISHED,
+        state="finished",
         created_at="2026-10-13T06:00:00+00:00",
         updated_at="2026-10-13T06:30:00+00:00",
         finished_at="2026-10-13T06:20:00+00:00",
         task="dos",
-        directory="/tmp/calc",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory("/tmp/calc")),
         dataset="Fe-DOS",
-        endpoint=None,
-        reference=None,
+        failure_phase=None,
         return_code=0,
         message=None,
-        result_files=result_files,
+        files=result_files,
     )
 
 
@@ -56,20 +51,9 @@ def test_explicit_result_file_check_marks_state_as_verified():
         @staticmethod
         def get(run_id):
             assert run_id == stored.id
-            return stored
-
-    class Manager:
-        store = Store()
-
-        def __init__(self):
-            self.checked = []
-
-        def check_result_files(self, run_id):
-            self.checked.append(run_id)
             return checked
 
-    manager = Manager()
-    source = PersistentJobSource(manager)
+    source = PersistentJobSource(SimpleNamespace(store=Store()))
 
     listed = source.jobs()[0]
     verified = source.check_result_files(stored.id)
@@ -78,10 +62,10 @@ def test_explicit_result_file_check_marks_state_as_verified():
     assert not listed.result_files_verified
     assert verified.result_files_state == "overwritten"
     assert verified.result_files_verified
-    assert manager.checked == [stored.id]
+    assert source.supports_result_file_check
 
 
-def test_result_file_check_requires_backend_operation():
+def test_result_file_check_uses_persisted_store():
     record = _record(
         result_files=SimpleNamespace(state=SimpleNamespace(value="current")),
     )
@@ -98,4 +82,30 @@ def test_result_file_check_requires_backend_operation():
 
     source = PersistentJobSource(SimpleNamespace(store=Store()))
 
-    assert not source.supports_result_file_check
+    assert source.supports_result_file_check
+    assert source.check_result_files(record.id).result_files_verified
+
+def test_result_file_check_detects_changed_historical_output(tmp_path):
+    from ase2sprkkr.execution import FileEntry, FileManifest, FileVersion
+
+    output = tmp_path / "result.out"
+    output.write_text("before")
+    record = _record(result_files=FileManifest(
+        stdout=FileEntry(local_path=str(output)),
+        output_versions=(FileVersion.capture(output, require_digest=True),),
+        captured_at="2026-10-22T12:00:00+00:00",
+    ))
+
+    class Store:
+        def runs(self):
+            return (record,)
+
+        def get(self, run_id):
+            assert run_id == record.id
+            return record
+
+    source = PersistentJobSource(SimpleNamespace(store=Store()))
+    output.write_text("after")
+    checked = source.check_result_files(record.id)
+    assert checked.result_files_state == "overwritten"
+    assert checked.result_files_verified

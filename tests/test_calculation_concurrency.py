@@ -259,7 +259,7 @@ def test_reset_advances_each_changed_revision_independently():
 def test_structure_file_load_ignores_intervening_input_parameter_change(
     monkeypatch, tmp_path
 ):
-    loaded_atoms = Atoms("Fe")
+    loaded_atoms = Atoms("Fe", cell=(2.8, 2.8, 2.8), pbc=True)
     controller = WorkspaceController(WorkspaceState(atoms=Atoms("Cu")))
     history = RecentFiles(tmp_path / "structure-recent.json")
 

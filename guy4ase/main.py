@@ -67,7 +67,9 @@ class GuiApplication(QObject):
             if project_repository is not None
             else ProjectRepository()
         )
-        self.execution_manager = ExecutionManager(project_repository=self.projects)
+        self.execution_manager = ExecutionManager(
+            project_repository=self.projects,
+        )
         self.persistent_jobs = (
             persistent_jobs
             if persistent_jobs is not None
