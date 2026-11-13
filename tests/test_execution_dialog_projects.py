@@ -180,31 +180,117 @@ def test_project_creation_error_does_not_close_execution_dialog(
     dialog.close()
 
 
-def test_project_directory_switch_and_manual_fallback(application, tmp_path):
+def test_project_directory_switch_and_manual_override(application, tmp_path):
     repository = ProjectRepository(tmp_path / "projects")
-    work = tmp_path / "project_work"
-    assigned = repository.create("Assigned", directory=work)
-    no_directory = repository.create("Not assigned")
+    first_directory = tmp_path / "project_work"
+    second_directory = tmp_path / "other_work"
+    first = repository.create("First", directory=first_directory)
+    second = repository.create("Second", directory=second_directory)
+    no_directory = repository.create("No directory")
     initial = str(tmp_path / "workspace")
     dialog = ProfileSelectionDialog(
         project_repository=repository, directory=initial
     )
     assert dialog.directory_name() == initial
 
-    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(assigned.id))
-    assert dialog.directory_name() == str(work)
+    # Before any explicit selection, the project's directory follows its choice.
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(first.id))
+    assert dialog.directory_name() == str(first_directory)
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(second.id))
+    assert dialog.directory_name() == str(second_directory)
+    dialog.project_selector.setCurrentIndex(
+        dialog.project_selector.findData(no_directory.id)
+    )
+    assert dialog.directory_name() == initial
     dialog.project_selector.setCurrentIndex(0)
     assert dialog.directory_name() == initial
 
+    # An explicit directory is a per-run override, even after switching projects.
     manual = str(tmp_path / "manual")
     dialog.directory_edit.setText(manual)
     dialog._directory_edited(manual)
-    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(assigned.id))
-    assert dialog.directory_name() == str(work)
-    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(no_directory.id))
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(first.id))
+    assert dialog.directory_name() == manual
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(second.id))
+    assert dialog.directory_name() == manual
+    dialog.project_selector.setCurrentIndex(
+        dialog.project_selector.findData(no_directory.id)
+    )
     assert dialog.directory_name() == manual
     dialog.project_selector.setCurrentIndex(0)
     assert dialog.directory_name() == manual
+    dialog.close()
+
+
+def test_active_project_directory_is_default_on_dialog_open(application, tmp_path):
+    repository = ProjectRepository(tmp_path / "projects")
+    project_directory = tmp_path / "project"
+    active = repository.create("Active", directory=project_directory)
+    workspace_directory = tmp_path / "workspace"
+    dialog = ProfileSelectionDialog(
+        project_repository=repository,
+        active_project_id=active.id,
+        directory=str(workspace_directory),
+    )
+    assert dialog.project_id() == active.id
+    assert dialog.directory_name() == str(project_directory)
+    dialog.project_selector.setCurrentIndex(0)
+    assert dialog.directory_name() == str(workspace_directory)
+    dialog.close()
+
+    # No inherited workspace directory is required for a project default.
+    dialog = ProfileSelectionDialog(
+        project_repository=repository,
+        active_project_id=active.id,
+        directory=None,
+    )
+    assert dialog.directory_name() == str(project_directory)
+    dialog.accept()
+    assert dialog.result() == dialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_browsed_directory_is_explicit_even_after_project_change(
+    application, monkeypatch, tmp_path
+):
+    repository = ProjectRepository(tmp_path / "projects")
+    first = repository.create("First", directory=tmp_path / "first")
+    second = repository.create("Second", directory=tmp_path / "second")
+    dialog = ProfileSelectionDialog(
+        project_repository=repository, active_project_id=first.id,
+    )
+    assert dialog.directory_name() == str(tmp_path / "first")
+
+    chosen = str(tmp_path / "chosen")
+    monkeypatch.setattr(
+        profiles_module.QFileDialog, "getExistingDirectory",
+        lambda *_args: chosen,
+    )
+    dialog._browse_directory()
+    assert dialog.directory_name() == chosen
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(second.id))
+    assert dialog.directory_name() == chosen
+    dialog.close()
+
+
+def test_typing_directory_after_project_selection_overrides_project(
+    application, tmp_path
+):
+    from PyQt6.QtTest import QTest
+
+    repository = ProjectRepository(tmp_path / "projects")
+    first = repository.create("First", directory=tmp_path / "first")
+    second = repository.create("Second", directory=tmp_path / "second")
+    dialog = ProfileSelectionDialog(
+        project_repository=repository, active_project_id=first.id
+    )
+    assert dialog.directory_name() == str(tmp_path / "first")
+
+    dialog.directory_edit.clear()
+    QTest.keyClicks(dialog.directory_edit, str(tmp_path / "manual"))
+    assert dialog.directory_name() == str(tmp_path / "manual")
+    dialog.project_selector.setCurrentIndex(dialog.project_selector.findData(second.id))
+    assert dialog.directory_name() == str(tmp_path / "manual")
     dialog.close()
 
 

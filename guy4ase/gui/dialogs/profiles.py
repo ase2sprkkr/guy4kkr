@@ -230,9 +230,12 @@ class ProfileSelectionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._require_directory = require_directory
-        self._manual_directory = directory or ""
+        # The workspace directory is a fallback, not an explicit choice in
+        # this dialog. Project directories take precedence until the user
+        # types a directory or chooses one with Browse.
+        self._fallback_directory = directory or ""
+        self._explicit_directory: str | None = None
         self._project_directories = {}
-        self._updating_directory = False
         self._projects = project_repository if project_repository is not None else default_project_repository()
         self._store = store or ExecutionProfileStore()
         self.setWindowTitle("Run SPR-KKR Calculation")
@@ -384,18 +387,19 @@ class ProfileSelectionDialog(QDialog):
         self.project_selector.setCurrentIndex(max(selected, 0))
 
     def _directory_edited(self, text: str) -> None:
-        if not self._updating_directory:
-            self._manual_directory = text
+        # QLineEdit.textEdited is emitted only for user edits; setText() from
+        # _project_changed does not turn a project default into an override.
+        self._explicit_directory = text
 
     def _project_changed(self) -> None:
         project_directory = self._project_directories.get(self.project_id())
-        desired = project_directory or self._manual_directory
+        desired = (
+            self._explicit_directory
+            if self._explicit_directory is not None
+            else project_directory or self._fallback_directory
+        )
         if hasattr(self, "directory_edit") and self.directory_edit.text() != desired:
-            self._updating_directory = True
-            try:
-                self.directory_edit.setText(desired)
-            finally:
-                self._updating_directory = False
+            self.directory_edit.setText(desired)
 
     def project_id(self) -> str | None:
         """Return the project selected for this run, or None if unassigned."""
