@@ -10,6 +10,7 @@ from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_presentation import present_result_tree
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -43,6 +44,16 @@ def _widget() -> ResultActionsWidget:
     )
 
 
+def _set_store(widget: ResultActionsWidget, store: ResultStore) -> None:
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=None,
+            current_state_id=None,
+        )
+    )
+
+
 def test_empty_spheres_breaks_potential_source_provenance():
     store = ResultStore()
     structure_id, root = store.new_structure_state(Atoms("Fe"), potential_path=None)
@@ -57,8 +68,6 @@ def test_empty_spheres_breaks_potential_source_provenance():
     )
     scf_state = scf.output_state_id
     assert scf_state is not None
-    # The named POTFIL did not actually exist, so it cannot be provenance for a
-    # reusable potential even though this was an SCF result.
     assert store.potential_source_result(scf_state) is None
 
     empty_spheres = store.add_result(
@@ -84,7 +93,7 @@ def test_empty_spheres_breaks_potential_source_provenance():
 
     _application = QApplication.instance() or QApplication([])
     widget = _widget()
-    widget.set_results(store)
+    _set_store(widget, store)
     structure = widget._selector.topLevelItem(0)
     labels = [structure.child(i).text(0).split(" — ", 1)[0] for i in range(3)]
     assert labels == ["SCF", "Empty spheres", "DOS"]
@@ -153,7 +162,7 @@ def test_native_result_using_imported_scf_stays_under_import_directory(tmp_path)
     )
 
     widget = _widget()
-    widget.set_results(store)
+    _set_store(widget, store)
 
     assert widget._selector.topLevelItemCount() == 1
     directory_item = widget._selector.topLevelItem(0)
@@ -206,7 +215,7 @@ def test_hidden_import_only_structure_does_not_consume_formula_number(tmp_path):
     )
 
     widget = _widget()
-    widget.set_results(store)
+    _set_store(widget, store)
 
     assert widget._selector.topLevelItemCount() == 2
     assert widget._selector.topLevelItem(0).text(0) == "Fe"

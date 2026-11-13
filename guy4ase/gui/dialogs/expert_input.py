@@ -18,6 +18,7 @@ from guy4ase.gui.flows.input_parameters import (
     choose_and_load_input_parameters,
     edit_input_parameters_file,
 )
+from guy4ase.gui.input_parameters.dataset import apply_default_dataset
 from guy4ase.gui.input_parameters.session import (
     InputParametersSession,
     create_input_parameters_session,
@@ -26,10 +27,7 @@ from guy4ase.gui.input_parameters.validation import (
     InputParametersValidationError,
     validate_setup,
 )
-from guy4ase.gui.widgets.input_parameters.dataset import (
-    DatasetEditor,
-    apply_default_dataset,
-)
+from guy4ase.gui.widgets.input_parameters.dataset import DatasetEditor
 from guy4ase.gui.widgets.input_parameters.expert_tree import ExpertInputTreeEditor
 
 

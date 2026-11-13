@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 
 from PyQt6.QtCore import QRect, QSize
+from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.window_geometry import (
     WindowGeometryStore,
     adjust_window_geometry,
     restore_window_geometry,
+    window_geometry_store,
 )
 
 
@@ -81,6 +83,7 @@ def test_restore_window_geometry_caps_sentinel_by_half_default_size() -> None:
     )
     assert restored == QRect(100, 120, 560, 350)
 
+
 def test_window_geometry_store_ignores_corrupt_entries(tmp_path) -> None:
     path = tmp_path / "window_geometry.json"
     path.write_text(
@@ -105,3 +108,12 @@ def test_window_geometry_store_ignores_corrupt_entries(tmp_path) -> None:
     assert set(store._states) == {"good"}
     assert store._states["good"].maximized is True
     assert store._states["good"].screen == "screen-1"
+
+
+def test_default_window_geometry_store_is_owned_by_application() -> None:
+    application = QApplication.instance() or QApplication([])
+
+    store = window_geometry_store()
+
+    assert store.parent() is application
+    assert window_geometry_store() is store

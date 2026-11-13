@@ -1,4 +1,4 @@
-"""Tests for the result-summary widget's input contract."""
+"""Tests for the result-summary widget's presentation contract."""
 from __future__ import annotations
 
 import os
@@ -12,6 +12,7 @@ from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_presentation import present_result_tree
 from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
@@ -57,6 +58,24 @@ def _widget(*, show_values_without_actions=True):
     return ResultActionsWidget(
         lambda _value, _action: None,
         show_values_without_actions=show_values_without_actions,
+    )
+
+
+def _set_store(
+    widget: ResultActionsWidget,
+    store: ResultStore,
+    *,
+    structure_id: int | None,
+    state_id: int | None,
+    selected_result_id: int | None = None,
+) -> None:
+    widget.set_model(
+        present_result_tree(
+            store,
+            current_structure_id=structure_id,
+            current_state_id=state_id,
+            selected_result_id=selected_result_id,
+        )
     )
 
 
@@ -170,8 +189,13 @@ def test_result_from_other_structure_offers_structure_reuse():
         directory=None,
     )
     widget = _widget()
-    widget.set_workspace_state(current_structure, current_state)
-    widget.set_results(store)
+    _set_store(
+        widget,
+        store,
+        structure_id=current_structure,
+        state_id=current_state,
+        selected_result_id=record.id,
+    )
 
     assert widget.selected_result_id == record.id
     assert not widget._record_actions.isHidden()
@@ -203,8 +227,13 @@ def test_result_from_other_state_of_same_structure_offers_potential_reuse(tmp_pa
         directory=None,
     )
     widget = _widget()
-    widget.set_workspace_state(structure_id, current_state)
-    widget.set_results(store)
+    _set_store(
+        widget,
+        store,
+        structure_id=structure_id,
+        state_id=current_state,
+        selected_result_id=record.id,
+    )
 
     assert widget._use_state_button.text() == "Use this potential"
     assert widget._recompute_button.text() == "Recompute on current potential"
@@ -223,8 +252,13 @@ def test_empty_spheres_is_not_presented_as_recomputable_task():
         directory=None,
     )
     widget = _widget(show_values_without_actions=False)
-    widget.set_workspace_state(structure_id, state_id)
-    widget.set_results(store)
+    _set_store(
+        widget,
+        store,
+        structure_id=structure_id,
+        state_id=state_id,
+        selected_result_id=record.id,
+    )
 
     assert widget.selected_result_id == record.id
     assert widget._selector.currentItem().text(0) == "Empty spheres"

@@ -6,12 +6,33 @@ from types import SimpleNamespace
 from ase import Atoms
 
 from guy4ase.gui.application.settings import ApplicationSettings
-from guy4ase.gui.dialogs.run_calculation import _SprkkrRunWorker
-from guy4ase.gui.widgets.input_parameters.dataset import (
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
+from guy4ase.gui.application.workspace import Generation
+from guy4ase.gui.application.workspace_controller import CalculationRequest
+from guy4ase.gui.input_parameters.dataset import (
     apply_default_dataset,
     filename_component,
     generated_dataset,
 )
+
+
+class _Cancellation:
+    requested = False
+
+    def register(self, _runner):
+        return True
+
+
+def _execution(parameters) -> SprkkrExecution:
+    request = CalculationRequest(
+        atoms=Atoms("Fe"),
+        input_parameters=parameters,
+        directory=".",
+        generation=Generation(),
+        structure_id=1,
+        state_id=1,
+    )
+    return SprkkrExecution(request, _Cancellation())
 
 
 def test_dataset_setting_round_trip(tmp_path):
@@ -83,7 +104,7 @@ def test_apply_default_dataset_uses_injected_mode(monkeypatch):
         return "injected"
 
     monkeypatch.setattr(
-        "guy4ase.gui.widgets.input_parameters.dataset.generated_dataset",
+        "guy4ase.gui.input_parameters.dataset.generated_dataset",
         generate,
     )
     atoms = Atoms("Fe")
@@ -102,13 +123,9 @@ def test_dataset_is_used_as_run_file_namespace():
         def __call__(self):
             return "Fe run/01"
 
-    parameters = SimpleNamespace(
-        CONTROL=SimpleNamespace(DATASET=Option())
-    )
-    request = SimpleNamespace(input_parameters=parameters)
-    worker = _SprkkrRunWorker(request)
+    parameters = SimpleNamespace(CONTROL=SimpleNamespace(DATASET=Option()))
 
-    assert worker._file_names() == (
+    assert _execution(parameters).file_names() == (
         "Fe_run_01_%T.inp",
         "Fe_run_01.pot",
         "Fe_run_01_%T.out",
@@ -121,13 +138,9 @@ def test_unset_dataset_uses_conventional_names():
         def is_set(self):
             return False
 
-    parameters = SimpleNamespace(
-        CONTROL=SimpleNamespace(DATASET=Option())
-    )
-    request = SimpleNamespace(input_parameters=parameters)
-    worker = _SprkkrRunWorker(request)
+    parameters = SimpleNamespace(CONTROL=SimpleNamespace(DATASET=Option()))
 
-    assert worker._file_names() == (
+    assert _execution(parameters).file_names() == (
         "%a_%T.inp",
         "%a.pot",
         "%a_%T.out",

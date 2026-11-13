@@ -26,5 +26,5 @@ def test_failed_structure_edit_does_not_mutate_workspace():
     assert atoms.cell[0, 0] == 1.0
     assert controller.potential_path == "Fe.pot"
     assert controller.state_id == state_id
-    assert controller.result_history == ()
+    assert controller.result_store.results == ()
     assert controller.generation == generation

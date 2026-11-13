@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable
 
 from PyQt6 import sip
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
@@ -25,9 +24,10 @@ class EditorRegistration:
 class ExpertTreeRuntime:
     """Own live Qt-editor registries associated with one Expert tree.
 
-    Rendering decides *what* belongs in the tree. This object only tracks the
+    Rendering decides *what* belongs in the tree. This object tracks the
     resulting live option rows and shapes, editors, their dependencies and
-    validation errors, including cleanup when Qt items/widgets disappear.
+    validation errors, and tears down cell widgets before rendered subtrees are
+    detached from the Qt item model.
     """
 
     def __init__(
@@ -52,10 +52,10 @@ class ExpertTreeRuntime:
     def error_messages(self) -> tuple[str, ...]:
         return tuple(f"{label}: {error}" for _, label, error in self._errors.values())
 
-    @property
-    def option_rows(self) -> Mapping[InputParameterPath, QTreeWidgetItem]:
-        """Read-only compatibility view used by tree-rendering tests."""
-        return MappingProxyType(self._option_rows)
+    def option_items(self) -> tuple[tuple[InputParameterPath, QTreeWidgetItem], ...]:
+        """Return a stable snapshot of currently registered option rows."""
+        self.prune()
+        return tuple(self._option_rows.items())
 
     def option_item(self, path: InputParameterPath) -> QTreeWidgetItem | None:
         item = self._option_rows.get(path)
@@ -137,6 +137,13 @@ class ExpertTreeRuntime:
         *,
         include_root: bool = True,
     ) -> None:
+        """Unregister a subtree and remove its cell widgets from the Qt view.
+
+        The renderer may detach the corresponding ``QTreeWidgetItem`` objects
+        immediately afterwards.  Cell widgets must be removed while their
+        model indexes are still valid; otherwise the view can retain widgets
+        associated with detached rows.
+        """
         before = self.error_messages
         self._unregister_subtree(item, include_root=include_root)
         self._publish_errors_if_changed(before)
@@ -184,20 +191,27 @@ class ExpertTreeRuntime:
         *,
         include_root: bool,
     ) -> None:
-        targets = []
+        for index in range(item.childCount()):
+            self._unregister_subtree(item.child(index), include_root=True)
         if include_root:
-            targets.append(item)
-        targets.extend(item.child(index) for index in range(item.childCount()))
-        for child in targets:
-            self._unregister_subtree(child, include_root=False)
-            editor = self.tree.itemWidget(child, 2)
-            if editor is not None:
-                self._editors.pop(id(editor), None)
-            self._errors.pop(id(child), None)
-            path = self._option_paths.pop(id(child), None)
-            if path is not None and self._option_rows.get(path) is child:
-                self._option_rows.pop(path, None)
-                self._option_shapes.pop(path, None)
+            self._unregister_item(item)
+
+    def _unregister_item(self, item: QTreeWidgetItem) -> None:
+        editor = self.tree.itemWidget(item, 2)
+        if editor is not None:
+            self._editors.pop(id(editor), None)
+        self._errors.pop(id(item), None)
+        path = self._option_paths.pop(id(item), None)
+        if path is not None and self._option_rows.get(path) is item:
+            self._option_rows.pop(path, None)
+            self._option_shapes.pop(path, None)
+
+        # QTreeWidget owns widgets installed with setItemWidget().  Remove them
+        # while the item's model index is still valid; the renderer detaches
+        # the QTreeWidgetItem only after this method returns.
+        for column in range(self.tree.columnCount()):
+            if self.tree.itemWidget(item, column) is not None:
+                self.tree.removeItemWidget(item, column)
 
     def _remove_option(self, path: InputParameterPath, item: QTreeWidgetItem) -> None:
         if self._option_rows.get(path) is item:

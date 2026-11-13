@@ -10,9 +10,11 @@ from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt
 from PyQt6.QtGui import QGuiApplication, QScreen
 from PyQt6.QtWidgets import QWidget
 
+from guy4ase.gui.application.atomic_io import atomic_write_json
 from guy4ase.gui.application.config import config_home
 
 _WINDOW_ID_PROPERTY = "_guy4ase_window_geometry_id"
+_DEFAULT_STORE_OBJECT_NAME = "_guy4ase_window_geometry_store"
 
 
 @dataclass(frozen=True)
@@ -90,8 +92,12 @@ def restore_window_geometry(
 class WindowGeometryStore(QObject):
     """Load, apply, track and persist geometry for registered windows."""
 
-    def __init__(self, path: Path | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        path: Path | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
         self.path = path or default_window_geometry_path()
         self._states: dict[str, _SavedWindowState] = {}
         self.load()
@@ -132,8 +138,7 @@ class WindowGeometryStore(QObject):
             }
         }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            atomic_write_json(self.path, data)
         except OSError:
             return False
         return True
@@ -302,15 +307,17 @@ class WindowGeometryStore(QObject):
         )
 
 
-_default_store: WindowGeometryStore | None = None
-
-
 def window_geometry_store() -> WindowGeometryStore:
-    """Return the process-wide store used by ordinary application windows."""
-    global _default_store
-    if _default_store is None:
-        _default_store = WindowGeometryStore()
-    return _default_store
+    """Return the store owned by the current GUI application."""
+    app = QGuiApplication.instance()
+    if app is None:
+        raise RuntimeError("window geometry requires an active QGuiApplication")
+
+    store = app.findChild(WindowGeometryStore, _DEFAULT_STORE_OBJECT_NAME)
+    if store is None:
+        store = WindowGeometryStore(parent=app)
+        store.setObjectName(_DEFAULT_STORE_OBJECT_NAME)
+    return store
 
 
 def window_placement(

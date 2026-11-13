@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
 class _Parameters:
@@ -55,8 +49,8 @@ def _controller(tmp_path, atoms=None, potential_path=None):
     )
 
 
-def _results(history):
-    return tuple(record.result for record in history)
+def _results(controller: WorkspaceController):
+    return tuple(record.result for record in controller.result_store.results)
 
 
 def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
@@ -68,8 +62,8 @@ def test_result_history_is_independent_and_not_bounded_to_ten(tmp_path):
         adoption = controller.adopt_calculation_result(_loaded(result), request=request)
         assert not adoption.workspace_updated
 
-    assert _results(controller.result_history) == tuple(reversed(results))
-    assert len(controller.result_history) == 12
+    assert _results(controller) == tuple(reversed(results))
+    assert len(controller.result_store.results) == 12
 
 
 def test_input_and_structure_changes_do_not_delete_results(tmp_path):
@@ -82,8 +76,8 @@ def test_input_and_structure_changes_do_not_delete_results(tmp_path):
     controller.replace_input_parameters(_Parameters(2))
     controller.replace_structure(Atoms("Ni"))
 
-    assert _results(controller.result_history) == (result,)
-    assert controller.result_history[0].structure_id == first_structure_id
+    assert _results(controller) == (result,)
+    assert controller.result_store.results[0].structure_id == first_structure_id
     assert controller.structure_id != first_structure_id
 
 
@@ -106,9 +100,10 @@ def test_external_result_is_recorded_without_replacing_workspace(tmp_path):
     assert not adoption.workspace_updated
     assert controller.atoms is original_atoms
     assert controller.state_id == original_state_id
-    assert controller.result_history[0].result is external
-    assert controller.result_history[0].output_state_id is not None
-    assert controller.result_history[0].imported
+    record = controller.result_store.results[0]
+    assert record.result is external
+    assert record.output_state_id is not None
+    assert record.imported
 
 
 def test_active_scf_advances_workspace_but_late_sibling_stays_in_old_branch(tmp_path):
@@ -232,7 +227,7 @@ def test_empty_spheres_is_result_transition_within_same_structure(tmp_path):
         parameters={"radius": 1.25},
     )
 
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=1)
     assert record.structure_id == structure_id
@@ -256,7 +251,7 @@ def test_empty_spheres_without_structure_change_creates_restorable_state(tmp_pat
         parameters={"method": "probe"},
     )
 
-    record = controller.result_history[0]
+    record = controller.result_store.results[0]
     state = controller.result_store.state(controller.state_id)
     assert record.result == EmptySpheresResult(found=0)
     assert record.input_state_id == input_state_id
@@ -279,7 +274,7 @@ def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
         expected_generation=controller.generation,
         parameters={"radius": 1.5, "grid": 24},
     )
-    empty_spheres_record = controller.result_history[0]
+    empty_spheres_record = controller.result_store.results[0]
     empty_spheres_state_id = controller.state_id
 
     controller.replace_structure(Atoms("Ni"), potential_path="Ni.pot")
@@ -292,103 +287,3 @@ def test_use_result_state_restores_empty_sphere_provenance(tmp_path):
     assert controller.empty_spheres is not None
     assert controller.empty_spheres.count == 0
     assert dict(controller.empty_spheres.parameters) == {"radius": 1.5, "grid": 24}
-
-
-class _Value:
-    info = ""
-
-    def __init__(self, name):
-        self.display_name = name
-
-    def value_label(self):
-        return self.display_name
-
-    def actions(self):
-        return ()
-
-
-def _ui_result(task, name):
-    return SimpleNamespace(
-        task_name=task,
-        output_file=f"{name}.out",
-        output_values={"value": _Value(name)},
-    )
-
-
-def test_result_selector_groups_by_formula_and_switches_displayed_result():
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, state_id = store.new_structure_state(Atoms("Fe"), potential_path=None)
-    older = _ui_result("dos", "old")
-    newest = _ui_result("jxc", "new")
-    store.add_result(
-        older,
-        structure_id=structure_id,
-        input_state_id=state_id,
-        input_parameters=None,
-        directory=None,
-    )
-    newest_record = store.add_result(
-        newest,
-        structure_id=structure_id,
-        input_state_id=state_id,
-        input_parameters=None,
-        directory=None,
-    )
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
-    )
-    widget.set_workspace_state(structure_id, state_id)
-    widget.set_results(store)
-
-    assert widget._selector.topLevelItemCount() == 1
-    structure = widget._selector.topLevelItem(0)
-    assert structure.text(0) == "Fe"
-    assert structure.childCount() == 2
-    assert widget._selected_result_id() == newest_record.id
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "new"
-
-    widget._selector.setCurrentItem(structure.child(0))
-    assert widget._grid.itemAtPosition(0, 0).widget().text() == "old"
-    widget.close()
-
-
-def test_result_selector_does_not_expose_internal_branch_nodes():
-    _application = QApplication.instance() or QApplication([])
-    store = ResultStore()
-    structure_id, root_state = store.new_structure_state(Atoms("Fe"), potential_path="p0")
-
-    first = store.add_result(
-        _ui_result("scf", "a"),
-        structure_id=structure_id,
-        input_state_id=root_state,
-        input_parameters=None,
-        directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pa",
-    )
-    second = store.add_result(
-        _ui_result("scf", "b"),
-        structure_id=structure_id,
-        input_state_id=root_state,
-        input_parameters=None,
-        directory=None,
-        output_atoms=Atoms("Fe"),
-        output_potential_path="pb",
-    )
-
-    assert store.branch_id_for_result(first) != store.branch_id_for_result(second)
-
-    widget = ResultActionsWidget(
-        lambda _value, _action: None,
-        show_values_without_actions=True,
-    )
-    widget.set_results(store)
-    structure = widget._selector.topLevelItem(0)
-    assert structure.childCount() == 2
-    assert all(
-        not structure.child(index).text(0).startswith("Branch")
-        for index in range(structure.childCount())
-    )
-    widget.close()

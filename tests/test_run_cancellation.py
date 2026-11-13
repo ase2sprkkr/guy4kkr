@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from threading import Event, get_ident
 
-from guy4ase.gui.dialogs.run_calculation import _RunCancellation
+from guy4ase.gui.dialogs.run_monitor import RunCancellation
 
 
 def test_backend_cancel_runs_outside_requesting_thread():
@@ -20,7 +20,7 @@ def test_backend_cancel_runs_outside_requesting_thread():
             assert release_cancel.wait(5)
             cancelled.set()
 
-    cancellation = _RunCancellation()
+    cancellation = RunCancellation()
     assert cancellation.register(Runner())
 
     cancellation.request()

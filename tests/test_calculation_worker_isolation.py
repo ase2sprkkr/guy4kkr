@@ -3,9 +3,9 @@ from __future__ import annotations
 from ase import Atoms
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
+from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import WorkspaceController
-from guy4ase.gui.dialogs.run_calculation import _SprkkrRunWorker
 
 
 class _Parameters:
@@ -14,7 +14,14 @@ class _Parameters:
         return _Parameters()
 
 
-def test_worker_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
+class _Cancellation:
+    requested = False
+
+    def register(self, _runner):
+        return True
+
+
+def test_execution_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
     atoms = Atoms("Fe")
     controller = WorkspaceController(
         WorkspaceState(
@@ -25,8 +32,8 @@ def test_worker_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
     )
     request = controller.create_calculation_request()
 
-    worker = _SprkkrRunWorker(request)
-    execution_atoms = worker._request.atoms
+    execution = SprkkrExecution(request, _Cancellation())
+    execution_atoms = execution.request.atoms
 
     assert request.atoms is atoms
     assert controller.atoms is atoms
@@ -39,7 +46,7 @@ def test_worker_lazy_promotion_does_not_mutate_workspace_atoms(tmp_path):
     assert SPRKKRAtoms.sites_array_name not in controller.atoms.arrays
 
 
-def test_worker_copy_owns_independent_sprkkr_site_state(tmp_path):
+def test_execution_copy_owns_independent_sprkkr_site_state(tmp_path):
     atoms = SPRKKRAtoms("Fe2", positions=((0, 0, 0), (1, 0, 0)), symmetry=False)
     atoms.sites[1].site_type = atoms.sites[0].site_type
     original_site_type = atoms.sites[0].site_type
@@ -51,8 +58,11 @@ def test_worker_copy_owns_independent_sprkkr_site_state(tmp_path):
             directory=str(tmp_path),
         )
     )
-    worker = _SprkkrRunWorker(controller.create_calculation_request())
-    copied = worker._request.atoms
+    execution = SprkkrExecution(
+        controller.create_calculation_request(),
+        _Cancellation(),
+    )
+    copied = execution.request.atoms
 
     assert copied is not atoms
     assert copied.sites[0].site_type is copied.sites[1].site_type

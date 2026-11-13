@@ -9,6 +9,7 @@ from typing import Literal
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from guy4ase.gui.application.atomic_io import atomic_write_json
 from guy4ase.gui.application.config import config_home
 
 RecentKind = Literal["structure", "input", "output"]
@@ -91,12 +92,13 @@ class RecentFiles(QObject):
     def save(self) -> None:
         """Persist history and log a cache-write failure without breaking file I/O."""
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "recent_files": self._files,
-                "last_recent_kind": self.last_kind,
-            }
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            atomic_write_json(
+                self.path,
+                {
+                    "recent_files": self._files,
+                    "last_recent_kind": self.last_kind,
+                },
+            )
         except OSError:
             _logger.exception("Failed to save recent files to %s", self.path)
 
