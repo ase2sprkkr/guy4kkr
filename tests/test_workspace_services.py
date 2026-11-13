@@ -27,11 +27,11 @@ from guy4ase.gui.application.result_loading import (
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.application.workspace_controller import (
     DocumentChange,
+    Generation,
     ResultAdoption,
     WorkspaceController,
 )
 from guy4ase.gui.dialogs import object_view
-from guy4ase.gui.dialogs.structures import build_2d as build_2d_dialog
 from guy4ase.gui.flows import calculation as calculation_flow
 from guy4ase.gui.flows import files as file_flows
 from guy4ase.gui.flows import structures as structure_flows
@@ -115,7 +115,7 @@ def test_workspace_controller_owns_mutations_and_change_notifications():
             potential_error=None,
             directory=None,
         ),
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
 
     assert workspace.atoms is atoms
@@ -212,13 +212,13 @@ def test_changing_directory_invalidates_result_and_same_directory_is_noop():
 
     assert workspace.directory == "next"
     assert workspace.result is None
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert results == [None]
     assert directories == ["next"]
 
     controller.change_directory("next")
 
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
     assert results == [None]
     assert directories == ["next"]
 
@@ -418,7 +418,7 @@ def test_use_for_new_calculation_changes_state_without_mutating_atoms():
     assert controller.workspace.potential_path == "Fe.pot"
     assert controller.workspace.restarted
     assert controller.workspace.result is None
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
 
 
 def _result(tmp_path):
@@ -580,7 +580,7 @@ def test_calculation_result_loads_potential_and_publishes_atoms(tmp_path, monkey
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.output_path == output
@@ -619,7 +619,7 @@ def test_calculation_result_keeps_current_atoms_when_potential_loading_fails(
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.potential_error is error
@@ -645,7 +645,7 @@ def test_calculation_result_without_potential_keeps_current_atoms(tmp_path):
     loaded = load_result(result, fallback_directory=tmp_path)
 
     adoption = controller.adopt_calculation_result(
-        loaded, expected_generation=controller.generation
+        loaded, expected_major=controller.generation.major
     )
 
     assert adoption.potential_path is None
@@ -675,7 +675,7 @@ def test_calculation_result_with_missing_referenced_potential_keeps_atoms(
 
     adoption = controller.adopt_calculation_result(
         loaded,
-        expected_generation=controller.generation,
+        expected_major=controller.generation.major,
     )
     assert not adoption.potential_error is None
     assert workspace.atoms is current_atoms
@@ -827,7 +827,7 @@ def test_result_parse_failure_leaves_workspace_and_generation_unchanged(
     with pytest.raises(ValueError, match="broken output"):
         load_result_file(tmp_path / "broken.out")
 
-    assert controller.generation == 0
+    assert controller.generation == Generation()
     assert workspace.atoms is atoms
     assert workspace.input_parameters is parameters
     assert workspace.directory == "original"
@@ -867,7 +867,7 @@ def test_result_artifact_resolution_failure_leaves_workspace_unchanged(
     with pytest.raises(RuntimeError, match="broken artifact metadata"):
         load_result_file(tmp_path / "Fe.out")
 
-    assert controller.generation == 0
+    assert controller.generation == Generation()
     assert workspace.atoms is atoms
     assert workspace.directory == "original"
     assert workspace.potential_path == "Cu.pot"
@@ -1001,7 +1001,7 @@ def test_successful_result_load_is_one_observer_consistent_transition(
             str(tmp_path),
             str(potential),
             result_parameters,
-            1,
+            Generation(1, 0),
         )
     ]
 
@@ -1102,44 +1102,6 @@ def test_loading_unknown_structure_from_file_warns_but_keeps_it(
     assert [title for title, _message in warnings] == [
         "Unknown Structure Type"
     ]
-
-
-def test_build_2d_load_reads_only_atoms_without_workspace_side_effects(
-    tmp_path, monkeypatch
-):
-    path = tmp_path / "right.pot"
-    loaded_atoms = Atoms("Fe")
-    workspace_atoms = Atoms("Cu")
-    workspace = WorkspaceState(
-        atoms=workspace_atoms,
-        potential_path="Cu.pot",
-        result=object(),
-    )
-    current_result = workspace.result
-    reads = []
-    assigned = []
-    dialog = SimpleNamespace(
-        _set_right_atoms=assigned.append,
-        _set_status=lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        build_2d_dialog.QFileDialog,
-        "getOpenFileName",
-        lambda *_args: (str(path), ""),
-    )
-    monkeypatch.setattr(
-        build_2d_dialog,
-        "ase_read",
-        lambda value: reads.append(value) or loaded_atoms,
-    )
-
-    build_2d_dialog.Build2DStructureDialog._on_load_right(dialog)
-
-    assert reads == [path.resolve()]
-    assert assigned == [loaded_atoms]
-    assert workspace.atoms is workspace_atoms
-    assert workspace.potential_path == "Cu.pot"
-    assert workspace.result is current_result
 
 
 @pytest.mark.parametrize(
@@ -1303,30 +1265,36 @@ def test_run_worker_finishes_and_releases_thread(tmp_path):
         from ase import Atoms
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QApplication, QWidget
+        from guy4ase.gui.application.workspace_controller import (
+            CalculationRequest,
+            Generation,
+        )
         from guy4ase.gui.dialogs import run_calculation as run_dialog
 
         result = object()
 
-        class Process:
-            def run(self):
+        class Runner:
+            def wait(self):
                 return result
 
-            def stop_the_process(self):
+            def cancel(self):
                 pass
 
-        class Calculator:
-            def calculate(self, **_kwargs):
-                return Process()
-
-        run_dialog.SPRKKR = Calculator
+        run_dialog.SPRKKR = lambda: object()
+        run_dialog._SprkkrRunWorker._launch = lambda self, _calculator: Runner()
+        run_dialog.load_result = lambda value, **_kwargs: value
         application = QApplication([])
         application.setQuitOnLastWindowClosed(False)
         parent = QWidget()
         finished = []
+        request = CalculationRequest(
+            atoms=Atoms("Fe"),
+            input_parameters=object(),
+            directory={str(tmp_path)!r},
+            generation=Generation(),
+        )
         window = run_dialog.SprkkrRunWindow(
-            Atoms("Fe"),
-            object(),
-            {str(tmp_path)!r},
+            request,
             parent=parent,
             on_finished=finished.append,
         )

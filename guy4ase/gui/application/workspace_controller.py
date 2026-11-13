@@ -5,13 +5,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
 from guy4ase.gui.application.result_loading import LoadedResult
-from guy4ase.gui.application.workspace import WorkspaceState, WorkspaceView
+from guy4ase.gui.application.workspace import Generation, ResultRecord, WorkspaceState
 
 _KEEP_DIRECTORY = object()
 _RESULT_HISTORY_LIMIT = 10
@@ -23,34 +23,6 @@ def _result_is_scf(result: Any) -> bool:
         return str(result.task_name).strip().lower() == "scf"
     except (AttributeError, TypeError, ValueError):
         return False
-
-
-class Generation(NamedTuple):
-    """Workspace revision split into calculation epoch and local revision."""
-
-    major: int = 0
-    minor: int = 0
-
-    def next_major(self) -> Generation:
-        return Generation(self.major + 1, 0)
-
-    def next_minor(self) -> Generation:
-        return Generation(self.major, self.minor + 1)
-
-    def same_major(self, other: Generation) -> bool:
-        return self.major == other.major
-
-    def __add__(self, value: int) -> Generation:
-        if not isinstance(value, int):
-            return NotImplemented
-        return Generation(self.major + value, 0)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, int):
-            return self.major == other and self.minor == 0
-        return tuple.__eq__(self, other)
-
-    __hash__ = tuple.__hash__
 
 
 class DocumentChange(Enum):
@@ -93,10 +65,10 @@ class ResultAdoption:
 class WorkspaceController(QObject):
     """Own semantic document transitions and its monotonic revision.
 
-    The mutable ``WorkspaceState`` is private. ``workspace`` exposes a stable,
-    live ``WorkspaceView`` whose document slots cannot be reassigned by callers.
-    Published ``atoms`` and ``input_parameters`` remain borrowed references and
-    follow their existing read-only-by-contract semantics.
+    The mutable ``WorkspaceState`` is private. Read access is exposed through
+    narrow properties and semantic queries on the controller. Published
+    ``atoms`` and ``input_parameters`` remain borrowed references and follow
+    their existing read-only-by-contract semantics.
     """
 
     structureChanged = pyqtSignal(object)
@@ -110,16 +82,22 @@ class WorkspaceController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._workspace = workspace or WorkspaceState()
-        if self._workspace.result is not None and not self._workspace.result_history:
-            self._workspace.result_history = (self._workspace.result,)
-        self._workspace_view = WorkspaceView(self._workspace)
         self._generation = Generation()
+        self._workspace = workspace or WorkspaceState()
+        history = tuple(
+            record
+            if isinstance(record, ResultRecord)
+            else ResultRecord(record, self._generation)
+            for record in self._workspace.result_history
+        )
+        if self._workspace.result is not None and not history:
+            history = (ResultRecord(self._workspace.result, self._generation),)
+        self._workspace.result_history = history
 
     @property
-    def workspace(self) -> WorkspaceView:
-        """Return the stable live read-only view of the document."""
-        return self._workspace_view
+    def workspace(self) -> WorkspaceController:
+        """Compatibility alias for callers not yet migrated to controller reads."""
+        return self
 
     @property
     def atoms(self) -> Any:
@@ -132,8 +110,50 @@ class WorkspaceController(QObject):
         return self._workspace.input_parameters
 
     @property
+    def directory(self) -> str | None:
+        return self._workspace.directory
+
+    @property
+    def potential_path(self) -> str | None:
+        return self._workspace.potential_path
+
+    @property
+    def result(self) -> Any | None:
+        return self._workspace.result
+
+    @property
+    def result_history(self) -> tuple[ResultRecord, ...]:
+        return self._workspace.result_history
+
+    @property
+    def empty_spheres_added(self) -> int | None:
+        return self._workspace.empty_spheres_added
+
+    @property
+    def restarted(self) -> bool:
+        return self._workspace.restarted
+
+    @property
     def generation(self) -> Generation:
         return self._generation
+
+    def structure_kind(self):
+        return self._workspace.structure_kind()
+
+    def can_calculate(self) -> bool:
+        return self._workspace.can_calculate()
+
+    def scf_status(self) -> str | None:
+        return self._workspace.scf_status()
+
+    def is_scf_converged(self) -> bool:
+        return self._workspace.is_scf_converged()
+
+    def has_vacuum_sites(self) -> bool:
+        return self._workspace.has_vacuum_sites()
+
+    def empty_spheres_action(self) -> str | None:
+        return self._workspace.empty_spheres_action()
 
     def create_calculation_request(self) -> CalculationRequest:
         """Borrow read-only Atoms and capture independent calculation inputs."""
@@ -154,10 +174,11 @@ class WorkspaceController(QObject):
     def _generation_is_current(self, expected: Generation | None) -> bool:
         return expected is None or expected == self._generation
 
-    def _calculation_generation_is_current(self, expected: Generation) -> bool:
-        return expected.same_major(self._generation)
-
     def _changed(self) -> None:
+        self._workspace.result_history = tuple(
+            replace(record, current=False) if record.current else record
+            for record in self._workspace.result_history
+        )
         self._generation = self._generation.next_major()
 
     def _result_changed(self) -> None:
@@ -172,15 +193,29 @@ class WorkspaceController(QObject):
         self._workspace.result_history = ()
         return had_results
 
-    def _remember_result(
-        self, result: Any, *, replace_history: bool = False
+    def _publish_result(
+        self,
+        result: Any,
+        *,
+        replace_history: bool = False,
+        advance_generation: bool = True,
     ) -> None:
+        """Publish ``result`` and record the resulting workspace generation.
+
+        ``ResultRecord.generation`` always equals the workspace generation
+        immediately after publication. Result-only publications advance the
+        minor revision here; callers that already performed a major document
+        transition pass ``advance_generation=False``.
+        """
+        if advance_generation:
+            self._result_changed()
         self._workspace.result = result
+        record = ResultRecord(result, self._generation)
         if replace_history:
-            self._workspace.result_history = (result,)
+            self._workspace.result_history = (record,)
             return
         self._workspace.result_history = (
-            result, *self._workspace.result_history
+            record, *self._workspace.result_history
         )[:_RESULT_HISTORY_LIMIT]
 
     def _set_directory(self, directory: Any) -> bool:
@@ -287,7 +322,6 @@ class WorkspaceController(QObject):
         if not self._generation_is_current(expected_generation):
             return replace(adoption, adopted=False)
 
-        self._remember_result(loaded.result, replace_history=True)
         self._workspace.atoms = loaded.atoms
         self._workspace.input_parameters = loaded.input_parameters
         self._workspace.potential_path = (
@@ -299,6 +333,11 @@ class WorkspaceController(QObject):
         self._workspace.restarted = False
         directory_changed = self._set_directory(loaded.directory)
         self._changed()
+        self._publish_result(
+            loaded.result,
+            replace_history=True,
+            advance_generation=False,
+        )
 
         self.structureChanged.emit(loaded.atoms)
         self.inputParametersChanged.emit(loaded.input_parameters)
@@ -323,10 +362,10 @@ class WorkspaceController(QObject):
         self,
         loaded: LoadedResult,
         *,
-        expected_generation: Generation,
+        expected_major: int,
     ) -> ResultAdoption:
         adoption = self._result_adoption(loaded)
-        if not self._calculation_generation_is_current(expected_generation):
+        if expected_major != self._generation.major:
             return replace(adoption, adopted=False)
 
         if loaded.atoms is not None:
@@ -334,8 +373,7 @@ class WorkspaceController(QObject):
             self._workspace.potential_path = str(loaded.potential_path)
             if _result_is_scf(loaded.result):
                 self._workspace.restarted = False
-        self._remember_result(loaded.result)
-        self._result_changed()
+        self._publish_result(loaded.result)
 
         if loaded.atoms is not None:
             self.structureChanged.emit(loaded.atoms)
@@ -398,7 +436,9 @@ class WorkspaceController(QObject):
             self._workspace.potential_path = None
             self._workspace.restarted = True
             self._changed()
-        self._remember_result(result)
+            self._publish_result(result, advance_generation=False)
+        else:
+            self._publish_result(result)
 
         self.structureChanged.emit(updated if structure_changed else source)
         self.resultChanged.emit(result)

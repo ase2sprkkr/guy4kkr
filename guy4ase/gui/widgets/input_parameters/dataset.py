@@ -10,7 +10,6 @@ from PyQt6.QtCore import QRegularExpression
 from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QWidget
 
-from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.input_parameters.session import InputParametersSession
 
 
@@ -53,19 +52,16 @@ def generated_dataset(
     raise ValueError(f"Unknown DATASET default mode {mode!r}.")
 
 
-def load_default_dataset(atoms: Any = None) -> str | None:
-    """Load the application preference and return a default for new parameters."""
-    settings = ApplicationSettings()
-    settings.load()
-    return generated_dataset(settings.dataset_default_mode, atoms)
-
-
-def apply_default_dataset(parameters: Any, atoms: Any = None) -> None:
-    """Populate an unset DATASET according to application settings."""
+def apply_default_dataset(
+    parameters: Any,
+    mode: str,
+    atoms: Any = None,
+) -> None:
+    """Populate an unset DATASET using the injected application preference."""
     option = parameters.CONTROL.DATASET
     if option.is_set():
         return
-    value = load_default_dataset(atoms)
+    value = generated_dataset(mode, atoms)
     if value is not None:
         option.set(value)
 

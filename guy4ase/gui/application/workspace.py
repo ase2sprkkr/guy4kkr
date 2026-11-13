@@ -1,4 +1,4 @@
-"""Mutable workspace storage and its read-only application view."""
+"""Mutable workspace storage owned by ``WorkspaceController``."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +7,39 @@ from typing import Any
 from ase2sprkkr.sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 from guy4ase.physics.lattice import StructureKind, detect_structure_kind
+
+
+@dataclass(frozen=True)
+class Generation:
+    """Workspace revision split into calculation epoch and local revision."""
+
+    major: int = 0
+    minor: int = 0
+
+    def next_major(self) -> Generation:
+        return Generation(self.major + 1, 0)
+
+    def next_minor(self) -> Generation:
+        return Generation(self.major, self.minor + 1)
+
+
+@dataclass(frozen=True)
+class ResultRecord:
+    """One historical result together with its publication provenance.
+
+    Invariant: ``generation`` is exactly the workspace generation immediately
+    after this result was published. A result-only publication advances the
+    minor revision; a document/input transition advances the major revision
+    and resets the minor revision to zero.
+    """
+
+    result: Any
+    generation: Generation
+    current: bool = True
+
+    @property
+    def stale(self) -> bool:
+        return not self.current
 
 
 @dataclass
@@ -18,8 +51,8 @@ class WorkspaceState:
     directory: str | None = None
     potential_path: str | None = None
     result: Any | None = None
-    # Results available for browsing in the UI, newest first.
-    result_history: tuple[Any, ...] = ()
+    # Results available for browsing in the UI, newest first, with provenance.
+    result_history: tuple[ResultRecord, ...] = ()
     # None = not searched / provenance unknown; 0 = searched and none found;
     # positive = number of trailing empty-sphere sites added by Guy4ASE.
     empty_spheres_added: int | None = None
@@ -75,77 +108,13 @@ class WorkspaceState:
         """Return ``add``/``recalculate`` for the explicit ES workflow.
 
         Imported or manually created vacuum sites are deliberately not treated
-        as generated empty spheres. Recalculation is offered only while we
-        still know exactly how many trailing sites Guy4ASE added.
+        as generated empty spheres. Once an explicit search has been performed,
+        recalculation remains available even if that search found no spheres.
         """
         if self.atoms is None:
             return None
         if self.empty_spheres_added is not None:
-            return "recalculate" if self.empty_spheres_added > 0 else None
+            return "recalculate"
         if self.has_vacuum_sites():
             return None
         return "add"
-
-
-class WorkspaceView:
-    """Live read-only view of controller-owned workspace storage.
-
-    Returned model objects such as ``atoms`` remain borrowed references and
-    retain their own mutability contracts. The document slots themselves cannot
-    be reassigned through this view; all publication goes through the controller.
-    """
-
-    __slots__ = ("__state",)
-
-    def __init__(self, state: WorkspaceState) -> None:
-        self.__state = state
-
-    @property
-    def atoms(self) -> Any | None:
-        return self.__state.atoms
-
-    @property
-    def input_parameters(self) -> Any | None:
-        return self.__state.input_parameters
-
-    @property
-    def directory(self) -> str | None:
-        return self.__state.directory
-
-    @property
-    def potential_path(self) -> str | None:
-        return self.__state.potential_path
-
-    @property
-    def result(self) -> Any | None:
-        return self.__state.result
-
-    @property
-    def result_history(self) -> tuple[Any, ...]:
-        return self.__state.result_history
-
-    @property
-    def empty_spheres_added(self) -> int | None:
-        return self.__state.empty_spheres_added
-
-    @property
-    def restarted(self) -> bool:
-        return self.__state.restarted
-
-    def structure_kind(self) -> StructureKind | None:
-        return self.__state.structure_kind()
-
-    def can_calculate(self) -> bool:
-        return self.__state.can_calculate()
-
-    def scf_status(self) -> str | None:
-        return self.__state.scf_status()
-
-    def is_scf_converged(self) -> bool:
-        return self.__state.is_scf_converged()
-
-    def has_vacuum_sites(self) -> bool:
-        return self.__state.has_vacuum_sites()
-
-    def empty_spheres_action(self) -> str | None:
-        return self.__state.empty_spheres_action()

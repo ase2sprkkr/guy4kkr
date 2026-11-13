@@ -10,7 +10,7 @@ from guy4ase.gui.application.workspace_controller import (
 )
 
 
-def test_empty_sphere_search_state_hides_repeated_failed_search():
+def test_empty_sphere_search_state_allows_repeated_failed_search():
     workspace = WorkspaceState(atoms=Atoms("Fe"))
     assert workspace.empty_spheres_action() == "add"
 
@@ -23,9 +23,10 @@ def test_empty_sphere_search_state_hides_repeated_failed_search():
 
     assert change is DocumentChange.APPLIED
     assert workspace.empty_spheres_added == 0
-    assert workspace.empty_spheres_action() is None
+    assert workspace.empty_spheres_action() == "recalculate"
     assert workspace.result == EmptySpheresResult(found=0)
-    assert controller.generation == generation
+    assert controller.generation == generation.next_minor()
+    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_update_publishes_found_count_as_result():
@@ -52,7 +53,8 @@ def test_empty_sphere_update_publishes_found_count_as_result():
     assert len(workspace.atoms) == 2
     assert workspace.result == EmptySpheresResult(found=1)
     assert published == [workspace.result]
-    assert controller.generation == generation + 1
+    assert controller.generation == generation.next_major()
+    assert workspace.result_history[0].generation == controller.generation
 
 
 def test_empty_sphere_result_keeps_search_parameters():
@@ -101,8 +103,10 @@ def test_use_for_new_calculation_keeps_density_and_marks_restart():
     assert workspace.empty_spheres_added == 3
     assert workspace.potential_path == "Fe.pot"
     assert workspace.result is None
-    assert workspace.result_history == (previous_result,)
-    assert controller.generation == generation + 1
+    assert len(workspace.result_history) == 1
+    assert workspace.result_history[0].result is previous_result
+    assert not workspace.result_history[0].current
+    assert controller.generation == generation.next_major()
 
 
 def test_preexisting_vacuum_site_suppresses_add_but_known_spheres_can_recalculate():

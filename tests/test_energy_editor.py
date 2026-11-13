@@ -126,13 +126,13 @@ def test_expert_combines_pair_and_uses_identical_control(application):
     editor.units.setCurrentText('eV')
     editor.number.setValue(-5.)
     assert editor.commit()
-    assert dialog.result().ENERGY.EMINEV() == -5.
-    assert dialog.result().ENERGY.EMIN() is None
+    assert dialog.parameters().ENERGY.EMINEV() == -5.
+    assert dialog.parameters().ENERGY.EMIN() is None
     application.processEvents()
     assert item.font(0).bold()
     editor.relative.setChecked(False)
-    assert dialog.result().ENERGY.EMIN() == pytest.approx(convert_energy(-5., 'eV', 'Ry'))
-    assert dialog.result().ENERGY.EMINEV() is None
+    assert dialog.parameters().ENERGY.EMIN() == pytest.approx(convert_energy(-5., 'eV', 'Ry'))
+    assert dialog.parameters().ENERGY.EMINEV() is None
     dialog.close()
 
 
@@ -147,7 +147,7 @@ def test_arpes_absolute_bounds_and_relative_defaults(application, expert):
             tree = dialog.tree_editor.tree
             item, = tree.findItems(f'{name} / {name}EV', flags, 0)
             return tree.itemWidget(item, 2)
-        current = dialog.result
+        current = dialog.parameters
     else:
         dialog = GuidedInputParametersDialog('arpes', parameters)
         editor_for = lambda name: dialog.editors_for(('ENERGY', name))[-1].control

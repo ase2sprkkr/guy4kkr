@@ -8,6 +8,7 @@ from ase import Atoms
 from guy4ase.gui.application.settings import ApplicationSettings
 from guy4ase.gui.dialogs.run_calculation import _SprkkrRunWorker
 from guy4ase.gui.widgets.input_parameters.dataset import (
+    apply_default_dataset,
     filename_component,
     generated_dataset,
 )
@@ -60,6 +61,37 @@ def test_generated_uuid_dataset_uses_structure_name():
 
 def test_empty_dataset_mode_leaves_dataset_unset():
     assert generated_dataset("empty", Atoms("Fe")) is None
+
+
+def test_apply_default_dataset_uses_injected_mode(monkeypatch):
+    class Option:
+        def __init__(self):
+            self.value = None
+
+        def is_set(self):
+            return self.value is not None
+
+        def set(self, value):
+            self.value = value
+
+    option = Option()
+    parameters = SimpleNamespace(CONTROL=SimpleNamespace(DATASET=option))
+    calls = []
+
+    def generate(mode, atoms):
+        calls.append((mode, atoms))
+        return "injected"
+
+    monkeypatch.setattr(
+        "guy4ase.gui.widgets.input_parameters.dataset.generated_dataset",
+        generate,
+    )
+    atoms = Atoms("Fe")
+
+    apply_default_dataset(parameters, "uuid", atoms)
+
+    assert calls == [("uuid", atoms)]
+    assert option.value == "injected"
 
 
 def test_dataset_is_used_as_run_file_namespace():

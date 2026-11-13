@@ -6,6 +6,7 @@ import pytest
 from ase import Atoms
 from PyQt6.QtWidgets import QApplication
 
+from guy4ase.gui.application.calculation_runs import ActiveRunRegistry
 from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.result_loading import LoadedResult
 from guy4ase.gui.application.workspace import WorkspaceState
@@ -67,9 +68,50 @@ def test_run_calculation_does_not_hide_parameter_copy_value_error(tmp_path):
         calculation_flow.run_calculation(
             controller,
             RecentFiles(),
-            SimpleNamespace(count=0),
+            ActiveRunRegistry(),
             None,
         )
+
+
+def test_run_calculation_does_not_hide_result_adoption_errors(
+    tmp_path, monkeypatch
+):
+    _application = QApplication.instance() or QApplication([])
+    controller = WorkspaceController(
+        WorkspaceState(
+            atoms=Atoms("Fe"),
+            input_parameters=_Parameters("scf"),
+            directory=str(tmp_path),
+        )
+    )
+    monkeypatch.setattr(
+        calculation_flow.SprkkrRunWindow,
+        "_start",
+        lambda _window, _request: None,
+    )
+
+    def broken_adoption(_loaded, *, expected_major):
+        assert expected_major == controller.generation.major
+        raise RuntimeError("broken adoption invariant")
+
+    monkeypatch.setattr(
+        controller,
+        "adopt_calculation_result",
+        broken_adoption,
+    )
+
+    window = calculation_flow.run_calculation(
+        controller,
+        RecentFiles(),
+        ActiveRunRegistry(),
+        None,
+    )
+    assert window is not None
+
+    with pytest.raises(RuntimeError, match="broken adoption invariant"):
+        window._finished_callback(object())
+
+    window.close()
 
 
 def test_run_result_handoff_loads_once_and_preserves_backend_result(
@@ -94,11 +136,7 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
         )
     )
     history = RecentFiles(tmp_path / "recent.json")
-    active_runs = SimpleNamespace(
-        count=0,
-        register=lambda _run_id: None,
-        unregister=lambda _run_id: None,
-    )
+    active_runs = ActiveRunRegistry()
 
     def capture_start(window, request):
         window._test_request = request
@@ -118,18 +156,9 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
 
     monkeypatch.setattr(run_dialog, "load_result", fake_load_result)
 
-    class Process:
-        def run(self):
+    class Runner:
+        def wait(self):
             return backend_result
-
-        def stop_the_process(self):
-            raise AssertionError("process must not be cancelled")
-
-    class Calculator:
-        def calculate(self, **_kwargs):
-            return Process()
-
-    monkeypatch.setattr(run_dialog, "SPRKKR", Calculator)
 
     window = calculation_flow.run_calculation(
         controller,
@@ -140,12 +169,16 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     assert window is not None
 
     worker = run_dialog._SprkkrRunWorker(window._test_request)
+    monkeypatch.setattr(worker, "_launch", lambda _calculator: Runner())
     worker.finished.connect(window._on_finished)
     worker.run()
 
     assert load_calls == [(backend_result, str(tmp_path))]
     assert controller.workspace.result is backend_result
-    assert controller.workspace.result_history == (backend_result,)
+    assert len(controller.workspace.result_history) == 1
+    record = controller.workspace.result_history[0]
+    assert record.result is backend_result
+    assert record.current
     assert history.paths("output") == (str(output_path.resolve()),)
 
     window.close()

@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         controller: WorkspaceController,
         recent_files: RecentFiles,
         active_runs: ActiveRunRegistry,
-        settings: ApplicationSettings | None = None,
+        settings: ApplicationSettings,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Guy4ASE - Structure Manager")
@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         self.workspace = self.controller.workspace
         self.recent_history = recent_files
         self.active_runs = active_runs
-        self.settings = settings or ApplicationSettings()
+        self.settings = settings
         self._site_colors: Dict[str, str] = {}
         self._hovered_atom_index: Optional[int] = None
         self.input_params_preview: Optional[QPlainTextEdit] = None
@@ -163,6 +163,11 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(has_structure)
 
+        has_input = self.workspace.input_parameters is not None
+        self.save_input_action.setEnabled(has_input)
+        if self.save_input_btn is not None:
+            self.save_input_btn.setEnabled(has_input)
+
         self.run_calculation_action.setEnabled(self.workspace.can_calculate())
 
         empty_spheres = self.workspace.empty_spheres_action()
@@ -179,13 +184,9 @@ class MainWindow(QMainWindow):
             return
         if self.workspace.input_parameters is None:
             self.input_params_preview.setPlainText("")
-            if self.save_input_btn is not None:
-                self.save_input_btn.setEnabled(False)
             return
         txt = self.workspace.input_parameters.to_string(validate=False)
         self.input_params_preview.setPlainText(txt)
-        if self.save_input_btn is not None:
-            self.save_input_btn.setEnabled(True)
 
     def _update_directory_label(self) -> None:
         if self._directory_label is None:
@@ -327,9 +328,9 @@ class MainWindow(QMainWindow):
         load_input_action = QAction("&Load Input File...", self)
         load_input_action.triggered.connect(self._on_load_sprkkr_input)
         input_menu.addAction(load_input_action)
-        save_input_action = QAction("&Save Input File...", self)
-        save_input_action.triggered.connect(self._on_save_sprkkr_input)
-        input_menu.addAction(save_input_action)
+        self.save_input_action = QAction("&Save Input File...", self)
+        self.save_input_action.triggered.connect(self._on_save_sprkkr_input)
+        input_menu.addAction(self.save_input_action)
         self._recent_menus['input'] = input_menu.addMenu("Open &Recent")
 
         output_menu = menubar.addMenu("&Output")
@@ -739,6 +740,7 @@ class MainWindow(QMainWindow):
             self.controller,
             self,
             task=task,
+            dataset_default_mode=self.settings.dataset_default_mode,
         )
 
     def _on_input_preview_double_click(self, event) -> None:
@@ -751,6 +753,7 @@ class MainWindow(QMainWindow):
         input_editing_flow.edit_current_input_parameters(
             self.controller,
             self,
+            dataset_default_mode=self.settings.dataset_default_mode,
         )
 
     def _on_load_sprkkr_input(self) -> None:

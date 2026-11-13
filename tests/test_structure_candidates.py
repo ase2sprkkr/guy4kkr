@@ -35,14 +35,29 @@ def test_structure_candidate_load_has_no_workspace_side_effects(tmp_path):
 
 def test_build_2d_replacement_uses_shared_structure_source(monkeypatch):
     loaded = Atoms("Fe")
+    recent_files = object()
     assigned = []
-    dialog = SimpleNamespace(_set_right_atoms=assigned.append)
-    monkeypatch.setattr(
-        build_2d_dialog,
-        "select_structure_source",
-        lambda *_args, **_kwargs: StructureCandidate(loaded),
+    calls = []
+    dialog = SimpleNamespace(
+        _recent_files=recent_files,
+        _set_right_atoms=assigned.append,
     )
+
+    def select(*args, **kwargs):
+        calls.append((args, kwargs))
+        return StructureCandidate(loaded)
+
+    monkeypatch.setattr(build_2d_dialog, "select_structure_source", select)
 
     build_2d_dialog.Build2DStructureDialog._on_choose_right(dialog)
 
     assert assigned == [loaded]
+    assert calls == [
+        (
+            (dialog,),
+            {
+                "recent_files": recent_files,
+                "title": "Choose Replacement Structure",
+            },
+        )
+    ]

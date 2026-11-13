@@ -8,7 +8,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 import pytest
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QDialog
 
 from guy4ase.gui.dialogs import guided_input
 from guy4ase.gui.dialogs.expert_input import InputParametersDialog
@@ -55,6 +55,19 @@ def _expert_energy_editor(dialog, label="EMIN / EMINEV"):
     return editor
 
 
+def test_input_dialogs_preserve_qdialog_result_contract(application):
+    parameters = InputParameters.create("scf")
+    for dialog in (
+        InputParametersDialog(parameters),
+        GuidedInputParametersDialog("scf", parameters),
+    ):
+        assert dialog.result() == QDialog.DialogCode.Rejected
+        assert isinstance(dialog.parameters(), InputParameters)
+        dialog.accept()
+        assert dialog.result() == QDialog.DialogCode.Accepted
+        dialog.close()
+
+
 def test_expert_binding_mutate_is_atomic_after_partial_callback_failure():
     session = create_input_parameters_session(InputParameters.create("scf"))
     binding = create_field_binding(
@@ -86,7 +99,7 @@ def test_expert_dialog_forks_supplied_session(application):
 
     assert values_equal(_editable_values(session.result()), before)
     assert session.undo_stack.count() == history_count
-    assert dialog.result().SCF.NITER() == 17
+    assert dialog.parameters().SCF.NITER() == 17
     dialog.close()
 
 
@@ -99,11 +112,11 @@ def test_expert_bound_energy_compound_edit_commits_once_and_undoes_once(applicat
     editor.relative.setChecked(True)
 
     assert dialog.session.undo_stack.count() == 1
-    assert dialog.result().ENERGY.EMIN() is None
-    assert dialog.result().ENERGY.EMINEV() is not None
+    assert dialog.parameters().ENERGY.EMIN() is None
+    assert dialog.parameters().ENERGY.EMINEV() is not None
     dialog.session.undo_stack.undo()
-    assert dialog.result().ENERGY.EMIN() == 0.5
-    assert dialog.result().ENERGY.EMINEV() is None
+    assert dialog.parameters().ENERGY.EMIN() == 0.5
+    assert dialog.parameters().ENERGY.EMINEV() is None
     dialog.close()
 
 
@@ -113,7 +126,7 @@ def test_expert_bound_energy_partial_failure_does_not_commit(
 ):
     dialog = InputParametersDialog(InputParameters.create("dos"))
     editor = _expert_energy_editor(dialog)
-    before = _editable_values(dialog.result())
+    before = _editable_values(dialog.parameters())
 
     def fail_after_first_write(parameters, *_args):
         parameters.ENERGY.EMIN.set(123.0)
@@ -123,7 +136,7 @@ def test_expert_bound_energy_partial_failure_does_not_commit(
     editor.number.setValue(editor.number.value() + 1.0)
 
     assert not editor.commit()
-    assert values_equal(_editable_values(dialog.result()), before)
+    assert values_equal(_editable_values(dialog.parameters()), before)
     assert dialog.session.undo_stack.count() == 0
     dialog.close()
 

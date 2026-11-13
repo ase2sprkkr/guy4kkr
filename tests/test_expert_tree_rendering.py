@@ -114,7 +114,7 @@ def test_removing_invalid_repeated_editor_clears_validation_state(application):
     tree.itemWidget(occurrence, 3).click()
     application.processEvents()
 
-    assert 2 not in dialog.result().MODE.MDIR(all_values=True)
+    assert 2 not in dialog.parameters().MODE.MDIR(all_values=True)
     assert not tree_editor.has_errors
     assert not tree_editor.error_text
     dialog.close()

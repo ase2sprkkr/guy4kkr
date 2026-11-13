@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import numpy as np
-from ase.io import read as ase_read
 from ase2sprkkr.sprkkr.build import semiinfinite_system
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -13,7 +12,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -25,16 +23,9 @@ from PyQt6.QtWidgets import (
 )
 
 from guy4ase.gui.application.recent_files import RecentFiles
-from guy4ase.gui.dialogs.structures.element_assignment import select_site_elements
 from guy4ase.gui.dialogs.structures.source import select_structure_source
-from guy4ase.gui.dialogs.structures.spacegroup_selector import select_spacegroup
 from guy4ase.gui.dialogs.structures.transforms import rotate_atoms, scale_atoms
-from guy4ase.gui.flows.structure_candidates import (
-    choose_structure_candidate,
-    create_structure_candidate,
-    edit_structure_candidate,
-)
-from guy4ase.gui.misc.dialog_flow import chain_dialogs
+from guy4ase.gui.flows.structure_candidates import edit_structure_candidate
 from guy4ase.gui.plots.lattice import plot_structure_axis_projection
 from guy4ase.gui.widgets.structures.structure_pane import StructurePane
 from guy4ase.physics.lattice import match_structure_axis_length
@@ -225,28 +216,6 @@ class Build2DStructureDialog(QDialog):
             self,
             recent_files=self._recent_files,
             title="Choose Replacement Structure",
-        )
-        if candidate is not None:
-            self._set_right_atoms(candidate.atoms)
-
-    def _on_load_right(self) -> None:
-        """Compatibility entry point delegating to the shared candidate flow."""
-        candidate = choose_structure_candidate(
-            self,
-            title="Load Right Structure",
-            chooser=QFileDialog.getOpenFileName,
-            reader=ase_read,
-        )
-        if candidate is not None:
-            self._set_right_atoms(candidate.atoms)
-
-    def _on_create_right(self) -> None:
-        """Compatibility entry point delegating to the shared candidate flow."""
-        candidate = create_structure_candidate(
-            self,
-            chain=chain_dialogs,
-            spacegroup_selector=select_spacegroup,
-            site_selector=select_site_elements,
         )
         if candidate is not None:
             self._set_right_atoms(candidate.atoms)
