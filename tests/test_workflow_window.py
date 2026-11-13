@@ -4,7 +4,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/guy4ase-test-matplotlib")
 
 from ase import Atoms
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QFrame, QGroupBox, QToolButton
+
+from guy4ase.gui.widgets.browser_panel import BrowserPanel
 
 from guy4ase.gui.application.workspace import WorkspaceState
 from guy4ase.gui.dialogs import workflow_window as workflow_module
@@ -255,4 +258,66 @@ def test_cancel_new_2d_prompts_to_keep_or_discard_3d(tmp_path, monkeypatch, keep
     assert window.controller.structure_generation == (
         original_generation.next() if keep_bulk else original_generation
     )
+    window.close()
+
+
+def test_workflow_navigation_is_one_bottom_panel_with_three_icon_buttons(
+    tmp_path, monkeypatch
+):
+    _application = QApplication.instance() or QApplication([])
+    gui, window = _workflow(tmp_path)
+
+    navigation = window.findChild(QGroupBox, "workflowNavigation")
+    assert navigation is not None
+    # The navigation footer is outside the results frame, and below it.
+    sidebar = navigation.parentWidget()
+    assert sidebar is window._result_actions.parentWidget()
+    assert isinstance(window._result_actions, QFrame)
+    assert window._result_actions.frameShape() == QFrame.Shape.StyledPanel
+    assert not window._result_actions.isAncestorOf(navigation)
+    sidebar_layout = sidebar.layout()
+    assert sidebar_layout.indexOf(window._result_actions) < sidebar_layout.indexOf(
+        navigation
+    )
+    assert sidebar_layout.itemAt(sidebar_layout.count() - 1).widget() is navigation
+    assert window.findChild(BrowserPanel) is None
+
+    buttons = navigation.findChildren(QToolButton)
+    assert buttons == [
+        window._project_browser_button,
+        window._expert_button,
+        window._settings_button,
+    ]
+    assert [button.text() for button in buttons] == [
+        "Project Browser", "Expert Mode", "Settings"
+    ]
+    assert all(not button.icon().isNull() for button in buttons)
+    assert all(
+        button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        for button in buttons
+    )
+
+    actions = []
+    window._open_expert = lambda: actions.append("expert")
+    monkeypatch.setattr(
+        workflow_module,
+        "edit_settings",
+        lambda settings, parent: actions.append(("settings", settings, parent)),
+    )
+    window.projectBrowserRequested.connect(lambda: actions.append("projects"))
+
+    window._project_browser_button.click()
+    window._expert_button.click()
+    window._settings_button.click()
+
+    assert actions == [
+        "projects",
+        "expert",
+        ("settings", gui.settings, window),
+    ]
+    # The application composition root must still connect this button to
+    # the same non-modal project browser as the expert window.
+    assert gui._project_browser is not None
+    assert gui._project_browser.isVisible()
+    gui._project_browser.close()
     window.close()

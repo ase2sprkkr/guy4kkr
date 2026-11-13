@@ -138,9 +138,12 @@ class GuiApplication(QObject):
     def _wire_window(self, window: WorkflowWindow | MainWindow) -> None:
         """Connect application-owned actions exposed by a top-level window."""
         self._wire_result_actions(window)
-        window.browser_panel.projectBrowserRequested.connect(
-            self.show_project_browser
-        )
+        if isinstance(window, WorkflowWindow):
+            window.projectBrowserRequested.connect(self.show_project_browser)
+        else:
+            window.browser_panel.projectBrowserRequested.connect(
+                self.show_project_browser
+            )
 
     def _wire_result_actions(self, window: WorkflowWindow | MainWindow) -> None:
         """Compose result presentation and route its top-level mutation intents."""
