@@ -1,12 +1,14 @@
 """Execution-profile dialogs for SPR-KKR calculations."""
 from __future__ import annotations
 
+from ase2sprkkr.sprkkr.projects import default_project_repository
+
 from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QRegularExpression
 from PyQt6.QtGui import QRegularExpressionValidator
-from ase2sprkkr.execution import ProjectRepository, ProjectRepositoryError
+from kkrunner.projects import ProjectRepository, ProjectRepositoryError
 
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -231,7 +233,7 @@ class ProfileSelectionDialog(QDialog):
         self._manual_directory = directory or ""
         self._project_directories = {}
         self._updating_directory = False
-        self._projects = project_repository if project_repository is not None else ProjectRepository()
+        self._projects = project_repository if project_repository is not None else default_project_repository()
         self._store = store or ExecutionProfileStore()
         self.setWindowTitle("Run SPR-KKR Calculation")
         self.resize(650, 480)

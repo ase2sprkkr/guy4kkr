@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from ase2sprkkr.sprkkr.projects import default_project_repository
+
 import sys
 from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
-from ase2sprkkr.execution import ProjectRepository
+from kkrunner.projects import ProjectRepository
 from guy4ase.gui.application.persistent_jobs import project_run_manager
 
 from guy4ase.gui.application.persistent_jobs import PersistentJobSource
@@ -63,7 +65,7 @@ class GuiApplication(QObject):
         self.projects = (
             project_repository
             if project_repository is not None
-            else ProjectRepository()
+            else default_project_repository()
         )
         self.execution_manager = project_run_manager(self.projects)
         self.persistent_jobs = (
@@ -272,8 +274,8 @@ class GuiApplication(QObject):
         window.activateWindow()
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+    app = QApplication(sys.argv if argv is None else [sys.argv[0], *argv])
     gui = GuiApplication(parent=app)
     gui.show_workflow_window()
     return app.exec()
