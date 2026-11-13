@@ -90,8 +90,9 @@ def test_run_calculation_does_not_hide_result_adoption_errors(
         lambda _window, _request: None,
     )
 
-    def broken_adoption(_loaded, *, expected_major):
-        assert expected_major == controller.generation.major
+    def broken_adoption(_loaded, *, request):
+        assert request.structure_id == controller.structure_id
+        assert request.state_id == controller.state_id
         raise RuntimeError("broken adoption invariant")
 
     monkeypatch.setattr(
@@ -174,11 +175,11 @@ def test_run_result_handoff_loads_once_and_preserves_backend_result(
     worker.run()
 
     assert load_calls == [(backend_result, str(tmp_path))]
-    assert controller.workspace.result is backend_result
-    assert len(controller.workspace.result_history) == 1
-    record = controller.workspace.result_history[0]
+    assert controller.result is backend_result
+    assert len(controller.result_history) == 1
+    record = controller.result_history[0]
     assert record.result is backend_result
-    assert record.current
+    assert record.input_state_id == window._test_request.state_id
     assert history.paths("output") == (str(output_path.resolve()),)
 
     window.close()
@@ -201,10 +202,10 @@ def test_edit_current_structure_reads_published_structure_and_commits_replacemen
         edit,
         error_title="Edit Error",
     )
-    assert controller.workspace.atoms is not original
+    assert controller.atoms is not original
     assert original.get_chemical_symbols() == ["Fe"]
-    assert controller.workspace.atoms.get_chemical_symbols() == ["Cu"]
-    assert controller.workspace.restarted
+    assert controller.atoms.get_chemical_symbols() == ["Cu"]
+    assert controller.restarted
 
 
 def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
@@ -236,7 +237,7 @@ def test_edit_current_input_parameters_commits_accepted_copy(monkeypatch):
         controller,
         None,
     )
-    assert controller.workspace.input_parameters is edited_parameters
+    assert controller.input_parameters is edited_parameters
 
 
 def test_choose_working_directory_is_shared_flow(monkeypatch, tmp_path):
@@ -252,7 +253,7 @@ def test_choose_working_directory_is_shared_flow(monkeypatch, tmp_path):
         controller,
         None,
     )
-    assert controller.workspace.directory == str(chosen)
+    assert controller.directory == str(chosen)
 
 
 def test_edit_site_elements_rejects_missing_structure_before_draft(monkeypatch):

@@ -7,11 +7,11 @@ from guy4ase.gui.application.workspace_controller import WorkspaceController
 
 def test_failed_structure_edit_does_not_mutate_workspace():
     atoms = Atoms("Fe", cell=(1, 1, 1), pbc=True)
-    result = object()
     controller = WorkspaceController(
-        WorkspaceState(atoms=atoms, potential_path="Fe.pot", result=result)
+        WorkspaceState(atoms=atoms, potential_path="Fe.pot")
     )
     generation = controller.generation
+    state_id = controller.state_id
 
     def fail(candidate):
         candidate.symbols = "Cu"
@@ -21,12 +21,10 @@ def test_failed_structure_edit_does_not_mutate_workspace():
     with pytest.raises(RuntimeError, match="edit failed"):
         controller.apply_structure_edit(fail, expected_generation=generation)
 
-    assert controller.workspace.atoms is atoms
+    assert controller.atoms is atoms
     assert atoms.get_chemical_symbols() == ["Fe"]
     assert atoms.cell[0, 0] == 1.0
-    assert controller.workspace.result is result
-    assert len(controller.workspace.result_history) == 1
-    assert controller.workspace.result_history[0].result is result
-    assert controller.workspace.result_history[0].current
-    assert controller.workspace.potential_path == "Fe.pot"
+    assert controller.potential_path == "Fe.pot"
+    assert controller.state_id == state_id
+    assert controller.result_history == ()
     assert controller.generation == generation

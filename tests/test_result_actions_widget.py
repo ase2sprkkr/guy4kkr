@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from ase import Atoms
 from ase2sprkkr.outputs.task_result import TaskResult
 from PyQt6.QtWidgets import QApplication, QToolButton
 
 from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.result_store import ResultStore
 from guy4ase.gui.widgets.result_actions import ResultActionsWidget
 
 
@@ -154,4 +157,62 @@ def test_empty_spheres_result_is_visible_without_actions():
     assert widget._grid.itemAtPosition(0, 0).widget().text() == "Empty spheres found"
     summary = widget._grid.itemAtPosition(0, 2).widget()
     assert summary.toolTip() == "7"
+    widget.close()
+
+
+def test_result_from_other_structure_offers_explicit_reuse_actions():
+    _application = QApplication.instance() or QApplication([])
+    store = ResultStore()
+    first_structure, first_state = store.new_structure_state(
+        Atoms("Fe"), potential_path="Fe.pot"
+    )
+    current_structure, _current_state = store.new_structure_state(
+        Atoms("Cu"), potential_path="Cu.pot"
+    )
+    result = SimpleNamespace(
+        task_name="dos",
+        output_values={},
+        output_file="Fe_DOS.out",
+    )
+    record = store.add_result(
+        result,
+        structure_id=first_structure,
+        input_state_id=first_state,
+        atoms=Atoms("Fe"),
+        input_parameters=object(),
+        directory=None,
+    )
+    widget = _widget()
+    widget.set_current_structure_id(current_structure)
+    widget.set_results(store)
+
+    assert widget._selected_result_id() == record.id
+    assert not widget._record_actions.isHidden()
+    assert not widget._use_structure_button.isHidden()
+    assert not widget._recompute_button.isHidden()
+    assert widget._recompute_button.text() == "Recompute on current structure"
+    widget.close()
+
+
+def test_empty_spheres_is_not_presented_as_recomputable_task():
+    _application = QApplication.instance() or QApplication([])
+    store = ResultStore()
+    structure_id, state_id = store.new_structure_state(
+        Atoms("Fe"), potential_path=None
+    )
+    record = store.add_result(
+        EmptySpheresResult(found=2),
+        structure_id=structure_id,
+        input_state_id=state_id,
+        atoms=Atoms("Fe"),
+        input_parameters={"min_radius": 0.8},
+        directory=None,
+    )
+    widget = _widget(show_values_without_actions=False)
+    widget.set_current_structure_id(structure_id)
+    widget.set_results(store)
+
+    assert widget._selected_result_id() == record.id
+    assert widget._selector.currentItem().text(0) == "Empty spheres"
+    assert widget._recompute_button.isHidden()
     widget.close()

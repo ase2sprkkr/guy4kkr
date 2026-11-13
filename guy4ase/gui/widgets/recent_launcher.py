@@ -36,6 +36,33 @@ def recent_path_label(path: str | Path, base: str | Path | None = None) -> str:
     return relative_text if len(relative_text) < len(absolute_text) else absolute_text
 
 
+def populate_recent_menu(
+    menu: QMenu,
+    history: RecentFiles,
+    kind: RecentKind,
+    open_recent: Callable[[str], None],
+    *,
+    base: str | Path | None = None,
+) -> QMenu:
+    """Populate one recent-file menu using the shared presentation policy."""
+    menu.clear()
+    paths = history.paths(kind)
+    if not paths:
+        action = QAction("(No recent files)", menu)
+        action.setEnabled(False)
+        menu.addAction(action)
+        return menu
+
+    for path in paths:
+        action = QAction(recent_path_label(path, base), menu)
+        action.setToolTip(path)
+        action.triggered.connect(
+            lambda _checked=False, item_path=path: open_recent(item_path)
+        )
+        menu.addAction(action)
+    return menu
+
+
 def recent_launch(history: RecentFiles) -> RecentLaunch | None:
     """Return the preferred structure/output to continue with, if any."""
     paths = {
@@ -72,20 +99,11 @@ def build_recent_launch_menu(
         ("Outputs", "output"),
     ):
         submenu = menu.addMenu(title)
-        paths = history.paths(kind)
-        if not paths:
-            action = QAction("(No recent files)", submenu)
-            action.setEnabled(False)
-            submenu.addAction(action)
-            continue
-
-        for path in paths:
-            action = QAction(recent_path_label(path, base), submenu)
-            action.setToolTip(path)
-            action.triggered.connect(
-                lambda _checked=False, item_kind=kind, item_path=path: open_recent(
-                    item_kind, item_path
-                )
-            )
-            submenu.addAction(action)
+        populate_recent_menu(
+            submenu,
+            history,
+            kind,
+            lambda path, item_kind=kind: open_recent(item_kind, path),
+            base=base,
+        )
     return menu

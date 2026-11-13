@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from guy4ase.gui.dialogs.input_file import InputFileEditor
 from guy4ase.gui.input_parameters.session import InputParametersSession
@@ -71,9 +71,6 @@ def edit_input_parameters_file(
     parent: QWidget | None,
 ) -> None:
     """Edit generated input text and apply a valid result transactionally."""
-    focus = QApplication.focusWidget()
-    if focus is not None:
-        focus.clearFocus()
     editor = InputFileEditor(
         session.result(),
         parent,

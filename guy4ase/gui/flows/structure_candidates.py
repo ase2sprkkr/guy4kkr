@@ -144,22 +144,3 @@ def download_structure_candidate(
     select = selector or select_online_structure
     atoms = select(parent=parent)
     return None if atoms is None else StructureCandidate(atoms)
-
-
-def edit_structure_candidate(
-    atoms: Any,
-    editor: Callable[..., Any],
-    parent: QWidget | None,
-    *,
-    error_title: str,
-) -> Any | None:
-    """Run an editor over already-detached atoms with the shared error policy."""
-    try:
-        return editor(atoms, parent=parent)
-    except Exception as exc:  # noqa: BLE001 - editor/backend boundary
-        QMessageBox.critical(
-            parent,
-            error_title,
-            f"Failed to edit structure:\n{exc}",
-        )
-        return None

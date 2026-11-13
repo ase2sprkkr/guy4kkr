@@ -8,7 +8,7 @@ from ase2sprkkr.bindings.empty_spheres import add_empty_spheres
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from guy4ase.ase.element_assignment import ElementAssignmentDraft
-from guy4ase.gui.application.operation_results import EmptySpheresResult
+from guy4ase.gui.application.recent_files import RecentFiles
 from guy4ase.gui.application.workspace_controller import WorkspaceController
 from guy4ase.gui.dialogs.structures.build_2d import select_build_2d_structure
 from guy4ase.gui.dialogs.structures.database import select_structure_prototype
@@ -23,7 +23,6 @@ from guy4ase.gui.flows.structure_candidates import (
     create_structure_candidate,
     create_structure_from_database_candidate,
     download_structure_candidate,
-    edit_structure_candidate,
 )
 from guy4ase.gui.misc.dialog_flow import DialogAction, chain_dialogs
 from guy4ase.gui.misc.structure_wait import document_change_applied
@@ -64,12 +63,7 @@ def edit_current_structure(
         return False
 
     change = controller.apply_structure_edit(
-        lambda candidate: edit_structure_candidate(
-            candidate,
-            editor,
-            parent,
-            error_title=error_title,
-        ),
+        lambda candidate: editor(candidate, parent=parent),
         expected_generation=generation,
     )
     if change is None:
@@ -173,6 +167,7 @@ def download_structure(
 
 def build_2d_structure(
     controller: WorkspaceController,
+    recent_files: RecentFiles,
     parent: QWidget,
     *,
     surface_mode: bool = False,
@@ -183,21 +178,24 @@ def build_2d_structure(
             parent, "No Structure", "Load or create a structure first."
         )
         return None
+    if not controller.can_build_2d():
+        QMessageBox.information(
+            parent,
+            "Build 2D Structure",
+            "Build 2D Structure requires a 3D periodic bulk structure.",
+        )
+        return None
 
     def edit(candidate: Any, *, parent: QWidget | None = None) -> Any | None:
         return select_build_2d_structure(
             candidate,
             parent=parent,
+            recent_files=recent_files,
             surface_mode=surface_mode,
         )
 
     change = controller.apply_structure_edit(
-        lambda candidate: edit_structure_candidate(
-            candidate,
-            edit,
-            parent,
-            error_title="Build 2D Structure Error",
-        ),
+        lambda candidate: edit(candidate, parent=parent),
         expected_generation=generation,
     )
     if change is None:
@@ -211,19 +209,41 @@ def update_empty_spheres(
     controller: WorkspaceController, parent: QWidget
 ) -> bool:
     """Find empty spheres explicitly and publish the resulting structure."""
+    if controller.empty_spheres_action() is None:
+        QMessageBox.information(
+            parent,
+            "Empty Spheres",
+            "Empty spheres cannot be updated for the current structure.",
+        )
+        return False
+
     generation = controller.generation
-    recalculate = bool(controller.workspace.empty_spheres_added)
-    previous_result = controller.workspace.result
+    previous_state = controller.empty_spheres
+    recalculate = previous_state is not None
     initial_parameters = (
-        previous_result.parameters
-        if isinstance(previous_result, EmptySpheresResult)
-        else None
+        previous_state.parameters if previous_state is not None else None
     )
     parameters = select_empty_spheres_parameters(
         initial=initial_parameters, parent=parent
     )
     if parameters is None:
         return False
+
+    if controller.structure_change_requires_scf_restart():
+        answer = QMessageBox.question(
+            parent,
+            "Reset SCF State?",
+            (
+                "Changing empty spheres changes the site configuration. "
+                "If this search adds or removes empty spheres, the current SCF "
+                "state and calculation results will be invalidated and a new SCF "
+                "sequence will be required.\n\nContinue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
 
     def edit(atoms: Any, previous_count: int) -> tuple[Any, int, bool]:
         structure_changed = False
@@ -272,7 +292,7 @@ def update_empty_spheres(
     if not document_change_applied(parent, change):
         return False
 
-    if controller.workspace.empty_spheres_added == 0:
+    if controller.empty_spheres_added == 0:
         QMessageBox.information(
             parent,
             "Empty Spheres",

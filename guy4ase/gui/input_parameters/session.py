@@ -289,14 +289,27 @@ class InputParametersSession(QObject):
         text: str = "Replace input parameters",
         source_page: str | None = None,
     ) -> bool:
-        """Copy same-task input into one undoable edit; reject a different task."""
+        """Install same-task serialized input as one undoable full replacement.
+
+        Dormant values are session-only editing state and therefore do not belong
+        to a newly loaded/reparsed ``InputParameters`` object. A full replacement
+        starts with empty dormant state; undo still restores the complete previous
+        snapshot. Use :meth:`replace_from_session` when importing another editing
+        session whose dormant state is intentionally part of the transfer.
+        """
         if parameters.task_name.upper() != self.task_name.upper():
             raise ValueError(
                 f"Expected {self.task_name.upper()} input parameters, "
                 f"got {parameters.task_name.upper()}."
             )
         candidate = parameters.copy(copy_values=True)
-        return self._push(candidate, text=text, source_page=source_page, path=None)
+        return self._push(
+            candidate,
+            text=text,
+            source_page=source_page,
+            path=None,
+            initial_dormant={},
+        )
 
     def replace_from_session(
         self,
@@ -307,7 +320,7 @@ class InputParametersSession(QObject):
     ) -> bool:
         """Import another session's complete state as one undoable command.
 
-        The source session has already applied its transaction plugins.  Its
+        The source session has already applied its transaction plugins. Its
         dormant state is therefore installed together with its parameters
         without applying the plugins a second time.
         """
@@ -333,8 +346,11 @@ class InputParametersSession(QObject):
         source_page: str | None,
         path: InputParameterPath | None,
         field_index: int | None = None,
+        initial_dormant: dict[DormantKey, Any] | None = None,
     ) -> bool:
-        dormant = deepcopy(self._dormant)
+        dormant = deepcopy(
+            self._dormant if initial_dormant is None else initial_dormant
+        )
         for plugin in self._plugins:
             plugin.apply(self._working, candidate, dormant)
         return self._push_snapshot(
@@ -384,7 +400,7 @@ class InputParametersSession(QObject):
     ) -> None:
         """Install an immutable-by-convention snapshot and notify all editors."""
         # Snapshots placed on the undo stack are never mutated: every user edit
-        # starts from a fresh copy.  Reusing the snapshot here is therefore safe.
+        # starts from a fresh copy. Reusing the snapshot here is therefore safe.
         changes = tuple(_changed_values(self._working, snapshot.parameters))
         self._working = snapshot.parameters
         self._dormant = snapshot.dormant

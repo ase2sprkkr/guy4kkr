@@ -98,6 +98,8 @@ class InputParametersDialog(QDialog):
             self.tree_editor.set_show_changed_only(True)
 
     def _edit_input_file(self) -> None:
+        if not self.tree_editor.commit_pending():
+            return
         edit_input_parameters_file(self.session, self)
 
     def _on_ok(self) -> None:

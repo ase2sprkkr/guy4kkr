@@ -97,9 +97,9 @@ The guided dialog uses the session's corresponding access methods, preserving
 Undo/Redo. The getter follows replacement of the object after loading text input.
 
 The expert dialog also edits a copy: Cancel never modifies its caller's input.
-`dialogs.expert_input.InputParametersDialog` owns that draft, input-file and
-working-directory workflow, overall validation, and modal acceptance. The
-reusable `widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
+`dialogs.expert_input.InputParametersDialog` owns that draft, input-file
+workflow, overall validation, and modal acceptance. The reusable
+`widgets.input_parameters.expert_tree.ExpertInputTreeEditor` owns the
 search/filter UI, session-change orchestration, changed-only presentation and
 focus restoration. `expert_tree_structure` provides the Qt-free structural
 `ValueShape` contract used to decide whether a branch may refresh in place;
