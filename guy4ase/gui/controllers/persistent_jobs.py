@@ -69,6 +69,7 @@ class PersistentJobsController(QObject):
     """
 
     launchUpdated = pyqtSignal(str, object)
+    resultOpened = pyqtSignal(str)
 
     def __init__(
         self,
@@ -126,6 +127,11 @@ class PersistentJobsController(QObject):
         )
         view.loadResultRequested.connect(
             lambda job_id, bound_view=view: self._load_result_requested(
+                bound_view, job_id
+            )
+        )
+        view.refreshResultRequested.connect(
+            lambda job_id, bound_view=view: self._refresh_result_requested(
                 bound_view, job_id
             )
         )
@@ -624,5 +630,40 @@ class PersistentJobsController(QObject):
                 )
                 self._ensure_current_result(job_id, job)
             self._publish_result(job_id, result, select_result=True)
+            self.resultOpened.emit(job_id)
         except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
             QMessageBox.warning(view, "Result Load Failed", str(exc))
+
+    def _refresh_result_requested(
+        self, view: PersistentJobsWidget, job_id: str,
+    ) -> None:
+        """Force a file reread for browser preview, without adopting it in the workspace."""
+        job = self._source.job(job_id)
+        if not _can_load_result(job, self._source):
+            return
+        try:
+            result = run_modal_task(
+                view, lambda: self._source.load_result(job_id),
+                title="Refreshing Calculation Result",
+                label="Reading result files…",
+            )
+            self._ensure_current_result(job_id, job)
+            pending = self._loads.pop(job_id, None)
+            if pending is not None:
+                pending[1].cancel()
+            self._result_cache.store(job_id, _result_version(job), result)
+            self._set_result_in_views(job_id, result)
+        except Exception as exc:  # noqa: BLE001 - persisted/backend data boundary
+            QMessageBox.warning(view, "Result Refresh Failed", str(exc))
+
+    @property
+    def supports_reassignment(self) -> bool:
+        return bool(getattr(self._source, "supports_reassignment", False))
+
+    def reassign_runs(
+        self, projects, job_ids: tuple[str, ...], project_id: str | None,
+        *, expected_project_ids: dict[str, str | None],
+    ) -> None:
+        self._source.reassign_runs(
+            projects, job_ids, project_id, expected_project_ids=expected_project_ids
+        )

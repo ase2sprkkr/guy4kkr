@@ -133,3 +133,36 @@ def test_background_errors_are_not_cached_and_manual_loading_can_retry(monkeypat
     assert published and published[0][0] == ("first", {"ok": "first"})
     view.close()
     controller._executor.shutdown(wait=True, cancel_futures=True)
+
+
+def test_refresh_reparses_files_without_adopting_but_load_opens_cached_result(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    source = _Source()
+    source.release.set()
+    adopted = []
+    parsed = []
+    source.load_result = lambda job_id: parsed.append(job_id) or {"name": job_id}
+    controller = PersistentJobsController(
+        source, result_adopter=lambda *args: adopted.append(args)
+    )
+    view = PersistentJobsWidget(lambda *_: None, auto_load_results=True)
+    controller.bind_view(view)
+    shown = []
+    monkeypatch.setattr(view.result_widget, "set_result", shown.append)
+    monkeypatch.setattr(
+        "guy4ase.gui.controllers.persistent_jobs.run_modal_task",
+        lambda _view, operation, **_kw: operation(),
+    )
+    opened = []
+    controller.resultOpened.connect(opened.append)
+
+    controller._refresh_result_requested(view, "first")
+    assert parsed == ["first"]
+    assert {"name": "first"} in shown
+    assert not adopted and not opened
+    controller._load_result_requested(view, "first")
+    assert parsed == ["first"]  # Load uses already-parsed result.
+    assert adopted == [("first", {"name": "first"}, True)]
+    assert opened == ["first"]
+    view.close()
+    controller._executor.shutdown(wait=True, cancel_futures=True)

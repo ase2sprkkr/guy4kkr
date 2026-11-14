@@ -264,6 +264,10 @@ class PersistentJobSource:
         return self.available
 
     @property
+    def supports_reassignment(self) -> bool:
+        return self.available and callable(getattr(ProjectRepository, "reassign_runs", None))
+
+    @property
     def active_recovery_ids(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(self._recovery_runners)
@@ -430,6 +434,20 @@ class PersistentJobSource:
             return retry_project_postprocessing(self._manager, str(job_id))
         finally:
             self.job_changed(str(job_id))
+
+    def reassign_runs(
+        self, projects: ProjectRepository, job_ids, project_id: str | None,
+        *, expected_project_ids,
+    ) -> None:
+        """Reassign completed records through kkrunner, then publish changed jobs."""
+        if not self.supports_reassignment:
+            raise NotImplementedError("The installed kkrunner does not support run reassignment")
+        records = projects.reassign_runs(
+            job_ids, project_id, store=self._manager.store,
+            expected_project_ids=expected_project_ids,
+        )
+        for record in records:
+            self.job_changed(record.id)
 
     def load_result(self, job_id: str) -> Any:
         if not self.supports_results:

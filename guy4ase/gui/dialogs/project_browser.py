@@ -24,6 +24,7 @@ from kkrunner.projects import Project, ProjectConflictError, ProjectDeleteError,
 from guy4ase.gui.application.window_geometry import manage_window_geometry
 from guy4ase.gui.application.imported_project_results import assignments
 from guy4ase.gui.controllers.persistent_jobs import PersistentJobsController
+from guy4ase.gui.dialogs.assign_results import AssignResultsDialog
 from guy4ase.gui.dialogs.object_view import execute_value_action
 from guy4ase.gui.dialogs.project_edit import ProjectEditDialog
 from guy4ase.gui.widgets.persistent_jobs import PersistentJobsWidget
@@ -87,31 +88,21 @@ class ProjectBrowserDialog(QWidget):
 
         self.active_project_label = QLabel(project_panel)
         project_layout.addWidget(self.active_project_label)
-        active_buttons = QHBoxLayout()
         self.set_active_project_button = QPushButton("Set active", project_panel)
         self.set_active_project_button.clicked.connect(self._request_selected_active)
-        active_buttons.addWidget(self.set_active_project_button)
         self.clear_active_project_button = QPushButton("Clear active", project_panel)
         self.clear_active_project_button.clicked.connect(
             lambda _checked=False: self.activeProjectRequested.emit(None)
         )
-        active_buttons.addWidget(self.clear_active_project_button)
-        project_layout.addLayout(active_buttons)
 
-        project_buttons = QHBoxLayout()
         self.new_project_button = QPushButton("New", project_panel)
         self.new_project_button.clicked.connect(self._create_project)
-        project_buttons.addWidget(self.new_project_button)
         self.edit_project_button = QPushButton("Edit", project_panel)
         self.edit_project_button.clicked.connect(self._edit_project)
-        project_buttons.addWidget(self.edit_project_button)
         self.move_project_button = QPushButton("Move", project_panel)
         self.move_project_button.clicked.connect(self._move_project)
-        project_buttons.addWidget(self.move_project_button)
         self.delete_project_button = QPushButton("Delete", project_panel)
         self.delete_project_button.clicked.connect(self._delete_project)
-        project_buttons.addWidget(self.delete_project_button)
-        project_layout.addLayout(project_buttons)
 
         self.project_tree = QTreeWidget(project_panel)
         self.project_tree.setColumnCount(2)
@@ -122,31 +113,57 @@ class ProjectBrowserDialog(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.project_tree.currentItemChanged.connect(self._project_selection_changed)
-        project_layout.addWidget(self.project_tree, 1)
 
         self.refresh_projects_button = QPushButton("Refresh projects", project_panel)
         self.refresh_projects_button.clicked.connect(self._refresh_projects)
-        project_layout.addWidget(self.refresh_projects_button)
 
         self.jobs = PersistentJobsWidget(
             lambda value, action: execute_value_action(value, action, self),
             splitter,
             auto_load_results=True,
+            show_project_actions=True,
         )
         self._persistent_jobs_controller.bind_view(self.jobs)
+        self.jobs.set_project_assignment_available(
+            self._persistent_jobs_controller.supports_reassignment
+        )
+        self.jobs.moveRunsRequested.connect(self._move_selected_runs)
         self.jobs.jobsChanged.connect(self._refresh_project_projection)
 
         self.imported_group = QWidget(project_panel)
         imported_layout = QVBoxLayout(self.imported_group)
         imported_layout.setContentsMargins(0, 6, 0, 0)
-        imported_layout.addWidget(QLabel("Imported results", self.imported_group))
+        imported_label = QLabel("Imported results (external files)", self.imported_group)
+        imported_label.setToolTip(
+            "Output files imported separately from tracked jobs and associated with this project."
+        )
+        imported_layout.addWidget(imported_label)
         self.imported_results = QTreeWidget(self.imported_group)
         self.imported_results.setHeaderHidden(True)
         imported_layout.addWidget(self.imported_results)
-        project_layout.addWidget(self.imported_group)
+        self.imported_group.hide()
+
+        project_body = QHBoxLayout()
+        project_list = QVBoxLayout()
+        project_list.addWidget(self.project_tree, 1)
+        project_list.addWidget(self.imported_group)
+        project_body.addLayout(project_list, 1)
+        project_actions = QVBoxLayout()
+        project_actions.addWidget(self.set_active_project_button)
+        project_actions.addWidget(self.clear_active_project_button)
+        project_actions.addSpacing(12)
+        project_actions.addWidget(self.new_project_button)
+        project_actions.addWidget(self.edit_project_button)
+        project_actions.addWidget(self.move_project_button)
+        project_actions.addWidget(self.delete_project_button)
+        project_actions.addStretch(1)
+        project_actions.addWidget(self.refresh_projects_button)
+        project_body.addLayout(project_actions)
+        project_layout.addLayout(project_body, 1)
+
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([300, 1100])
+        splitter.setSizes([420, 980])
 
         self.reload_projects()
 
@@ -305,6 +322,7 @@ class ProjectBrowserDialog(QWidget):
     def _show_imported_results(self, project_id: str | None) -> None:
         """Display historical output references without calling them tracked jobs."""
         self.imported_results.clear()
+        self.imported_group.hide()
         if project_id is None:
             return
         try:
@@ -322,12 +340,37 @@ class ProjectBrowserDialog(QWidget):
             item = QTreeWidgetItem([Path(path).name])
             item.setToolTip(0, path)
             self.imported_results.addTopLevelItem(item)
+        self.imported_group.setVisible(self.imported_results.topLevelItemCount() > 0)
 
     def _selected_project(self) -> Project | None:
         project_id = self._selected_project_id
         if project_id in (None, _UNASSIGNED):
             return None
         return self._projects_by_id.get(project_id)
+
+    def _move_selected_runs(self, job_ids: tuple[str, ...]) -> None:
+        selected = {job.id: job for job in self.jobs.visible_jobs if job.id in job_ids}
+        if not selected:
+            return
+        dialog = AssignResultsDialog(
+            self._repository, len(selected), self,
+            item_description="calculation record(s)", allow_unassigned=True,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        destination = dialog.project.currentData()
+        expected = {job_id: job.project_id for job_id, job in selected.items()}
+        try:
+            self._persistent_jobs_controller.reassign_runs(
+                self._repository, tuple(selected), destination,
+                expected_project_ids=expected,
+            )
+        except (OSError, RuntimeError, ValueError, KeyError) as exc:
+            QMessageBox.warning(self, "Cannot Move Calculation Records", str(exc))
+            self._persistent_jobs_controller.refresh_views()
+            return
+        self._selected_project_id = _UNASSIGNED if destination is None else destination
+        self.reload_projects()
 
     def _request_selected_active(self) -> None:
         project = self._selected_project()

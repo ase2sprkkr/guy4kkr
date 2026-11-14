@@ -10,12 +10,16 @@ from guy4ase.gui.application.imported_project_results import assign
 
 
 class AssignResultsDialog(QDialog):
-    def __init__(self, projects, count: int, parent=None):
+    def __init__(
+        self, projects, count: int, parent=None, *,
+        item_description: str = "result(s)", allow_unassigned: bool = False,
+    ):
         super().__init__(parent)
         self.projects = projects
-        self.setWindowTitle("Assign results to project")
+        self.allow_unassigned = allow_unassigned
+        self.setWindowTitle("Move calculation records" if allow_unassigned else "Assign results to project")
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"Assign {count} selected result(s) to:", self))
+        layout.addWidget(QLabel(f"Assign {count} selected {item_description} to:", self))
         form = QFormLayout()
         self.project = QComboBox(self)
         form.addRow("Project:", self.project)
@@ -31,9 +35,14 @@ class AssignResultsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._populate()
+        if allow_unassigned:
+            # Moving historical records requires an explicit destination choice.
+            self.project.setCurrentIndex(-1)
 
     def _populate(self, selected=None):
         self.project.clear()
+        if self.allow_unassigned:
+            self.project.addItem("(Unassigned)", None)
         for project in sorted(self.projects.projects(), key=lambda p: p.name.casefold()):
             self.project.addItem(project.name, project.id)
         if selected is not None:
@@ -53,7 +62,9 @@ class AssignResultsDialog(QDialog):
         self._populate(project.id)
 
     def accept(self):
-        if self.project.currentData() is None:
+        if self.project.currentIndex() < 0 or (
+            self.project.currentData() is None and not self.allow_unassigned
+        ):
             QMessageBox.warning(self, "Select project", "Choose or create a project.")
             return
         super().accept()

@@ -83,6 +83,7 @@ class GuiApplication(QObject):
         self._workflow_window: WorkflowWindow | None = None
         self._main_window: MainWindow | None = None
         self._project_browser: ProjectBrowserDialog | None = None
+        self.persistent_jobs_controller.resultOpened.connect(self._show_loaded_result)
         self._exit_in_progress = False
         self._exit_approved = False
         app = QApplication.instance()
@@ -261,6 +262,13 @@ class GuiApplication(QObject):
     def show_main_window(self) -> None:
         """Show and activate the expert view, creating it lazily."""
         self._show_window(self.create_main_window())
+
+    def _show_loaded_result(self, _job_id: str) -> None:
+        """Bring the selected result into the primary workspace view."""
+        if self._main_window is not None and self._main_window.isVisible():
+            self._show_window(self._main_window)
+        else:
+            self.show_workflow_window()
 
     def show_project_browser(self) -> None:
         """Show and activate the application-owned project browser."""

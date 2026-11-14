@@ -7,6 +7,7 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -89,6 +90,8 @@ class PersistentJobsWidget(QWidget):
     retryDownloadRequested = pyqtSignal(str)
     retryPostprocessingRequested = pyqtSignal(str)
     loadResultRequested = pyqtSignal(str)
+    refreshResultRequested = pyqtSignal(str)
+    moveRunsRequested = pyqtSignal(object)
     cancelRequested = pyqtSignal(str)
     forgetRequested = pyqtSignal(str)
 
@@ -98,6 +101,7 @@ class PersistentJobsWidget(QWidget):
         parent: QWidget | None = None,
         *,
         auto_load_results: bool = False,
+        show_project_actions: bool = False,
     ) -> None:
         super().__init__(parent)
         self.auto_load_results = auto_load_results
@@ -112,6 +116,7 @@ class PersistentJobsWidget(QWidget):
         self._supports_retry_postprocessing = False
         self._supports_cancel = False
         self._supports_forget = False
+        self._supports_reassignment = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -138,7 +143,11 @@ class PersistentJobsWidget(QWidget):
         self.splitter.setChildrenCollapsible(False)
         root.addWidget(self.splitter, 1)
 
-        self.tree = QTreeWidget(self.splitter)
+        job_list_panel = QWidget(self.splitter)
+        job_list_layout = QVBoxLayout(job_list_panel)
+        job_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.tree = QTreeWidget(job_list_panel)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setColumnCount(7)
         self.tree.setHeaderLabels(
             ("Job", "Status", "Started", "Finished", "Task", "Target", "Profile")
@@ -151,14 +160,34 @@ class PersistentJobsWidget(QWidget):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemDoubleClicked.connect(self._item_double_clicked)
+        self.tree.itemSelectionChanged.connect(self._update_project_actions)
+        job_list_layout.addWidget(self.tree, 1)
+
+        self.select_all_jobs_button = QPushButton("Select all", job_list_panel)
+        self.select_all_jobs_button.clicked.connect(self.tree.selectAll)
+        self.move_jobs_button = QPushButton("Move to project…", job_list_panel)
+        self.move_jobs_button.clicked.connect(self._request_move_runs)
+        if show_project_actions:
+            project_actions = QHBoxLayout()
+            project_actions.addWidget(self.select_all_jobs_button)
+            project_actions.addWidget(self.move_jobs_button)
+            project_actions.addStretch(1)
+            job_list_layout.addLayout(project_actions)
+        else:
+            self.select_all_jobs_button.hide()
+            self.move_jobs_button.hide()
 
         details = QWidget(self.splitter)
-        details_layout = QVBoxLayout(details)
+        details_layout = QHBoxLayout(details)
+        detail_contents = QVBoxLayout()
+        details_layout.addLayout(detail_contents, 1)
+        action_column = QVBoxLayout()
+        details_layout.addLayout(action_column)
         self.detail_title = QLabel("Select a calculation job", details)
         font = self.detail_title.font()
         font.setBold(True)
         self.detail_title.setFont(font)
-        details_layout.addWidget(self.detail_title)
+        detail_contents.addWidget(self.detail_title)
 
         self.detail_form = QFormLayout()
         self.status_value = QLabel("—", details)
@@ -189,12 +218,28 @@ class PersistentJobsWidget(QWidget):
             ("Result files", self.result_files_value),
         ):
             self.detail_form.addRow(f"{label}:", widget)
-        details_layout.addLayout(self.detail_form)
+        detail_contents.addLayout(self.detail_form)
 
         self.message_value = QLabel(details)
         self.message_value.setWordWrap(True)
         self.message_value.hide()
-        details_layout.addWidget(self.message_value)
+        detail_contents.addWidget(self.message_value)
+
+        self.load_result_button = QPushButton("Load result", details)
+        self.load_result_button.setToolTip(
+            "Add this calculation result to the main window and select it."
+        )
+        self.load_result_button.clicked.connect(self._request_result)
+        self.load_result_button.hide()
+        action_column.addWidget(self.load_result_button)
+
+        self.refresh_result_button = QPushButton("Refresh result", details)
+        self.refresh_result_button.setToolTip(
+            "Read the output files again and update the preview without selecting it in the main window."
+        )
+        self.refresh_result_button.clicked.connect(self._request_refresh_result)
+        self.refresh_result_button.hide()
+        action_column.addWidget(self.refresh_result_button)
 
         self.monitor_button = QPushButton("Reattach / monitor", details)
         self.monitor_button.setToolTip(
@@ -202,48 +247,45 @@ class PersistentJobsWidget(QWidget):
         )
         self.monitor_button.clicked.connect(self._request_monitor)
         self.monitor_button.hide()
-        details_layout.addWidget(self.monitor_button)
-
-        lifecycle_buttons = QHBoxLayout()
-        self.cancel_button = QPushButton("Cancel process", details)
-        self.cancel_button.clicked.connect(self._request_cancel)
-        lifecycle_buttons.addWidget(self.cancel_button)
-        self.forget_button = QPushButton("Delete run record…", details)
-        self.forget_button.clicked.connect(self._request_forget)
-        lifecycle_buttons.addWidget(self.forget_button)
-        details_layout.addLayout(lifecycle_buttons)
-
-        self.reattach_notice = QLabel(details)
-        self.reattach_notice.setWordWrap(True)
-        self.reattach_notice.hide()
-        details_layout.addWidget(self.reattach_notice)
+        action_column.addWidget(self.monitor_button)
 
         self.retry_postprocessing_button = QPushButton("Retry postprocessing", details)
         self.retry_postprocessing_button.clicked.connect(self._request_retry_postprocessing)
         self.retry_postprocessing_button.hide()
-        details_layout.addWidget(self.retry_postprocessing_button)
+        action_column.addWidget(self.retry_postprocessing_button)
+
         self.retry_download_button = QPushButton("Retry download", details)
         self.retry_download_button.clicked.connect(self._request_retry_download)
         self.retry_download_button.hide()
-        details_layout.addWidget(self.retry_download_button)
+        action_column.addWidget(self.retry_download_button)
 
-        self.load_result_button = QPushButton("Load result", details)
-        self.load_result_button.clicked.connect(self._request_result)
-        self.load_result_button.hide()
-        details_layout.addWidget(self.load_result_button)
+        self.reattach_notice = QLabel(details)
+        self.reattach_notice.setWordWrap(True)
+        self.reattach_notice.hide()
+        detail_contents.addWidget(self.reattach_notice)
+
+        action_column.addStretch(1)
+        self.cancel_button = QPushButton("Cancel process", details)
+        self.cancel_button.clicked.connect(self._request_cancel)
+        action_column.addWidget(self.cancel_button)
+        self.forget_button = QPushButton("Delete run record…", details)
+        self.forget_button.clicked.connect(self._request_forget)
+        action_column.addWidget(self.forget_button)
 
         self.result_widget = ResultActionsWidget(
             value_action,
             show_values_without_actions=True,
             show_history_button=False,
+            show_assignment_controls=False,
             empty_text="No historical result loaded.",
             parent=details,
         )
-        details_layout.addWidget(self.result_widget, 1)
+        detail_contents.addWidget(self.result_widget, 1)
 
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([540, 560])
+        self.splitter.setSizes([600, 500])
+        self._update_project_actions()
 
     @property
     def all_jobs(self) -> tuple[PersistentJob, ...]:
@@ -256,6 +298,33 @@ class PersistentJobsWidget(QWidget):
     @property
     def selected_persistent_ref(self) -> str | None:
         return self._selected_job_id
+
+    @property
+    def selected_persistent_refs(self) -> tuple[str, ...]:
+        """Selected run IDs, excluding non-selectable group headers."""
+        return tuple(sorted({
+            str(value) for item in self.tree.selectedItems()
+            if (value := item.data(0, _JOB_ID_ROLE)) is not None
+        }))
+
+    def set_project_assignment_available(self, available: bool) -> None:
+        self._supports_reassignment = available
+        self._update_project_actions()
+
+    def _update_project_actions(self) -> None:
+        selected = self.selected_persistent_refs
+        self.select_all_jobs_button.setEnabled(bool(self._jobs))
+        self.move_jobs_button.setEnabled(bool(selected) and self._supports_reassignment)
+        if not self._supports_reassignment:
+            reason = "This kkrunner version cannot reassign calculation records."
+        else:
+            reason = "Move selected records to another project without interrupting running jobs or moving output files."
+        self.move_jobs_button.setToolTip(reason)
+
+    def _request_move_runs(self) -> None:
+        selected = self.selected_persistent_refs
+        if selected and self.move_jobs_button.isEnabled():
+            self.moveRunsRequested.emit(selected)
 
     def set_jobs(
         self,
@@ -332,7 +401,7 @@ class PersistentJobsWidget(QWidget):
 
     def set_result_error(self, job_id: str, error: str) -> None:
         if self._selected_job_id == job_id:
-            self.result_widget.set_status(f"Result unavailable: {error}. Use Load result to retry.")
+            self.result_widget.set_status(f"Result unavailable: {error}. Use Refresh result to retry.")
 
     def _apply_filter(self) -> None:
         if self._visible_refs is None:
@@ -345,6 +414,7 @@ class PersistentJobsWidget(QWidget):
             self._selected_job_id = None
             self._clear_loaded_result()
         self._populate_tree()
+        self._update_project_actions()
 
     def _clear_loaded_result(self) -> None:
         self.result_widget.set_result(None)
@@ -354,6 +424,7 @@ class PersistentJobsWidget(QWidget):
 
     def _populate_tree(self) -> None:
         selected = self._selected_job_id
+        selected_refs = set(self.selected_persistent_refs)
         self.tree.blockSignals(True)
         try:
             self.tree.clear()
@@ -391,9 +462,15 @@ class PersistentJobsWidget(QWidget):
                 selected_item = self._first_job_item()
             if selected_item is not None:
                 self.tree.setCurrentItem(selected_item)
+            for group in groups.values():
+                for index in range(group.childCount()):
+                    item = group.child(index)
+                    if item.data(0, _JOB_ID_ROLE) in selected_refs:
+                        item.setSelected(True)
         finally:
             self.tree.blockSignals(False)
 
+        self._update_project_actions()
         self._show_job(self._job_for_item(self.tree.currentItem()))
 
     def _first_job_item(self) -> QTreeWidgetItem | None:
@@ -449,6 +526,7 @@ class PersistentJobsWidget(QWidget):
             self.retry_download_button.hide()
             self.retry_postprocessing_button.hide()
             self.load_result_button.hide()
+            self.refresh_result_button.hide()
             if selection_changed:
                 self.jobSelected.emit(None)
             return
@@ -519,11 +597,13 @@ class PersistentJobsWidget(QWidget):
         self.retry_postprocessing_button.setVisible(
             job.can_retry_postprocessing and self._supports_retry_postprocessing
         )
-        self.load_result_button.setVisible(
+        can_load_result = (
             job.is_final
             and not job.can_retry_download
             and self._supports_results
         )
+        self.load_result_button.setVisible(can_load_result)
+        self.refresh_result_button.setVisible(can_load_result)
         if selection_changed:
             self.jobSelected.emit(job.id)
 
@@ -553,6 +633,11 @@ class PersistentJobsWidget(QWidget):
         job_id = self._selected_job_id
         if job_id is not None:
             self.loadResultRequested.emit(job_id)
+
+    def _request_refresh_result(self) -> None:
+        job_id = self._selected_job_id
+        if job_id is not None:
+            self.refreshResultRequested.emit(job_id)
 
     def _item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         job = self._job_for_item(item)

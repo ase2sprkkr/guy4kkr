@@ -122,6 +122,7 @@ class ResultActionsWidget(QWidget):
         show_values_without_actions: bool,
         empty_text: str = "No result loaded.",
         show_history_button: bool = True,
+        show_assignment_controls: bool = True,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -161,6 +162,9 @@ class ResultActionsWidget(QWidget):
         assignment_row.addStretch(1)
         layout.addLayout(assignment_row)
         self._assignment_controls = (self.select_all_button, self.assign_project_button)
+        if not show_assignment_controls:
+            for control in self._assignment_controls:
+                control.hide()
         self._update_assignment_controls()
 
         self._record_actions = QWidget(self)

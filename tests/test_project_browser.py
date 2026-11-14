@@ -1,6 +1,7 @@
 """Qt tests for project-to-persistent-job browsing."""
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -276,6 +277,101 @@ def test_project_edit_changes_name_and_directory(tmp_path, monkeypatch):
     assert current.directory == str(tmp_path / "calculations")
     assert _find_project_item(dialog, "Edited").text(0) == "Edited"
     dialog.close()
+
+
+def test_project_browser_separates_bulk_actions_from_single_result_detail(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Project")
+    browser = _dialog(projects, _JobSource((_job("one", dataset="One", project_id=project.id),)))
+    browser.show()
+    application.processEvents()
+
+    assert browser.jobs.result_widget.select_all_button.isHidden()
+    assert browser.jobs.result_widget.assign_project_button.isHidden()
+    assert browser.jobs.select_all_jobs_button.isVisible()
+    assert browser.jobs.move_jobs_button.isVisible()
+    assert browser.imported_group.isHidden()
+    assert browser.jobs.load_result_button.text() == "Load result"
+    assert browser.jobs.refresh_result_button.text() == "Refresh result"
+    browser.close()
+
+
+def test_project_browser_moves_multiple_completed_records_to_another_project(tmp_path, monkeypatch):
+    application = QApplication.instance() or QApplication([])
+    projects = ProjectRepository(tmp_path / "projects")
+    origin = projects.create("Origin")
+    target = projects.create("Target")
+
+    class MovingSource(_JobSource):
+        supports_reassignment = True
+
+        def __init__(self, jobs):
+            super().__init__(jobs)
+            self.calls = []
+
+        def reassign_runs(self, _projects, run_ids, destination, *, expected_project_ids):
+            self.calls.append((tuple(run_ids), destination, expected_project_ids))
+            self._jobs = tuple(
+                replace(job, project_id=destination) if job.id in run_ids else job
+                for job in self._jobs
+            )
+            for job_id in run_ids:
+                for listener in tuple(self._listeners):
+                    listener(job_id)
+
+    source = MovingSource((
+        _job("run-1", dataset="A", project_id=origin.id),
+        _job("run-2", dataset="B", project_id=origin.id),
+    ))
+    browser = _dialog(projects, source)
+    browser.show()
+    application.processEvents()
+
+    from guy4ase.gui.dialogs.assign_results import AssignResultsDialog
+
+    def choose_target(dialog):
+        assert dialog.allow_unassigned
+        assert dialog.project.currentIndex() == -1
+        dialog.project.setCurrentIndex(dialog.project.findData(target.id))
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(AssignResultsDialog, "exec", choose_target)
+    browser.jobs.select_all_jobs_button.click()
+    assert set(browser.jobs.selected_persistent_refs) == {"run-1", "run-2"}
+    browser.jobs.group_by.setCurrentIndex(3)  # Rebuilding grouped rows keeps multiselection.
+    assert set(browser.jobs.selected_persistent_refs) == {"run-1", "run-2"}
+    assert browser.jobs.move_jobs_button.isEnabled()
+    browser.jobs.move_jobs_button.click()
+
+    assert len(source.calls) == 1
+    run_ids, destination, expected = source.calls[0]
+    assert set(run_ids) == {"run-1", "run-2"}
+    assert destination == target.id
+    assert expected == {"run-1": origin.id, "run-2": origin.id}
+    assert browser.active_project_id is None  # Moving records does not activate a project.
+    assert {job.project_id for job in browser.jobs.visible_jobs} == {target.id}
+    browser.close()
+
+
+def test_project_browser_allows_reassignment_for_running_runs(tmp_path):
+    application = QApplication.instance() or QApplication([])
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Project")
+
+    class ReassignSource(_JobSource):
+        supports_reassignment = True
+
+    source = ReassignSource((_job("one", dataset="One", project_id=project.id),))
+    browser = _dialog(projects, source)
+    browser.show()
+    application.processEvents()
+    browser.jobs.select_all_jobs_button.click()
+    assert browser.jobs.move_jobs_button.isEnabled()
+    source.replace_jobs((replace(source.jobs()[0], state="running"),), "one")
+    application.processEvents()
+    assert browser.jobs.move_jobs_button.isEnabled()
+    browser.close()
 
 
 def test_project_browser_is_an_independent_non_modal_window(tmp_path):
