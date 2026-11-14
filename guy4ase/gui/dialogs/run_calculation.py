@@ -4,7 +4,9 @@ import logging
 from typing import Any, Callable
 
 from PyQt6.QtCore import QTimer, pyqtSignal, pyqtSlot
+from kkrunner import RunState
 from kkrunner.runs import DuplicateSubmissionError
+from kkrunner.runs.conflicts import submission_conflicts
 
 from guy4ase.gui.application.execution_cancellation import (
     ExecutionCancelled,
@@ -13,10 +15,7 @@ from guy4ase.gui.application.execution_cancellation import (
 from guy4ase.gui.application.sprkkr_execution import SprkkrExecution
 from guy4ase.gui.application.workspace_controller import CalculationRequest
 from guy4ase.gui.dialogs.run_monitor import RunMonitorWindow, RunMonitorWorker
-from guy4ase.gui.dialogs.run_conflict import (
-    CancellationFailureDialog,
-    SubmissionConflictDialog,
-)
+from guy4ase.gui.dialogs.run_conflict import SubmissionConflictDialog
 
 
 logger = logging.getLogger(__name__)
@@ -74,8 +73,7 @@ class SprkkrRunWindow(RunMonitorWindow):
     """Create an SPR-KKR runner and display it in the generic run monitor."""
 
     persistentJobChanged = pyqtSignal(str)
-    conflictStopFinished = pyqtSignal(object)
-    conflictForgetFinished = pyqtSignal(object)
+    conflictActionFinished = pyqtSignal(object)
 
     def __init__(
         self,
@@ -123,8 +121,8 @@ class SprkkrRunWindow(RunMonitorWindow):
             autostart=False,
         )
         self._conflict_cancellation_pending = False
-        self.conflictStopFinished.connect(self._on_conflict_stop_finished)
-        self.conflictForgetFinished.connect(self._on_conflict_forget_finished)
+        self._conflict_dialog: SubmissionConflictDialog | None = None
+        self.conflictActionFinished.connect(self._on_conflict_action_finished)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._conflict_cancellation_pending:
@@ -160,143 +158,134 @@ class SprkkrRunWindow(RunMonitorWindow):
 
     @pyqtSlot(object)
     def _on_conflict(self, conflict: DuplicateSubmissionError) -> None:
-        """Offer an explicit choice instead of displaying a red execution error."""
+        """Keep the resolution dialog available while any conflict remains."""
         self._set_status("New calculation not started — files are in use")
         dialog = SubmissionConflictDialog(conflict, parent=self)
-        if dialog.exec() != SubmissionConflictDialog.STOP_EXISTING:
+        self._conflict_dialog = dialog
+        dialog.actionRequested.connect(self._on_conflict_action)
+        try:
+            decision = dialog.exec()
+        finally:
+            self._conflict_dialog = None
+            dialog.deleteLater()
+        if decision == dialog.DialogCode.Accepted:
+            self._set_status("Conflicts resolved — starting calculation…")
+            self._retry_after_conflict()
+        else:
             self._set_status("New calculation cancelled; existing jobs were kept")
             self._return_to_setup()
-            return
-        self._set_status("Requesting cancellation of conflicting jobs…")
-        self._conflict_cancellation_pending = True
-        self._background_thread_factory(
-            target=lambda: self._stop_existing_jobs(conflict),
-            name="cancel-conflicting-runs",
-            daemon=True,
-        ).start()
 
     def _conflict_manager(self):
         if self._execution_manager is not None:
             return self._execution_manager
-        # Use the same persistent store that was used for submission.
         from ase2sprkkr.sprkkr.projects import default_project_repository
         from guy4ase.gui.application.persistent_jobs import project_run_manager
 
         return project_run_manager(default_project_repository())
 
-    def _stop_existing_jobs(self, conflict: DuplicateSubmissionError) -> None:
-        """Cancel by durable run ID; never erase history or overwrite files.
+    @pyqtSlot(str, object)
+    def _on_conflict_action(self, action: str, selected: object) -> None:
+        if self._conflict_cancellation_pending or self._conflict_dialog is None:
+            return
+        self._conflict_cancellation_pending = True
+        proposed = self._conflict_dialog.proposed_record
+        self._background_thread_factory(
+            target=lambda: self._resolve_conflict_action(action, tuple(selected), proposed),
+            name="resolve-conflicting-runs",
+            daemon=True,
+        ).start()
 
-        Cancellation can be asynchronous. We only retry when all returned
-        states are terminal; pending or unverified cancellation leaves the
-        new calculation unstarted.
+    def _resolve_conflict_action(
+        self, action: str, selected: tuple[str, ...], proposed
+    ) -> None:
+        """Resolve only selected records, then recheck the global reservations.
+
+        An overridden FAILED state or a deleted record does not terminate a
+        native process. User confirmation for these operations belongs to the
+        dialog, and the actual new submission still goes through reserve().
         """
-        stopped: list[str] = []
-        pending: list[str] = []
-        errors: list[tuple[Any | None, str]] = []
+        errors: dict[str, str] = {}
+        updated = False
+        conflicts = None
         try:
             manager = self._conflict_manager()
-            for record in conflict.conflicts:
+            if action == "refresh":
                 try:
-                    latest = manager.store.get(record.id)
-                    if not latest.state.is_terminal:
-                        latest = manager.cancel(record.id)
-                    if latest.state.is_terminal:
-                        stopped.append(record.id)
-                    else:
-                        pending.append(record.id)
-                    self.persistentJobChanged.emit(record.id)
-                except FileNotFoundError:
-                    # Missing history does not prove that the native process
-                    # exited. In particular, do NOT auto-retry on this basis.
-                    pending.append(record.id)
-                    self.persistentJobChanged.emit(record.id)
-                except Exception as exc:  # noqa: BLE001 - backend cancellation boundary
-                    logger.exception("Could not cancel conflicting run %s", record.id)
-                    errors.append((record, str(exc)))
-        except Exception as exc:  # noqa: BLE001 - manager construction boundary
-            logger.exception("Could not access persisted runs for cancellation")
-            errors.append((None, str(exc)))
-        self.conflictStopFinished.emit((stopped, pending, errors))
+                    manager.refresh()
+                except Exception as exc:  # noqa: BLE001 - backend status query
+                    logger.exception("Failed to refresh conflicting job statuses")
+                    errors["Refresh"] = str(exc)
+            elif action in ("stop", "fail", "delete"):
+                for run_id in selected:
+                    try:
+                        record = manager.store.get(run_id)
+                        if action == "stop":
+                            if not record.state.is_terminal:
+                                manager.cancel(run_id)
+                        elif action == "fail":
+                            if not record.state.is_terminal:
+                                result = manager.transition(
+                                    record,
+                                    state=RunState.FAILED,
+                                    expected_record=record,
+                                    message=(
+                                        "Manually marked failed to clear a file "
+                                        "reservation; process termination was NOT verified."
+                                    ),
+                                )
+                                if result.state != RunState.FAILED:
+                                    raise RuntimeError(
+                                        "The job could not be marked failed in its current state"
+                                    )
+                                updated = True
+                        else:
+                            manager.forget(run_id, force=True)
+                            updated = True
+                        self.persistentJobChanged.emit(run_id)
+                    except FileNotFoundError:
+                        # The record was removed concurrently; verify the
+                        # complete active set below rather than assume success.
+                        self.persistentJobChanged.emit(run_id)
+                    except Exception as exc:  # noqa: BLE001 - backend/store boundary
+                        logger.exception(
+                            "Could not %s conflicting job %s", action, run_id
+                        )
+                        errors[run_id] = str(exc)
+            else:
+                errors["Action"] = f"Unsupported conflict action: {action}"
+
+            # Use the same collision predicate and global store as reserve().
+            # Do not assume that the initial conflict list remains complete.
+            active = (
+                record for record in manager.store.runs(active=True)
+                if record.id != proposed.id and submission_conflicts(proposed, record)
+            )
+            conflicts = DuplicateSubmissionError(proposed, tuple(active))
+        except Exception as exc:  # noqa: BLE001 - manager/storage boundary
+            logger.exception("Could not check run reservation conflicts")
+            errors["Reservation check"] = str(exc)
+        self.conflictActionFinished.emit((action, conflicts, errors, updated))
 
     @pyqtSlot(object)
-    def _on_conflict_stop_finished(self, outcome: object) -> None:
-        stopped, pending, errors = outcome
+    def _on_conflict_action_finished(self, outcome: object) -> None:
+        action, conflicts, errors, updated = outcome
         self._conflict_cancellation_pending = False
         if self._close_requested:
             self.close()
             return
-        if errors:
-            dialog = CancellationFailureDialog(errors, pending=pending, parent=self)
-            if dialog.exec() == CancellationFailureDialog.REMOVE_SELECTED:
-                selected = dialog.selected_job_ids()
-                if selected:
-                    self._set_status("Removing selected job records from history…")
-                    self._conflict_cancellation_pending = True
-                    self._background_thread_factory(
-                        target=lambda: self._forget_conflicting_jobs(selected),
-                        name="forget-conflicting-runs",
-                        daemon=True,
-                    ).start()
-                    return
-            self._set_status("New calculation not started — existing jobs kept")
-            self._return_to_setup()
-        elif pending:
-            self._set_status(
-                "Stop requested; wait for existing jobs to finish before trying again"
-            )
-            self._return_to_setup()
-        else:
-            self._set_status("Conflicting jobs stopped — starting calculation…")
-            self._retry_after_conflict()
-
-    def _forget_conflicting_jobs(self, job_ids: tuple[str, ...]) -> None:
-        """Forget explicitly selected records; never treat this as cancellation."""
-        removed: list[str] = []
-        failures: list[str] = []
-        try:
-            manager = self._conflict_manager()
-            for job_id in job_ids:
-                try:
-                    manager.forget(job_id, force=True)
-                except FileNotFoundError:
-                    # Another client removed this record in the meantime.
-                    removed.append(job_id)
-                except Exception as exc:  # noqa: BLE001 - durable storage boundary
-                    logger.exception("Failed to forget conflicting run %s", job_id)
-                    failures.append(f"{job_id}: {exc}")
-                else:
-                    removed.append(job_id)
-                self.persistentJobChanged.emit(job_id)
-        except Exception as exc:  # noqa: BLE001 - manager creation boundary
-            logger.exception("Could not access run history for removal")
-            failures.append(str(exc))
-        self.conflictForgetFinished.emit((removed, failures))
-
-    @pyqtSlot(object)
-    def _on_conflict_forget_finished(self, outcome: object) -> None:
-        removed, errors = outcome
-        self._conflict_cancellation_pending = False
-        if self._close_requested:
-            self.close()
+        dialog = self._conflict_dialog
+        if dialog is None:
             return
-        if errors:
-            from PyQt6.QtWidgets import QMessageBox
-
-            QMessageBox.warning(
-                self,
-                "Could not remove all job records",
-                "The new calculation was NOT started.\n\n" + "\n".join(errors),
+        if conflicts is not None:
+            dialog.set_conflicts(
+                conflicts,
+                errors=errors,
+                manually_changed=updated and action in ("fail", "delete"),
             )
-            self._set_status("New calculation not started — record removal incomplete")
-        elif removed:
-            self._set_status(
-                "Selected records removed; processes may still run. "
-                "New calculation not started"
-            )
-        else:
-            self._set_status("New calculation not started")
-        self._return_to_setup()
+        elif errors:
+            # A failed store check cannot justify enabling Calculate.
+            dialog.set_verification_error(errors)
+        dialog.set_busy(False)
 
     @pyqtSlot()
     def _retry_after_conflict(self) -> None:
